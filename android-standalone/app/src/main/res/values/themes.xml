@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Tema del framework para no depender de com.google.android.material.
+         El contenido lo dibuja Compose (MaterialTheme). -->
+    <style name="Theme.TorrentBox" parent="@android:style/Theme.Material.NoActionBar" />
+</resources>

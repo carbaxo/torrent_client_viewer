@@ -1,0 +1,82 @@
+package com.carbaxo.torrentbox
+
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONArray
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+
+/** Búsqueda de torrents directa (apibay / The Pirate Bay). Sin backend ni API key. */
+object Search {
+    data class Result(
+        val name: String,
+        val infoHash: String,
+        val seeders: Int,
+        val sizeBytes: Long,
+        val magnet: String
+    )
+
+    private val TRACKERS = listOf(
+        "udp://tracker.opentrackr.org:1337/announce",
+        "udp://open.tracker.cl:1337/announce",
+        "udp://tracker.torrent.eu.org:451/announce",
+        "udp://exodus.desync.com:6969/announce",
+        "udp://open.stealth.si:80/announce"
+    )
+
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .build()
+    private val io = Executors.newCachedThreadPool()
+
+    fun buildMagnet(infoHash: String, name: String): String {
+        val sb = StringBuilder("magnet:?xt=urn:btih:").append(infoHash)
+        sb.append("&dn=").append(java.net.URLEncoder.encode(name, "UTF-8"))
+        for (tr in TRACKERS) sb.append("&tr=").append(java.net.URLEncoder.encode(tr, "UTF-8"))
+        return sb.toString()
+    }
+
+    fun search(query: String, onResult: (List<Result>?, String?) -> Unit) {
+        io.submit {
+            try {
+                val url = "https://apibay.org/q.php?q=" + java.net.URLEncoder.encode(query, "UTF-8")
+                val req = Request.Builder().url(url).header("User-Agent", "TorrentBox").build()
+                client.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@submit onResult(null, "Error del buscador (${resp.code}).")
+                    val body = resp.body?.string() ?: "[]"
+                    val arr = JSONArray(body)
+                    val out = ArrayList<Result>()
+                    for (i in 0 until arr.length()) {
+                        val o = arr.getJSONObject(i)
+                        val hash = o.optString("info_hash", "")
+                        val seeders = o.optString("seeders", "0").toIntOrNull() ?: 0
+                        if (hash.isBlank() || hash.matches(Regex("^0+$")) || seeders <= 0) continue
+                        val name = o.optString("name", hash)
+                        out.add(
+                            Result(
+                                name = name,
+                                infoHash = hash.lowercase(),
+                                seeders = seeders,
+                                sizeBytes = o.optString("size", "0").toLongOrNull() ?: 0,
+                                magnet = buildMagnet(hash.lowercase(), name)
+                            )
+                        )
+                    }
+                    out.sortByDescending { it.seeders }
+                    onResult(out.take(30), null)
+                }
+            } catch (e: Throwable) {
+                onResult(null, e.message ?: "Error de red en la búsqueda.")
+            }
+        }
+    }
+
+    fun humanSize(bytes: Long): String {
+        if (bytes <= 0) return "?"
+        val u = arrayOf("B", "KB", "MB", "GB", "TB")
+        var v = bytes.toDouble(); var i = 0
+        while (v >= 1024 && i < u.size - 1) { v /= 1024; i++ }
+        return String.format(if (v >= 10 || i == 0) "%.0f %s" else "%.1f %s", v, u[i])
+    }
+}
