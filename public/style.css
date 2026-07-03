@@ -258,6 +258,18 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   box-shadow: 0 6px 24px rgba(123, 91, 245, .6);
 }
 .poster-card:hover .poster-play { opacity: 1; }
+.poster-fav {
+  position: absolute; top: 8px; right: 8px; z-index: 2;
+  width: 30px; height: 30px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(10, 8, 18, .65); color: rgba(255, 255, 255, .75);
+  opacity: 0; transition: opacity .18s, color .15s, transform .12s;
+}
+.poster-fav svg { width: 16px; height: 16px; }
+.poster-fav:hover { color: #f43f5e; transform: scale(1.12); }
+.poster-fav.active { color: #f43f5e; opacity: 1; }
+.poster-card:hover .poster-fav { opacity: 1; }
+@media (hover: none) { .poster-fav { opacity: .9; } }
 .poster-meta { display: flex; flex-direction: column; gap: 1px; padding: 0 2px; }
 .poster-title { font-size: .82rem; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .poster-year { font-size: .74rem; color: var(--muted); }
@@ -321,6 +333,23 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .btn-peerflix:hover { border-color: var(--peerflix); color: var(--peerflix); }
 
 /* ---------- Biblioteca ---------- */
+.row-title { margin: 0 0 12px; font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); }
+.continue-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.continue-card {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px 16px; transition: border-color .15s;
+}
+.continue-card:hover { border-color: var(--accent); }
+.continue-card.missing { opacity: .6; }
+.continue-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.continue-name { font-weight: 600; font-size: .88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.continue-meta { font-size: .78rem; color: var(--muted); }
+.continue-bar { height: 4px; background: var(--surface-3); border-radius: 4px; overflow: hidden; }
+.continue-bar div { height: 100%; background: linear-gradient(90deg, var(--accent-2), var(--accent)); border-radius: 4px; }
+.continue-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.tag.watched { color: var(--green); }
+
 .torrent-list { display: flex; flex-direction: column; gap: 14px; }
 .torrent-card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px;

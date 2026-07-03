@@ -15,6 +15,7 @@ import { detectFfmpeg, transcodeToMp4 } from './lib/transcode.js'
 import { isSubtitle, srtToVtt, extractEmbeddedVtt, probeSubtitleTracks } from './lib/subtitles.js'
 import { createAuth, AuthError } from './lib/auth.js'
 import { createCatalog } from './lib/catalog.js'
+import { createUserData } from './lib/userdata.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -43,6 +44,7 @@ app.set('trust proxy', 1)
 // maxConns más alto acelera la descarga al permitir más peers por torrent
 const client = new WebTorrent({ maxConns: 100 })
 const store = createStore(path.join(DATA_DIR, 'torrents.json'))
+const userData = createUserData(path.join(DATA_DIR, 'userdata.json'))
 const search = createSearch({ omdbKey: OMDB_API_KEY, cache: new Map() })
 const catalog = createCatalog({ tmdbKey: TMDB_API_KEY, region: TMDB_REGION, cache: new Map() })
 const auth = createAuth({
@@ -264,6 +266,7 @@ app.get('/api/config', (req, res) => {
 })
 
 // A partir de aquí, todo requiere sesión válida
+app.use('/api/me', auth.requireAuth)
 app.use('/api/search', auth.requireAuth)
 app.use('/api/catalogs', auth.requireAuth)
 app.use('/api/torrents', auth.requireAuth)
@@ -302,6 +305,47 @@ app.get('/api/catalogs', searchLimiter, async (req, res) => {
   } catch (err) {
     res.status(err.status || 500).json({ success: false, code: err.code, error: err.message })
   }
+})
+
+// ========================================================================
+// ESTADO POR USUARIO (favoritos, progreso, ajustes)
+// ========================================================================
+
+// Todo el estado del usuario en una sola llamada (al iniciar sesión)
+app.get('/api/me/state', (req, res) => {
+  res.json({
+    favorites: userData.getFavorites(req.user.id),
+    progress: userData.getProgress(req.user.id),
+    settings: userData.getSettings(req.user.id)
+  })
+})
+
+app.post('/api/me/favorites', (req, res) => {
+  const fav = userData.addFavorite(req.user.id, req.body || {})
+  if (!fav) return res.status(400).json({ error: 'Favorito inválido: faltan id o título.' })
+  res.json({ favorite: fav })
+})
+
+app.delete('/api/me/favorites/:id', (req, res) => {
+  userData.removeFavorite(req.user.id, req.params.id)
+  res.json({ ok: true })
+})
+
+app.post('/api/me/progress', (req, res) => {
+  const entry = userData.setProgress(req.user.id, req.body || {})
+  if (!entry) return res.status(400).json({ error: 'Progreso inválido.' })
+  res.json({ progress: entry })
+})
+
+app.delete('/api/me/progress/:key', (req, res) => {
+  userData.removeProgress(req.user.id, req.params.key)
+  res.json({ ok: true })
+})
+
+app.put('/api/me/settings', (req, res) => {
+  const settings = userData.setSettings(req.user.id, req.body || {})
+  if (!settings) return res.status(400).json({ error: 'Ajustes inválidos.' })
+  res.json({ settings })
 })
 
 // ========================================================================
@@ -532,6 +576,7 @@ app.listen(PORT, () => {
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
     try { store.flush() } catch {}
+    try { userData.flush() } catch {}
     process.exit(0)
   })
 }

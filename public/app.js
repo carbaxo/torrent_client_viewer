@@ -12,6 +12,13 @@ let QUALITY_FILTER = 'all'
 let CATALOG_TYPE = 'movie'
 let pollTimer = null
 
+// Estado por usuario sincronizado con el servidor (favoritos, progreso, ajustes)
+let MY = { favorites: [], progress: [], settings: {} }
+let FAV_IDS = new Set()
+let LAST_CATALOGS = []
+let LAST_TORRENTS = []
+let PROGRESS_MAP = {}
+
 // ===================== Utilidades =====================
 function fmtBytes (bytes) {
   if (!bytes || bytes < 0) return '0 B'
@@ -29,6 +36,14 @@ function fmtEta (ms) {
   if (m < 60) return `${m}m ${rem}s`
   const h = Math.floor(m / 60)
   return `${h}h ${m % 60}m`
+}
+// Segundos -> "1:23:45" o "23:45"
+function fmtTime (s) {
+  s = Math.max(0, Math.round(s || 0))
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = String(s % 60).padStart(2, '0')
+  return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`
 }
 function escapeHtml (str) {
   return String(str)
@@ -103,10 +118,43 @@ async function onLoggedIn (user) {
   $('user-name').textContent = user.username
   $('user-avatar').textContent = (user.username || '?').charAt(0).toUpperCase()
   await loadConfig()
+  await loadMyState()
+  applySettings()
+  renderMyList()
   switchView(CONFIG.catalogs ? 'discover' : 'search')
   render()
   if (!pollTimer) pollTimer = setInterval(render, 1000)
   if (CONFIG.catalogs) loadCatalogs()
+}
+
+// ===================== Estado por usuario =====================
+async function loadMyState () {
+  try {
+    const res = await api('/api/me/state')
+    if (res.ok) {
+      const data = await res.json()
+      MY = { favorites: data.favorites || [], progress: data.progress || [], settings: data.settings || {} }
+      FAV_IDS = new Set(MY.favorites.map((f) => f.id))
+    }
+  } catch {}
+}
+
+function applySettings () {
+  const s = MY.settings || {}
+  if (s.searchType === 'movie' || s.searchType === 'series') $('search-type').value = s.searchType
+  if (['all', 'torrentio', 'peerflix'].includes(s.searchSource)) $('search-source').value = s.searchSource
+  if (s.catalogType === 'movie' || s.catalogType === 'series') {
+    CATALOG_TYPE = s.catalogType
+    $('catalog-type').querySelectorAll('button').forEach((x) => x.classList.toggle('active', x.dataset.ctype === CATALOG_TYPE))
+  }
+  toggleSeasonFields()
+}
+
+function saveSettings (patch) {
+  Object.assign(MY.settings, patch)
+  api('/api/me/settings', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch)
+  }).catch(() => {})
 }
 
 async function loadConfig () {
@@ -158,8 +206,15 @@ $('login-form').addEventListener('submit', async (e) => {
 $('logout-btn').addEventListener('click', async () => {
   try { await api('/api/auth/logout', { method: 'POST' }) } catch {}
   CURRENT_USER = null
+  MY = { favorites: [], progress: [], settings: {} }
+  FAV_IDS = new Set()
+  LAST_CATALOGS = []
+  PROGRESS_MAP = {}
+  lastContinueHtml = ''
   $('search-results').innerHTML = ''
   $('catalogs').innerHTML = ''
+  $('my-list').innerHTML = ''
+  $('continue-row').innerHTML = ''
   showLogin()
 })
 
@@ -172,6 +227,7 @@ $('catalog-type').querySelectorAll('button').forEach((b) => {
   b.addEventListener('click', () => {
     CATALOG_TYPE = b.dataset.ctype
     $('catalog-type').querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b))
+    saveSettings({ catalogType: CATALOG_TYPE })
     loadCatalogs()
   })
 })
@@ -198,27 +254,45 @@ async function loadCatalogs () {
 }
 
 function renderCatalogs (catalogs) {
-  const playIcon = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>'
+  LAST_CATALOGS = catalogs
   catalogsEl.innerHTML = catalogs.map((cat) => `
     <div class="catalog-row">
       <div class="catalog-head"><span class="dot" style="background:${cat.color};color:${cat.color}"></span>${escapeHtml(cat.name)}</div>
-      <div class="poster-row">
-        ${cat.items.map((it) => `
-          <button class="poster-card" data-title="${escapeHtml(it.title)}" data-type="${it.type}" data-year="${escapeHtml(it.year)}">
-            <div class="poster-img">
-              ${it.poster ? `<img loading="lazy" src="${escapeHtml(it.poster)}" alt="${escapeHtml(it.title)}" />` : '<div class="poster-ph">🎬</div>'}
-              <span class="poster-play">${playIcon}</span>
-            </div>
-            <div class="poster-meta">
-              <span class="poster-title">${escapeHtml(it.title)}</span>
-              <span class="poster-year">${escapeHtml(it.year)}${it.rating ? ' · ⭐ ' + it.rating : ''}</span>
-            </div>
-          </button>`).join('')}
-      </div>
+      <div class="poster-row">${cat.items.map(posterCardHtml).join('')}</div>
     </div>`).join('')
+  wirePosterCards(catalogsEl)
+}
 
-  catalogsEl.querySelectorAll('.poster-card').forEach((c) => {
-    c.addEventListener('click', () => {
+// ===================== Pósters + favoritos =====================
+const PLAY_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>'
+const HEART_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>'
+
+// Identificador estable de un título (para favoritos)
+const favId = (it) => it.id || (it.tmdbId ? 'tmdb:' + it.tmdbId : `${it.type}:${it.title}:${it.year || ''}`)
+
+function posterCardHtml (it) {
+  const id = favId(it)
+  const isFav = FAV_IDS.has(id)
+  return `
+    <button class="poster-card" data-id="${escapeHtml(id)}" data-title="${escapeHtml(it.title)}"
+      data-type="${it.type === 'series' ? 'series' : 'movie'}" data-year="${escapeHtml(it.year || '')}"
+      data-poster="${escapeHtml(it.poster || '')}" data-rating="${it.rating ?? ''}">
+      <div class="poster-img">
+        ${it.poster ? `<img loading="lazy" src="${escapeHtml(it.poster)}" alt="${escapeHtml(it.title)}" />` : '<div class="poster-ph">🎬</div>'}
+        <span class="poster-play">${PLAY_ICON}</span>
+        <span class="poster-fav ${isFav ? 'active' : ''}" role="button" title="${isFav ? 'Quitar de Mi lista' : 'Añadir a Mi lista'}">${HEART_ICON}</span>
+      </div>
+      <div class="poster-meta">
+        <span class="poster-title">${escapeHtml(it.title)}</span>
+        <span class="poster-year">${escapeHtml(it.year || '')}${it.rating ? ' · ⭐ ' + it.rating : ''}</span>
+      </div>
+    </button>`
+}
+
+function wirePosterCards (root) {
+  root.querySelectorAll('.poster-card').forEach((c) => {
+    c.addEventListener('click', (e) => {
+      if (e.target.closest('.poster-fav')) { toggleFavorite(c); return }
       $('search-input').value = c.dataset.title
       $('search-type').value = c.dataset.type
       toggleSeasonFields()
@@ -226,6 +300,56 @@ function renderCatalogs (catalogs) {
       $('search-form').dispatchEvent(new Event('submit', { cancelable: true }))
     })
   })
+}
+
+async function toggleFavorite (card) {
+  const id = card.dataset.id
+  try {
+    if (FAV_IDS.has(id)) {
+      FAV_IDS.delete(id)
+      MY.favorites = MY.favorites.filter((f) => f.id !== id)
+      await api('/api/me/favorites/' + encodeURIComponent(id), { method: 'DELETE' })
+    } else {
+      const fav = {
+        id,
+        title: card.dataset.title,
+        year: card.dataset.year,
+        type: card.dataset.type,
+        poster: card.dataset.poster || null,
+        rating: card.dataset.rating ? Number(card.dataset.rating) : null
+      }
+      FAV_IDS.add(id)
+      MY.favorites = [fav, ...MY.favorites.filter((f) => f.id !== id)]
+      await api('/api/me/favorites', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(fav)
+      })
+    }
+  } catch {}
+  renderMyList()
+  refreshFavHearts()
+}
+
+// Actualiza los corazones de todos los pósters visibles sin re-renderizar
+function refreshFavHearts () {
+  document.querySelectorAll('.poster-card').forEach((c) => {
+    const isFav = FAV_IDS.has(c.dataset.id)
+    const heart = c.querySelector('.poster-fav')
+    if (heart) {
+      heart.classList.toggle('active', isFav)
+      heart.title = isFav ? 'Quitar de Mi lista' : 'Añadir a Mi lista'
+    }
+  })
+}
+
+function renderMyList () {
+  const el = $('my-list')
+  if (!MY.favorites.length) { el.innerHTML = ''; return }
+  el.innerHTML = `
+    <div class="catalog-row">
+      <div class="catalog-head"><span class="dot" style="background:#f43f5e;color:#f43f5e"></span>Mi lista</div>
+      <div class="poster-row">${MY.favorites.map(posterCardHtml).join('')}</div>
+    </div>`
+  wirePosterCards(el)
 }
 
 // ===================== Buscador =====================
@@ -243,7 +367,11 @@ function searchStatus (msg, isError = false) {
   searchStatusEl.classList.toggle('error', isError)
 }
 
-searchType.addEventListener('change', toggleSeasonFields)
+searchType.addEventListener('change', () => {
+  toggleSeasonFields()
+  saveSettings({ searchType: searchType.value })
+})
+searchSource.addEventListener('change', () => saveSettings({ searchSource: searchSource.value }))
 function toggleSeasonFields () {
   $('se-fields').classList.toggle('hidden', searchType.value !== 'series')
 }
@@ -430,10 +558,34 @@ const playerTitle = $('player-title')
 const playerNote = $('player-note')
 const playerSubs = $('player-subs')
 
-async function openPlayer (torrentHash, file, transcode) {
+let PLAYING = null // { infoHash, fileIndex, name } del vídeo en curso
+let lastProgressSave = 0
+
+async function openPlayer (torrentHash, file, transcode, resumeAt) {
   playerTitle.textContent = file.name
   playerSubs.innerHTML = ''
   clearTracks() // limpiar tracks previos
+
+  PLAYING = { infoHash: torrentHash, fileIndex: file.index, name: file.name }
+  lastProgressSave = Date.now()
+
+  // Reanudar donde se quedó (solo en streaming directo; la transcodificación
+  // en vivo no permite saltos). Ignora posiciones triviales o ya "vistas".
+  if (resumeAt == null && !transcode) {
+    const saved = MY.progress.find((p) => p.key === `${torrentHash}:${file.index}`)
+    if (saved && !saved.watched && saved.position > 20 &&
+        (!saved.duration || saved.position / saved.duration < 0.95)) {
+      resumeAt = saved.position
+    }
+  }
+  if (resumeAt != null && !transcode) {
+    const target = resumeAt
+    player.addEventListener('loadedmetadata', function seekOnce () {
+      player.removeEventListener('loadedmetadata', seekOnce)
+      try { player.currentTime = target } catch {}
+    })
+    toast(`Reanudando en ${fmtTime(resumeAt)}`)
+  }
 
   player.src = API_BASE + (transcode ? file.transcodeUrl : file.streamUrl)
   overlay.classList.remove('hidden')
@@ -472,7 +624,32 @@ function clearTracks () {
   Array.from(player.querySelectorAll('track')).forEach((t) => t.remove())
 }
 
+// Guarda la posición de reproducción en el servidor (throttled vía llamador)
+function saveProgress () {
+  if (!PLAYING || !CURRENT_USER) return
+  const position = player.currentTime
+  if (!position || position < 5) return
+  const duration = isFinite(player.duration) ? player.duration : 0
+  const body = { infoHash: PLAYING.infoHash, fileIndex: PLAYING.fileIndex, name: PLAYING.name, position, duration }
+  api('/api/me/progress', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  }).then((r) => (r.ok ? r.json() : null)).then((d) => {
+    if (d && d.progress) {
+      MY.progress = [d.progress, ...MY.progress.filter((p) => p.key !== d.progress.key)]
+    }
+  }).catch(() => {})
+}
+
+player.addEventListener('timeupdate', () => {
+  if (!PLAYING || Date.now() - lastProgressSave < 10000) return
+  lastProgressSave = Date.now()
+  saveProgress()
+})
+player.addEventListener('pause', () => { if (PLAYING) saveProgress() })
+
 function closePlayer () {
+  saveProgress()
+  PLAYING = null
   overlay.classList.add('hidden')
   player.pause()
   player.removeAttribute('src')
@@ -491,7 +668,11 @@ function render () {
   if (!CURRENT_USER) return
   api('/api/torrents').then((r) => r.ok ? r.json() : []).then((torrents) => {
     if (!Array.isArray(torrents)) return
+    LAST_TORRENTS = torrents
+    PROGRESS_MAP = {}
+    for (const p of MY.progress) PROGRESS_MAP[p.key] = p
     updateGlobalStats(torrents)
+    renderContinueRow(torrents)
     if (!torrents.length) { listEl.innerHTML = '<p class="empty">Tu biblioteca está vacía.<br>Usa <b>Descubrir</b> o <b>Buscar</b> para encontrar contenido, o <b>Añadir</b> para un magnet/.torrent.</p>'; return }
     listEl.innerHTML = torrents.map(cardHtml).join('')
     listEl.querySelectorAll('[data-remove]').forEach((b) => b.addEventListener('click', () => removeTorrent(b.dataset.remove)))
@@ -518,6 +699,57 @@ function updateGlobalStats (torrents) {
   badge.classList.toggle('hidden', active === 0)
 }
 
+// ---- Continuar viendo ----
+let lastContinueHtml = ''
+
+function renderContinueRow (torrents) {
+  const el = $('continue-row')
+  const items = MY.progress
+    .filter((p) => !p.watched && p.position > 20 && (!p.duration || p.position / p.duration < 0.95))
+    .slice(0, 12)
+  let html = ''
+  if (items.length) {
+    html = '<h3 class="row-title">Continuar viendo</h3><div class="continue-list">' + items.map((p) => {
+      const t = torrents.find((x) => x.infoHash === p.infoHash)
+      const available = !!(t && t.files[p.fileIndex])
+      const pct = p.duration ? Math.min(100, Math.round(p.position / p.duration * 100)) : 0
+      return `
+        <div class="continue-card${available ? '' : ' missing'}">
+          <div class="continue-info">
+            <span class="continue-name">${escapeHtml(p.name || 'Vídeo')}</span>
+            <span class="continue-meta">${fmtTime(p.position)}${p.duration ? ` / ${fmtTime(p.duration)} · ${pct}%` : ''}${available ? '' : ' · ya no está en tu biblioteca'}</span>
+            <div class="continue-bar"><div style="width:${pct}%"></div></div>
+          </div>
+          <div class="continue-actions">
+            <button class="btn-play" data-resume="${escapeHtml(p.key)}" ${available ? '' : 'disabled'}>▶ Reanudar</button>
+            <button class="btn-icon danger" data-forget="${escapeHtml(p.key)}" title="Quitar de continuar viendo">✕</button>
+          </div>
+        </div>`
+    }).join('') + '</div>'
+  }
+  if (html !== lastContinueHtml) {
+    lastContinueHtml = html
+    el.innerHTML = html
+    el.querySelectorAll('[data-resume]').forEach((b) => b.addEventListener('click', () => resumeFromProgress(b.dataset.resume)))
+    el.querySelectorAll('[data-forget]').forEach((b) => b.addEventListener('click', () => forgetProgress(b.dataset.forget)))
+  }
+}
+
+function resumeFromProgress (key) {
+  const p = MY.progress.find((x) => x.key === key)
+  const t = p && LAST_TORRENTS.find((x) => x.infoHash === p.infoHash)
+  const file = t && t.files[p.fileIndex]
+  if (!file) { toast('Ese vídeo ya no está en tu biblioteca.', true); return }
+  openPlayer(t.infoHash, file, false, p.position)
+}
+
+async function forgetProgress (key) {
+  MY.progress = MY.progress.filter((p) => p.key !== key)
+  lastContinueHtml = '' // fuerza re-render en el siguiente ciclo
+  try { await api('/api/me/progress/' + encodeURIComponent(key), { method: 'DELETE' }) } catch {}
+  render()
+}
+
 function cardHtml (t) {
   const pct = (t.progress * 100).toFixed(1)
   const filesHtml = t.files.map((f) => {
@@ -529,8 +761,10 @@ function cardHtml (t) {
         buttons += `<button class="btn-play alt" data-play="${t.infoHash}" data-fileindex="${f.index}" data-mode="transcode">⚙ Convertir</button>`
       }
     }
+    const prog = PROGRESS_MAP[`${t.infoHash}:${f.index}`]
     const subTag = f.isSubtitle ? '<span class="tag">CC</span>' : ''
-    return `<div class="file-row"><span class="fname">${escapeHtml(f.name)} ${subTag}</span><span class="fmeta">${fmtBytes(f.length)} · ${fpct}%</span>${buttons}</div>`
+    const watchedTag = prog && prog.watched ? '<span class="tag watched">✓ visto</span>' : ''
+    return `<div class="file-row"><span class="fname">${escapeHtml(f.name)} ${subTag}${watchedTag}</span><span class="fmeta">${fmtBytes(f.length)} · ${fpct}%</span>${buttons}</div>`
   }).join('')
 
   return `

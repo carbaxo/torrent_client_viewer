@@ -12,6 +12,7 @@ import {
 } from '../lib/search.js'
 import { createStore } from '../lib/store.js'
 import { createAuth, parseCookies } from '../lib/auth.js'
+import { createUserData, MAX_PROGRESS } from '../lib/userdata.js'
 
 let passed = 0
 const pending = []
@@ -161,6 +162,63 @@ t('persiste y recarga', () => {
   const s1 = createStore(file); s1.add({ infoHash: 'z', owners: ['u'] }); s1.flush()
   const s2 = createStore(file)
   assert.equal(s2.all()[0].infoHash, 'z')
+})
+
+console.log('userdata (favoritos + progreso + ajustes)')
+t('favoritos: add/dedupe/remove y saneado', () => {
+  const u = createUserData(path.join(tmp(), 'userdata.json'))
+  assert.equal(u.addFavorite('u1', {}), null) // sin id/título -> inválido
+  const f = u.addFavorite('u1', { id: 'tmdb:1', title: 'Peli', year: 2020, poster: 'https://evil.com/x.jpg', rating: '7.5' })
+  assert.equal(f.poster, null) // solo pósters de TMDB
+  assert.equal(f.rating, 7.5)
+  u.addFavorite('u1', { id: 'tmdb:1', title: 'Peli', poster: 'https://image.tmdb.org/t/p/w342/x.jpg' })
+  assert.equal(u.getFavorites('u1').length, 1) // dedupe por id
+  assert.ok(u.getFavorites('u1')[0].poster.startsWith('https://image.tmdb.org/'))
+  assert.equal(u.getFavorites('u2').length, 0) // aislado por usuario
+  assert.ok(u.removeFavorite('u1', 'tmdb:1'))
+  assert.equal(u.getFavorites('u1').length, 0)
+})
+t('progreso: watched al 95% y es permanente', () => {
+  const u = createUserData(path.join(tmp(), 'userdata.json'))
+  assert.equal(u.setProgress('u1', {}), null)
+  assert.equal(u.setProgress('u1', { infoHash: 'h', fileIndex: -1, position: 10 }), null)
+  const p1 = u.setProgress('u1', { infoHash: 'h', fileIndex: 0, name: 'peli.mkv', position: 600, duration: 6000 })
+  assert.equal(p1.watched, false)
+  const p2 = u.setProgress('u1', { infoHash: 'h', fileIndex: 0, position: 5800, duration: 6000 })
+  assert.equal(p2.watched, true)
+  // Rebobinar no des-marca lo visto
+  const p3 = u.setProgress('u1', { infoHash: 'h', fileIndex: 0, position: 100, duration: 6000 })
+  assert.equal(p3.watched, true)
+  assert.equal(u.getProgressFor('u1', 'h', 0).name, 'peli.mkv') // conserva nombre
+  assert.ok(u.removeProgress('u1', 'h:0'))
+  assert.equal(u.getProgress('u1').length, 0)
+})
+t('progreso: poda las entradas más antiguas', () => {
+  const u = createUserData(path.join(tmp(), 'userdata.json'))
+  for (let i = 0; i <= MAX_PROGRESS + 10; i++) {
+    u.setProgress('u1', { infoHash: 'h' + i, fileIndex: 0, position: 100, duration: 1000 })
+  }
+  assert.equal(u.getProgress('u1').length, MAX_PROGRESS)
+})
+t('ajustes: fusión, borrado con null y solo escalares', () => {
+  const u = createUserData(path.join(tmp(), 'userdata.json'))
+  u.setSettings('u1', { searchType: 'series', volume: 0.8, obj: { nested: true } })
+  const s = u.getSettings('u1')
+  assert.equal(s.searchType, 'series')
+  assert.equal(s.volume, 0.8)
+  assert.ok(!('obj' in s)) // objetos anidados ignorados
+  u.setSettings('u1', { searchType: null })
+  assert.ok(!('searchType' in u.getSettings('u1')))
+})
+t('persiste y recarga', () => {
+  const file = path.join(tmp(), 'userdata.json')
+  const u1 = createUserData(file)
+  u1.addFavorite('u1', { id: 'tmdb:9', title: 'Otra' })
+  u1.setProgress('u1', { infoHash: 'h', fileIndex: 1, position: 50, duration: 100 })
+  u1.flush()
+  const u2 = createUserData(file)
+  assert.equal(u2.getFavorites('u1')[0].id, 'tmdb:9')
+  assert.equal(u2.getProgressFor('u1', 'h', 1).position, 50)
 })
 
 console.log('auth')
