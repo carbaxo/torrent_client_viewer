@@ -159,10 +159,29 @@
               <button type="submit" id="search-btn" class="btn-primary">Buscar</button>
             </div>
           </form>
+          <div class="genre-block">
+            <span class="genre-label">Explorar por categoría</span>
+            <div id="genre-filters" class="genre-filters"></div>
+          </div>
           <div id="quality-filters" class="quality-filters"></div>
           <p id="search-status" class="status"></p>
           <div id="search-loader" class="loader hidden"><span></span><span></span><span></span></div>
           <div id="search-results" class="results-grid"></div>
+        </section>
+
+        <!-- EXPLORAR (Ver más / por categoría) -->
+        <section class="view hidden" id="view-browse">
+          <div class="browse-head">
+            <button id="browse-back" class="btn-ghost">← Volver</button>
+            <div class="seg hidden" id="browse-type">
+              <button data-btype="movie">Películas</button>
+              <button data-btype="series">Series</button>
+            </div>
+          </div>
+          <div id="browse-grid" class="poster-grid"></div>
+          <div id="browse-loader" class="loader hidden"><span></span><span></span><span></span></div>
+          <div class="browse-more"><button id="browse-more-btn" class="btn-ghost hidden">Cargar más</button></div>
+          <p id="browse-status" class="status"></p>
         </section>
 
         <!-- DETALLE (película/serie) -->

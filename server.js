@@ -411,6 +411,35 @@ app.get('/api/title/:type/:id', searchLimiter, async (req, res) => {
   }
 })
 
+// Géneros de TMDB para los filtros de categoría
+app.use('/api/genres', auth.requireAuth)
+app.get('/api/genres', searchLimiter, async (req, res) => {
+  try {
+    const data = await catalog.getGenres(req.query.type, { lang: req.query.lang })
+    res.json({ success: true, ...data })
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, code: err.code, error: err.message })
+  }
+})
+
+// Explorar (paginado) por plataforma y/o género: ?type=&provider=&genre=&page=&lang=
+app.use('/api/discover', auth.requireAuth)
+app.get('/api/discover', searchLimiter, async (req, res) => {
+  try {
+    const data = await catalog.discover({
+      type: req.query.type,
+      providerKey: req.query.provider,
+      genreId: req.query.genre,
+      page: req.query.page,
+      lang: req.query.lang,
+      kids: req.query.kids === '1'
+    })
+    res.json({ success: true, ...data })
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, code: err.code, error: err.message })
+  }
+})
+
 // Recomendaciones según favoritos/vistos: ?ids=movie:123,series:456&lang=
 app.use('/api/recommendations', auth.requireAuth)
 app.get('/api/recommendations', searchLimiter, async (req, res) => {
