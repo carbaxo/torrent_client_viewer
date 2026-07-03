@@ -16,6 +16,7 @@ import { isSubtitle, srtToVtt, extractEmbeddedVtt, probeSubtitleTracks } from '.
 import { createAuth, AuthError } from './lib/auth.js'
 import { createCatalog } from './lib/catalog.js'
 import { createUserData } from './lib/userdata.js'
+import { createFirebaseVerifier, FirebaseAuthError } from './lib/firebaseAuth.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -26,6 +27,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data')
 const TORRENT_META_DIR = path.join(DATA_DIR, 'torrents')
 const OMDB_API_KEY = process.env.OMDB_API_KEY || ''
 const TMDB_API_KEY = process.env.TMDB_API_KEY || ''
+const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || ''
 const TMDB_REGION = process.env.TMDB_REGION || 'ES'
 const ALLOW_REGISTRATION = process.env.ALLOW_REGISTRATION !== 'false'
 const SECURE_COOKIE = process.env.SECURE_COOKIE === 'true'
@@ -55,6 +57,7 @@ const auth = createAuth({
   secureCookie: SECURE_COOKIE,
   crossSite: CROSS_SITE
 })
+const firebaseVerifier = createFirebaseVerifier({ projectId: FIREBASE_PROJECT_ID })
 
 let ffmpegAvailable = false
 detectFfmpeg().then((ok) => {
@@ -72,13 +75,16 @@ app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff')
   res.setHeader('X-Frame-Options', 'SAMEORIGIN')
   res.setHeader('Referrer-Policy', 'no-referrer')
+  // connect-src/frame-src: endpoints de Firebase Auth y Firestore (login
+  // Google + sincronización). El SDK se sirve desde /vendor (script-src 'self').
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'",
-    "img-src 'self' data: https://image.tmdb.org",
+    "img-src 'self' data: https://image.tmdb.org https://lh3.googleusercontent.com",
     "media-src 'self' blob: data:",
     "style-src 'self' 'unsafe-inline'",
     "script-src 'self'",
-    "connect-src 'self'",
+    "connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firestore.googleapis.com https://www.googleapis.com",
+    "frame-src 'self' https://*.firebaseapp.com https://accounts.google.com",
     "frame-ancestors 'self'"
   ].join('; '))
   next()
@@ -243,6 +249,24 @@ app.post('/api/auth/login', authLimiter, (req, res) => {
   }
 })
 
+// Login con Google vía Firebase: el frontend envía el ID token de Firebase,
+// lo verificamos criptográficamente y emitimos nuestra sesión de siempre.
+app.post('/api/auth/firebase', authLimiter, async (req, res) => {
+  if (!FIREBASE_PROJECT_ID) return res.status(501).json({ error: 'Firebase no está configurado en el servidor.' })
+  try {
+    const { idToken } = req.body || {}
+    const payload = await firebaseVerifier.verify(idToken)
+    const { user, token } = auth.externalLogin('firebase', payload.sub, payload.name || (payload.email || '').split('@')[0])
+    auth.setSessionCookie(res, token)
+    res.json({ user })
+  } catch (err) {
+    if (err instanceof FirebaseAuthError) return res.status(err.status).json({ error: err.message, code: err.code })
+    if (err instanceof AuthError) return res.status(err.status).json({ error: err.message, code: err.code })
+    console.error('[auth] firebase:', err)
+    res.status(500).json({ error: 'Error en el login con Google.' })
+  }
+})
+
 app.post('/api/auth/logout', (req, res) => {
   auth.clearSessionCookie(res)
   res.json({ ok: true })
@@ -260,6 +284,7 @@ app.get('/api/config', (req, res) => {
     ffmpeg: ffmpegAvailable,
     search: !!OMDB_API_KEY,
     catalogs: !!TMDB_API_KEY,
+    firebase: !!FIREBASE_PROJECT_ID,
     allowRegistration: auth.allowRegistration,
     region: TMDB_REGION
   })

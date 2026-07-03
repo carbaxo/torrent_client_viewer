@@ -115,7 +115,47 @@ Si no quieres lidiar con CORS, **no uses GitHub Pages**: despliega solo el backe
 
 ---
 
-## 6. Notas de seguridad
+## 6. Firebase: login con Google + sincronización entre dispositivos
+
+Opcional. Añade **"Continuar con Google"** al login y sincroniza favoritos,
+historial ("continuar viendo", vistos) y ajustes en la nube (Firestore), de
+modo que la misma cuenta funcione en varios dispositivos.
+
+1. Crea un proyecto en <https://console.firebase.google.com>.
+2. **Authentication → Sign-in method**: habilita **Google**.
+3. **Firestore Database → Crear base de datos** (modo producción).
+4. En **Configuración del proyecto → General → Tus apps**, crea una app web
+   (`</>`) y copia el bloque `firebaseConfig`.
+5. Pega esa configuración en **`public/config.js`** (`window.TCV_FIREBASE`).
+6. Pon el mismo projectId en **`.env`**: `FIREBASE_PROJECT_ID=tu-proyecto`.
+7. En **Firestore → Reglas**, pega y publica estas reglas (cada usuario solo
+   puede leer/escribir su propio documento):
+
+```
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+  }
+}
+```
+
+Notas:
+- El SDK de Firebase se sirve **autoalojado** desde `public/vendor/` (la CSP
+  no permite CDNs externas). La config de `config.js` no es secreta.
+- El servidor verifica criptográficamente el ID token de Firebase
+  (`lib/firebaseAuth.js`) y emite su sesión de siempre: los torrents siguen
+  siendo por usuario.
+- Si sirves la app desde un dominio distinto de `localhost`, añádelo en
+  **Authentication → Settings → Authorized domains**.
+- Sin `TCV_FIREBASE`/`FIREBASE_PROJECT_ID`, todo funciona igual con cuentas
+  locales (sin sincronización en la nube).
+
+---
+
+## 7. Notas de seguridad
 
 - Contraseñas hasheadas con **scrypt**; sesiones firmadas con **HMAC** en cookie `httpOnly`.
 - Define `SESSION_SECRET` en producción (si no, se autogenera y se pierde al recrear el contenedor, cerrando todas las sesiones).

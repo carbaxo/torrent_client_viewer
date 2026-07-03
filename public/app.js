@@ -19,6 +19,73 @@ let LAST_CATALOGS = []
 let LAST_TORRENTS = []
 let PROGRESS_MAP = {}
 
+// ===================== Firebase (Google + Firestore) =====================
+// El SDK se sirve autoalojado desde /vendor. Si no hay configuración
+// (window.TCV_FIREBASE) la app funciona igual con cuentas locales.
+let FB = null // { auth, db }
+
+function initFirebase () {
+  if (!window.TCV_FIREBASE || typeof firebase === 'undefined') return
+  try {
+    firebase.initializeApp(window.TCV_FIREBASE)
+    FB = { auth: firebase.auth(), db: firebase.firestore() }
+    $('login-alt').classList.remove('hidden')
+  } catch (err) {
+    console.error('[firebase] init:', err)
+  }
+}
+
+// Espera a que Firebase restaure (o no) la sesión guardada
+function fbUserReady () {
+  return new Promise((resolve) => {
+    if (!FB) return resolve(null)
+    const off = FB.auth.onAuthStateChanged((u) => { off(); resolve(u) })
+  })
+}
+
+// --- Sincronización del estado con Firestore ---
+let cloudRef = null
+let cloudSaveTimer = null
+
+async function connectCloud () {
+  cloudRef = null
+  if (!FB) return
+  const fbUser = await fbUserReady()
+  if (!fbUser) return // sesión local sin Google: solo almacenamiento local
+  cloudRef = FB.db.collection('users').doc(fbUser.uid)
+  try {
+    const snap = await cloudRef.get()
+    if (snap.exists) {
+      // La nube es la fuente de verdad al iniciar sesión
+      const d = snap.data() || {}
+      MY = {
+        favorites: Array.isArray(d.favorites) ? d.favorites : [],
+        progress: Array.isArray(d.progress) ? d.progress : [],
+        settings: d.settings && typeof d.settings === 'object' ? d.settings : {}
+      }
+      FAV_IDS = new Set(MY.favorites.map((f) => f.id))
+    } else {
+      cloudSave() // primer dispositivo: sube el estado local existente
+    }
+  } catch (err) {
+    console.error('[cloud] lectura:', err)
+  }
+}
+
+// Guardado debounced del documento del usuario (estado completo, <1MB)
+function cloudSave () {
+  if (!cloudRef) return
+  clearTimeout(cloudSaveTimer)
+  cloudSaveTimer = setTimeout(() => {
+    cloudRef.set({
+      favorites: MY.favorites,
+      progress: MY.progress,
+      settings: MY.settings,
+      updatedAt: new Date().toISOString()
+    }).catch((err) => console.error('[cloud] guardado:', err))
+  }, 800)
+}
+
 // ===================== Utilidades =====================
 function fmtBytes (bytes) {
   if (!bytes || bytes < 0) return '0 B'
@@ -119,6 +186,7 @@ async function onLoggedIn (user) {
   $('user-avatar').textContent = (user.username || '?').charAt(0).toUpperCase()
   await loadConfig()
   await loadMyState()
+  await connectCloud()
   applySettings()
   renderMyList()
   switchView(CONFIG.catalogs ? 'discover' : 'search')
@@ -155,6 +223,7 @@ function saveSettings (patch) {
   api('/api/me/settings', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch)
   }).catch(() => {})
+  cloudSave()
 }
 
 async function loadConfig () {
@@ -203,8 +272,36 @@ $('login-form').addEventListener('submit', async (e) => {
   }
 })
 
+// Login con Google (Firebase) -> ID token -> sesión propia del backend
+$('google-btn').addEventListener('click', async () => {
+  if (!FB) return
+  const statusEl = $('login-status')
+  statusEl.classList.remove('error')
+  statusEl.textContent = 'Abriendo Google…'
+  try {
+    const cred = await FB.auth.signInWithPopup(new firebase.auth.GoogleAuthProvider())
+    const idToken = await cred.user.getIdToken()
+    const res = await api('/api/auth/firebase', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idToken })
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || 'Error')
+    statusEl.textContent = ''
+    onLoggedIn(data.user)
+  } catch (err) {
+    if (err && (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request')) {
+      statusEl.textContent = ''
+      return
+    }
+    statusEl.classList.add('error')
+    statusEl.textContent = err.message || 'No se pudo iniciar sesión con Google.'
+  }
+})
+
 $('logout-btn').addEventListener('click', async () => {
   try { await api('/api/auth/logout', { method: 'POST' }) } catch {}
+  if (FB) { try { await FB.auth.signOut() } catch {} }
+  cloudRef = null
   CURRENT_USER = null
   MY = { favorites: [], progress: [], settings: {} }
   FAV_IDS = new Set()
@@ -325,6 +422,7 @@ async function toggleFavorite (card) {
       })
     }
   } catch {}
+  cloudSave()
   renderMyList()
   refreshFavHearts()
 }
@@ -636,6 +734,7 @@ function saveProgress () {
   }).then((r) => (r.ok ? r.json() : null)).then((d) => {
     if (d && d.progress) {
       MY.progress = [d.progress, ...MY.progress.filter((p) => p.key !== d.progress.key)]
+      cloudSave()
     }
   }).catch(() => {})
 }
@@ -746,6 +845,7 @@ function resumeFromProgress (key) {
 async function forgetProgress (key) {
   MY.progress = MY.progress.filter((p) => p.key !== key)
   lastContinueHtml = '' // fuerza re-render en el siguiente ciclo
+  cloudSave()
   try { await api('/api/me/progress/' + encodeURIComponent(key), { method: 'DELETE' }) } catch {}
   render()
 }
@@ -790,5 +890,6 @@ function cardHtml (t) {
 }
 
 // ===================== Init =====================
+initFirebase()
 toggleSeasonFields()
 checkSession()

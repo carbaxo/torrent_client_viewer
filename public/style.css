@@ -83,6 +83,19 @@ body {
 .login-tab.active { background: var(--accent); color: #fff; box-shadow: 0 4px 14px rgba(123, 91, 245, .4); }
 .login-form { display: flex; flex-direction: column; gap: 10px; }
 .login-form input { width: 100%; }
+.login-alt { margin-top: 14px; }
+.login-divider {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+  color: var(--muted); font-size: .8rem;
+}
+.login-divider::before, .login-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.btn-google {
+  width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;
+  background: #fff; color: #1f1f1f; font-weight: 600;
+  border: 1px solid var(--border);
+}
+.btn-google svg { width: 18px; height: 18px; }
+.btn-google:hover { filter: brightness(.95); }
 
 /* ---------- Estructura de la app ---------- */
 .app-shell { min-height: 100vh; }

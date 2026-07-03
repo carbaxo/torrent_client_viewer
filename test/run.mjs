@@ -10,9 +10,11 @@ import {
   parseStream, processStreams, parseApibay, dedupeStreams,
   createSearch, SearchError
 } from '../lib/search.js'
+import crypto from 'node:crypto'
 import { createStore } from '../lib/store.js'
 import { createAuth, parseCookies } from '../lib/auth.js'
 import { createUserData, MAX_PROGRESS } from '../lib/userdata.js'
+import { createFirebaseVerifier } from '../lib/firebaseAuth.js'
 
 let passed = 0
 const pending = []
@@ -246,6 +248,47 @@ t('usuario duplicado / validaciones', () => {
   assert.throws(() => a.register('x', 'password1'), (e) => e.code === 'BAD_USERNAME')
   assert.throws(() => a.register('validname', '123'), (e) => e.code === 'BAD_PASSWORD')
 })
+t('externalLogin: crea una vez y reutiliza; usuario saneado', () => {
+  const dir = tmp()
+  const a = createAuth({ usersFile: path.join(dir, 'users.json'), secretFile: path.join(dir, '.secret') })
+  a.register('Ruben', 'password1') // ocupa el nombre
+  const r1 = a.externalLogin('firebase', 'uid-123', 'Rubén!!')
+  assert.equal(r1.user.provider, 'firebase')
+  assert.equal(r1.user.username, 'Ruben2') // saneado (sin tilde/!) y único
+  const r2 = a.externalLogin('firebase', 'uid-123', 'Otro Nombre')
+  assert.equal(r2.user.id, r1.user.id) // mismo usuario en logins sucesivos
+  assert.ok(r2.token)
+  assert.throws(() => a.externalLogin('', ''), (e) => e.code === 'BAD_EXTERNAL')
+  // La cuenta externa no permite login con contraseña
+  assert.throws(() => a.login('Ruben2', 'loquesea'), (e) => e.code === 'INVALID')
+})
+
+t('firebase: verifica firma, aud, iss y expiración', async () => {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
+  const pubPem = publicKey.export({ type: 'spki', format: 'pem' })
+  const fetchImpl = async () => ({ ok: true, json: async () => ({ kid1: pubPem }) })
+  const projectId = 'proj-test'
+  const makeToken = (claims, kid = 'kid1') => {
+    const now = Math.floor(Date.now() / 1000)
+    const h = Buffer.from(JSON.stringify({ alg: 'RS256', kid })).toString('base64url')
+    const p = Buffer.from(JSON.stringify({
+      aud: projectId, iss: `https://securetoken.google.com/${projectId}`,
+      sub: 'uid-1', iat: now, exp: now + 3600, ...claims
+    })).toString('base64url')
+    const sig = crypto.sign('RSA-SHA256', Buffer.from(`${h}.${p}`), privateKey).toString('base64url')
+    return `${h}.${p}.${sig}`
+  }
+  const v = createFirebaseVerifier({ projectId, fetchImpl })
+  const payload = await v.verify(makeToken({}))
+  assert.equal(payload.sub, 'uid-1')
+  await assert.rejects(v.verify(makeToken({ aud: 'otro-proyecto' })), (e) => e.code === 'AUD')
+  await assert.rejects(v.verify(makeToken({ exp: Math.floor(Date.now() / 1000) - 10 })), (e) => e.code === 'EXPIRED')
+  await assert.rejects(v.verify(makeToken({ iss: 'https://evil.com' })), (e) => e.code === 'ISS')
+  const tampered = makeToken({}).slice(0, -6) + 'AAAAAA'
+  await assert.rejects(v.verify(tampered), (e) => e.code === 'SIGNATURE')
+  await assert.rejects(v.verify('no-es-un-jwt'), (e) => e.code === 'MALFORMED')
+})
+
 t('token manipulado se rechaza', () => {
   const dir = tmp()
   const a = createAuth({ usersFile: path.join(dir, 'users.json'), secretFile: path.join(dir, '.secret') })
