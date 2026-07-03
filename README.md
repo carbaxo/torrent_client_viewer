@@ -4,8 +4,13 @@ App web multiusuario para **buscar, descargar y reproducir vídeo en streaming m
 
 ## Funciones
 
-- 🔐 **Login por usuario/contraseña** (scrypt + sesión firmada). Cada usuario tiene su **biblioteca privada**.
-- 🍿 **Catálogos de streaming** (TMDB): Netflix, Prime Video, HBO Max, Disney+ con pósters; clic en un título → busca torrents.
+- 🔐 **Login por usuario/contraseña** (scrypt + sesión firmada) o **con Google** (Firebase). Cada usuario tiene su **biblioteca privada**.
+- 👨‍👩‍👧 **Perfiles por cuenta** (hasta 5), con **modo infantil** (solo catálogos familiares, sin buscar/añadir/borrar).
+- ☁️ **Sincronización** de favoritos, historial y ajustes entre dispositivos (Firestore) al entrar con Google.
+- ❤️ **Favoritos** con su propia pestaña, ⏯️ **continuar viendo** (reanuda donde lo dejaste), ✓ **vistos** automáticos y 🎯 **recomendaciones** TMDB según lo que ves.
+- ▶️ **Ver** (descarga a un buffer temporal que se borra al terminar de verlo) o ⬇️ **Descargar** (permanente); carpetas configurables en Ajustes.
+- ⚡ **Real-Debrid opcional por cuenta**: streaming HTTPS directo desde sus servidores con tu token privado.
+- 🍿 **Catálogos de streaming** (TMDB): Netflix, Prime Video, HBO Max, Disney+ con pósters (idioma configurable); clic en un título → busca torrents.
 - 🔎 **Buscador con 2 motores**: **Torrentio** (vía OMDb → IMDb) y **Peerflix** (apibay/TPB). Selector *Torrentio | Peerflix | Todos*.
   - Filtros de calidad (4K/1080p/720p/SD), selección de **temporada/episodio** para series, badges de fuente y seeders.
   - Botones **Descargar y ver**, **Copiar Magnet** y **Abrir en Peerflix** (`peerflix://`).
@@ -39,9 +44,12 @@ npm test    # 32 asserts: motores de búsqueda, caché, persistencia, propietari
 ```
 server.js            Express: auth, API REST, streaming (Range), transcodificación, subtítulos, persistencia
 lib/
-  auth.js            Usuarios (scrypt) + sesiones firmadas (HMAC) + middleware
+  auth.js            Usuarios (scrypt) + sesiones firmadas (HMAC) + middleware + login externo
+  firebaseAuth.js    Verificación de ID tokens de Firebase (RS256, sin dependencias)
+  userdata.js        Perfiles + favoritos + progreso + ajustes + cuenta (token RD)
+  realdebrid.js      Cliente Real-Debrid (magnet -> stream HTTPS directo)
   search.js          Motores Torrentio + Peerflix, helpers, dedupe, caché
-  catalog.js         Catálogos de streaming (TMDB discover + watch providers)
+  catalog.js         Catálogos de streaming (TMDB discover + watch providers) + recomendaciones
   subtitles.js       SRT→VTT y extracción de subtítulos embebidos (ffmpeg/ffprobe)
   store.js           Persistencia de torrents + propietarios por usuario
   transcode.js       Transcodificación en vivo con ffmpeg (H.264/AAC yuv420p)

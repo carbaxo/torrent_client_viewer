@@ -15,6 +15,7 @@ import { createStore } from '../lib/store.js'
 import { createAuth, parseCookies } from '../lib/auth.js'
 import { createUserData, MAX_PROGRESS } from '../lib/userdata.js'
 import { createFirebaseVerifier } from '../lib/firebaseAuth.js'
+import { createRealDebrid } from '../lib/realdebrid.js'
 
 let passed = 0
 const pending = []
@@ -166,61 +167,136 @@ t('persiste y recarga', () => {
   assert.equal(s2.all()[0].infoHash, 'z')
 })
 
-console.log('userdata (favoritos + progreso + ajustes)')
+console.log('userdata (perfiles + favoritos + progreso + ajustes)')
+const P = 'default'
+t('perfiles: por defecto, crear, editar, eliminar', () => {
+  const u = createUserData(path.join(tmp(), 'userdata.json'))
+  const list = u.getProfiles('u1')
+  assert.equal(list.length, 1) // siempre existe "Principal"
+  assert.equal(list[0].id, 'default')
+  const kids = u.addProfile('u1', { name: ' Niños <x> ', kids: true })
+  assert.equal(kids.name, 'Niños')
+  assert.equal(kids.kids, true)
+  assert.equal(u.addProfile('u1', { name: '' }), null) // nombre vacío
+  const upd = u.updateProfile('u1', kids.id, { name: 'Peques', kids: false })
+  assert.equal(upd.name, 'Peques')
+  assert.equal(upd.kids, false)
+  assert.ok(u.removeProfile('u1', kids.id))
+  assert.equal(u.removeProfile('u1', 'default'), false) // nunca el último
+})
+t('perfiles: estado aislado entre perfiles y entre usuarios', () => {
+  const u = createUserData(path.join(tmp(), 'userdata.json'))
+  const p2 = u.addProfile('u1', { name: 'Otro' })
+  u.addFavorite('u1', P, { id: 'tmdb:1', title: 'Peli' })
+  assert.equal(u.getFavorites('u1', P).length, 1)
+  assert.equal(u.getFavorites('u1', p2.id).length, 0) // aislado por perfil
+  assert.equal(u.getFavorites('u2', P).length, 0) // aislado por usuario
+})
+t('migración: estado antiguo sin perfiles pasa al perfil por defecto', () => {
+  const file = path.join(tmp(), 'userdata.json')
+  fs.writeFileSync(file, JSON.stringify({
+    u1: { favorites: [{ id: 'tmdb:5', title: 'Vieja' }], progress: {}, settings: { searchType: 'series' } }
+  }))
+  const u = createUserData(file)
+  assert.equal(u.getFavorites('u1', P)[0].id, 'tmdb:5')
+  assert.equal(u.getSettings('u1', P).searchType, 'series')
+})
 t('favoritos: add/dedupe/remove y saneado', () => {
   const u = createUserData(path.join(tmp(), 'userdata.json'))
-  assert.equal(u.addFavorite('u1', {}), null) // sin id/título -> inválido
-  const f = u.addFavorite('u1', { id: 'tmdb:1', title: 'Peli', year: 2020, poster: 'https://evil.com/x.jpg', rating: '7.5' })
+  assert.equal(u.addFavorite('u1', P, {}), null) // sin id/título -> inválido
+  const f = u.addFavorite('u1', P, { id: 'tmdb:1', title: 'Peli', year: 2020, poster: 'https://evil.com/x.jpg', rating: '7.5' })
   assert.equal(f.poster, null) // solo pósters de TMDB
   assert.equal(f.rating, 7.5)
-  u.addFavorite('u1', { id: 'tmdb:1', title: 'Peli', poster: 'https://image.tmdb.org/t/p/w342/x.jpg' })
-  assert.equal(u.getFavorites('u1').length, 1) // dedupe por id
-  assert.ok(u.getFavorites('u1')[0].poster.startsWith('https://image.tmdb.org/'))
-  assert.equal(u.getFavorites('u2').length, 0) // aislado por usuario
-  assert.ok(u.removeFavorite('u1', 'tmdb:1'))
-  assert.equal(u.getFavorites('u1').length, 0)
+  u.addFavorite('u1', P, { id: 'tmdb:1', title: 'Peli', poster: 'https://image.tmdb.org/t/p/w342/x.jpg' })
+  assert.equal(u.getFavorites('u1', P).length, 1) // dedupe por id
+  assert.ok(u.getFavorites('u1', P)[0].poster.startsWith('https://image.tmdb.org/'))
+  assert.ok(u.removeFavorite('u1', P, 'tmdb:1'))
+  assert.equal(u.getFavorites('u1', P).length, 0)
 })
-t('progreso: watched al 95% y es permanente', () => {
+t('progreso: watched al 95%, permanente y visible entre perfiles', () => {
   const u = createUserData(path.join(tmp(), 'userdata.json'))
-  assert.equal(u.setProgress('u1', {}), null)
-  assert.equal(u.setProgress('u1', { infoHash: 'h', fileIndex: -1, position: 10 }), null)
-  const p1 = u.setProgress('u1', { infoHash: 'h', fileIndex: 0, name: 'peli.mkv', position: 600, duration: 6000 })
+  assert.equal(u.setProgress('u1', P, {}), null)
+  assert.equal(u.setProgress('u1', P, { infoHash: 'h', fileIndex: -1, position: 10 }), null)
+  const p1 = u.setProgress('u1', P, { infoHash: 'h', fileIndex: 0, name: 'peli.mkv', position: 600, duration: 6000, titleId: 'tmdb:7' })
   assert.equal(p1.watched, false)
-  const p2 = u.setProgress('u1', { infoHash: 'h', fileIndex: 0, position: 5800, duration: 6000 })
+  assert.equal(p1.titleId, 'tmdb:7')
+  const p2 = u.setProgress('u1', P, { infoHash: 'h', fileIndex: 0, position: 5800, duration: 6000 })
   assert.equal(p2.watched, true)
+  assert.equal(p2.titleId, 'tmdb:7') // hereda titleId
   // Rebobinar no des-marca lo visto
-  const p3 = u.setProgress('u1', { infoHash: 'h', fileIndex: 0, position: 100, duration: 6000 })
+  const p3 = u.setProgress('u1', P, { infoHash: 'h', fileIndex: 0, position: 100, duration: 6000 })
   assert.equal(p3.watched, true)
-  assert.equal(u.getProgressFor('u1', 'h', 0).name, 'peli.mkv') // conserva nombre
-  assert.ok(u.removeProgress('u1', 'h:0'))
-  assert.equal(u.getProgress('u1').length, 0)
+  assert.ok(u.isWatchedByAnyProfile('u1', 'h', 0)) // para limpiar el buffer
+  assert.ok(!u.isWatchedByAnyProfile('u1', 'h', 1))
+  assert.ok(u.removeProgress('u1', P, 'h:0'))
+  assert.equal(u.getProgress('u1', P).length, 0)
 })
 t('progreso: poda las entradas más antiguas', () => {
   const u = createUserData(path.join(tmp(), 'userdata.json'))
   for (let i = 0; i <= MAX_PROGRESS + 10; i++) {
-    u.setProgress('u1', { infoHash: 'h' + i, fileIndex: 0, position: 100, duration: 1000 })
+    u.setProgress('u1', P, { infoHash: 'h' + i, fileIndex: 0, position: 100, duration: 1000 })
   }
-  assert.equal(u.getProgress('u1').length, MAX_PROGRESS)
+  assert.equal(u.getProgress('u1', P).length, MAX_PROGRESS)
 })
 t('ajustes: fusión, borrado con null y solo escalares', () => {
   const u = createUserData(path.join(tmp(), 'userdata.json'))
-  u.setSettings('u1', { searchType: 'series', volume: 0.8, obj: { nested: true } })
-  const s = u.getSettings('u1')
+  u.setSettings('u1', P, { searchType: 'series', volume: 0.8, obj: { nested: true } })
+  const s = u.getSettings('u1', P)
   assert.equal(s.searchType, 'series')
   assert.equal(s.volume, 0.8)
   assert.ok(!('obj' in s)) // objetos anidados ignorados
-  u.setSettings('u1', { searchType: null })
-  assert.ok(!('searchType' in u.getSettings('u1')))
+  u.setSettings('u1', P, { searchType: null })
+  assert.ok(!('searchType' in u.getSettings('u1', P)))
+})
+t('cuenta: token RD por usuario, aislado y borrable', () => {
+  const u = createUserData(path.join(tmp(), 'userdata.json'))
+  u.setAccount('u1', { realDebridToken: 'tok-secreto-123' })
+  assert.equal(u.getAccount('u1').realDebridToken, 'tok-secreto-123')
+  assert.equal(u.getAccount('u2').realDebridToken, undefined) // otra cuenta NO lo ve
+  u.setAccount('u1', { realDebridToken: null })
+  assert.equal(u.getAccount('u1').realDebridToken, undefined)
 })
 t('persiste y recarga', () => {
   const file = path.join(tmp(), 'userdata.json')
   const u1 = createUserData(file)
-  u1.addFavorite('u1', { id: 'tmdb:9', title: 'Otra' })
-  u1.setProgress('u1', { infoHash: 'h', fileIndex: 1, position: 50, duration: 100 })
+  u1.addFavorite('u1', P, { id: 'tmdb:9', title: 'Otra' })
+  u1.setProgress('u1', P, { infoHash: 'h', fileIndex: 1, position: 50, duration: 100 })
+  u1.setAccount('u1', { realDebridToken: 'tok' })
   u1.flush()
   const u2 = createUserData(file)
-  assert.equal(u2.getFavorites('u1')[0].id, 'tmdb:9')
-  assert.equal(u2.getProgressFor('u1', 'h', 1).position, 50)
+  assert.equal(u2.getFavorites('u1', P)[0].id, 'tmdb:9')
+  assert.equal(u2.getProgressFor('u1', P, 'h', 1).position, 50)
+  assert.equal(u2.getAccount('u1').realDebridToken, 'tok')
+})
+
+console.log('realdebrid')
+t('streamMagnet: add -> select -> downloaded -> unrestrict', async () => {
+  const calls = []
+  let infoCalls = 0
+  const fetchImpl = async (url, opts = {}) => {
+    calls.push((opts.method || 'GET') + ' ' + url.replace('https://api.real-debrid.com/rest/1.0', ''))
+    const json = (data) => ({ ok: true, status: 200, json: async () => data })
+    if (url.endsWith('/torrents/addMagnet')) return json({ id: 'T1' })
+    if (url.includes('/torrents/info/T1')) {
+      infoCalls++
+      if (infoCalls === 1) return json({ status: 'waiting_files_selection', files: [{ id: 1, path: '/peli.mkv' }, { id: 2, path: '/info.txt' }] })
+      if (infoCalls === 2) return json({ status: 'downloading', progress: 40 })
+      return json({ status: 'downloaded', links: ['https://rd/link1'], filename: 'peli.mkv' })
+    }
+    if (url.includes('/torrents/selectFiles/T1')) return { ok: true, status: 204, json: async () => null }
+    if (url.endsWith('/unrestrict/link')) return json({ download: 'https://x.download.real-debrid.com/d/abc/peli.mkv', filename: 'peli.mkv' })
+    return { ok: false, status: 404, json: async () => ({}) }
+  }
+  const rd = createRealDebrid({ fetchImpl, pollMs: 1, pollTries: 5 })
+  const out = await rd.streamMagnet('tok', 'magnet:?xt=urn:btih:' + 'a'.repeat(40))
+  assert.equal(out.ready, true)
+  assert.ok(out.url.includes('download.real-debrid.com'))
+  assert.ok(calls.some((c) => c.startsWith('POST /torrents/selectFiles'))) // seleccionó solo el vídeo
+})
+t('streamMagnet: token inválido -> BAD_TOKEN', async () => {
+  const fetchImpl = async () => ({ ok: false, status: 401, json: async () => ({}) })
+  const rd = createRealDebrid({ fetchImpl })
+  await assert.rejects(rd.streamMagnet('malo', 'magnet:?xt=urn:btih:' + 'a'.repeat(40)), (e) => e.code === 'BAD_TOKEN')
 })
 
 console.log('auth')
