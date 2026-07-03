@@ -12,13 +12,32 @@ android {
         applicationId = "com.carbaxo.torrentbox"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "2.0"
+        // Clave TMDB inyectada desde un secreto de CI (-PTMDB_KEY=...)
+        buildConfigField("String", "TMDB_KEY", "\"${project.findProperty("TMDB_KEY") ?: ""}\"")
+        // ID de cliente web de Google (para el login con Google, milestone sync)
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"${project.findProperty("GOOGLE_WEB_CLIENT_ID") ?: ""}\"")
+    }
+
+    // Firma estable (misma SHA-1 en cada build) para poder registrar la app
+    // en Firebase y que funcione el login con Google.
+    signingConfigs {
+        create("app") {
+            storeFile = file("../torrentbox.keystore")
+            storePassword = "torrentbox"
+            keyAlias = "torrentbox"
+            keyPassword = "torrentbox"
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("app")
+        }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("app")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -35,6 +54,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {
@@ -66,6 +86,9 @@ dependencies {
     // Servidor HTTP local para hacer streaming del archivo mientras baja
     implementation("org.nanohttpd:nanohttpd:2.3.1")
 
-    // Cliente HTTP para la búsqueda (apibay)
+    // Cliente HTTP para la búsqueda (apibay) y TMDB
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // Carga de imágenes (carátulas TMDB)
+    implementation("io.coil-kt:coil-compose:2.7.0")
 }

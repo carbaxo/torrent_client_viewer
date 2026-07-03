@@ -4,11 +4,30 @@ App Android **nativa e independiente**: descarga torrents **en el propio móvil*
 y reproduce el vídeo **mientras se descarga**, sin depender de ningún PC ni
 servidor.
 
+- **Interfaz al estilo de la web**: pestañas Descubrir / Buscar / Descargas,
+  catálogos con carátulas (Netflix, Prime, HBO Max, Disney+ vía TMDB) y ficha
+  de detalle con sinopsis y fuentes (Ver / Descargar).
 - Motor BitTorrent en el dispositivo: **libtorrent4j** (natives incluidos).
 - Descarga **secuencial** con priorización de piezas → reproducción mientras baja.
 - Reproductor **ExoPlayer (Media3)** vía servidor HTTP local con soporte de Range.
-- Buscador integrado (apibay / The Pirate Bay), sin API key.
+- Buscador de fuentes (apibay / The Pirate Bay), sin API key.
 - Descarga en segundo plano con servicio en primer plano.
+
+## Sincronización con tu cuenta de Google (opcional, en preparación)
+
+Para que la app use **la misma cuenta** que la app del PC y sincronice
+favoritos/historial vía Firebase, Google exige registrar la **huella SHA-1** de
+la app en tu proyecto de Firebase:
+
+1. Firebase Console → tu proyecto → **Configuración → Tus apps → Añadir app →
+   Android**. Nombre de paquete: `com.carbaxo.torrentbox`.
+2. En **SHA-1** pega:
+   `8C:82:4C:DD:BA:A8:DE:9D:96:71:AE:00:49:70:C6:33:F1:F1:26:49`
+3. Descarga el `google-services.json` y el **ID de cliente web** (OAuth 2.0),
+   y pásamelo (o pégalo en `gradle.properties` → `GOOGLE_WEB_CLIENT_ID`).
+
+La app se firma con `torrentbox.keystore` (incluido) para que la SHA-1 sea
+siempre la misma.
 
 ## Cómo conseguir el APK
 
