@@ -162,7 +162,10 @@ body {
   display: inline-flex; align-items: center; justify-content: center;
   background: linear-gradient(135deg, #8f6bff, #5b3df0);
   color: #fff; font-weight: 800; font-size: .9rem;
+  overflow: hidden; cursor: pointer; flex-shrink: 0;
 }
+.avatar-img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; display: block; }
+.profile-avatar { overflow: hidden; }
 
 main { max-width: 1200px; margin: 0 auto; padding: 24px 28px 60px; }
 
@@ -363,7 +366,8 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .continue-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .tag.watched { color: var(--green); }
 
-.torrent-list { display: flex; flex-direction: column; gap: 14px; }
+.torrent-list, .downloads-list { display: flex; flex-direction: column; gap: 14px; }
+.tag.offline { color: var(--green); }
 .torrent-card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px;
   transition: border-color .15s;
@@ -507,6 +511,37 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .profile-tag { font-size: .72rem; color: var(--green); font-weight: 700; }
 .profile-new { display: flex; gap: 10px; justify-content: center; align-items: center; flex-wrap: wrap; }
 .profile-new input[type="text"] { min-width: 200px; }
+.avatar-edit-btn { background: transparent; border: none; padding: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; }
+.avatar-edit-btn .profile-avatar { width: 56px; height: 56px; border-radius: 14px; font-size: 1.5rem; }
+.avatar-edit-hint { font-size: .7rem; color: var(--accent); font-weight: 600; }
+
+/* Editor de avatar */
+.avatar-overlay {
+  position: fixed; inset: 0; z-index: 80;
+  background: rgba(6, 5, 10, .8); backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.avatar-overlay.hidden { display: none; }
+.avatar-box {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+  padding: 24px; width: 100%; max-width: 420px; box-shadow: 0 24px 70px rgba(0, 0, 0, .6);
+}
+.avatar-box-head { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+.avatar-box-head h3 { margin: 0; font-size: 1.05rem; }
+.profile-avatar.big { width: 64px; height: 64px; border-radius: 16px; font-size: 1.8rem; flex-shrink: 0; }
+.avatar-emojis { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; margin-bottom: 16px; }
+.avatar-emoji {
+  aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
+  font-size: 1.3rem; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 0;
+}
+.avatar-emoji:hover { border-color: var(--accent); filter: none; }
+.avatar-custom { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
+.avatar-upload { justify-content: center; cursor: pointer; }
+.avatar-box-actions { display: flex; justify-content: flex-end; gap: 10px; }
+
+.profile-row .profile-avatar.small { cursor: pointer; border: 2px solid transparent; transition: border-color .15s; }
+.profile-row .profile-avatar.small:hover { border-color: var(--accent); }
 
 /* ---------- Ajustes ---------- */
 .profiles-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }

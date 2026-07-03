@@ -70,9 +70,13 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
           <span class="nav-label">Favoritos</span>
         </button>
-        <button class="nav-item" data-view="library" title="Mi biblioteca">
+        <button class="nav-item" data-view="downloads" title="Descargas">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+          <span class="nav-label">Descargas</span>
+        </button>
+        <button class="nav-item" data-view="library" title="Actividad de descargas">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          <span class="nav-label">Biblioteca</span>
+          <span class="nav-label">Actividad</span>
           <span id="nav-lib-badge" class="nav-badge hidden"></span>
         </button>
         <button class="nav-item" data-view="add" title="Añadir manualmente">
@@ -170,7 +174,12 @@
           <div id="favorites-grid" class="poster-grid"></div>
         </section>
 
-        <!-- BIBLIOTECA -->
+        <!-- DESCARGAS (biblioteca offline) -->
+        <section class="view hidden" id="view-downloads">
+          <div id="downloads-list" class="downloads-list"></div>
+        </section>
+
+        <!-- ACTIVIDAD (torrents en curso) -->
         <section class="view hidden" id="view-library">
           <div id="continue-row"></div>
           <div id="torrent-list" class="torrent-list"></div>
@@ -251,10 +260,32 @@
       <h2>¿Quién está viendo?</h2>
       <div id="profile-cards" class="profile-cards"></div>
       <form id="profile-new" class="profile-new hidden">
+        <button type="button" id="profile-new-avatar" class="avatar-edit-btn" title="Elegir imagen"><span class="profile-avatar">🍿</span><span class="avatar-edit-hint">Cambiar</span></button>
         <input type="text" id="profile-new-name" placeholder="Nombre del perfil" maxlength="24" autocomplete="off" />
         <label class="check"><input type="checkbox" id="profile-new-kids" /> Perfil infantil</label>
         <button type="submit" class="btn-primary">Crear perfil</button>
       </form>
+    </div>
+  </div>
+
+  <!-- Editor de avatar -->
+  <div id="avatar-overlay" class="avatar-overlay hidden">
+    <div class="avatar-box">
+      <div class="avatar-box-head">
+        <span id="avatar-preview" class="profile-avatar big">🍿</span>
+        <h3>Imagen del perfil</h3>
+      </div>
+      <div id="avatar-emojis" class="avatar-emojis"></div>
+      <div class="avatar-custom">
+        <label class="btn-ghost avatar-upload">📁 Subir imagen
+          <input type="file" id="avatar-file" accept="image/*" hidden />
+        </label>
+        <input type="text" id="avatar-url" placeholder="o pega la URL de una imagen (https://…)" autocomplete="off" />
+      </div>
+      <div class="avatar-box-actions">
+        <button id="avatar-cancel" class="btn-ghost">Cancelar</button>
+        <button id="avatar-save" class="btn-primary">Guardar</button>
+      </div>
     </div>
   </div>
 

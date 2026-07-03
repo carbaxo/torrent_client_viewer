@@ -15,7 +15,7 @@ import { detectFfmpeg, transcodeToMp4 } from './lib/transcode.js'
 import { isSubtitle, srtToVtt, extractEmbeddedVtt, probeSubtitleTracks } from './lib/subtitles.js'
 import { createAuth, AuthError } from './lib/auth.js'
 import { createCatalog } from './lib/catalog.js'
-import { createUserData } from './lib/userdata.js'
+import { createUserData, DEFAULT_AVATARS } from './lib/userdata.js'
 import { createFirebaseVerifier, FirebaseAuthError } from './lib/firebaseAuth.js'
 import { createRealDebrid, RdError } from './lib/realdebrid.js'
 
@@ -343,7 +343,8 @@ app.get('/api/config', (req, res) => {
     catalogs: !!TMDB_API_KEY,
     firebase: !!FIREBASE_PROJECT_ID,
     allowRegistration: auth.allowRegistration,
-    region: TMDB_REGION
+    region: TMDB_REGION,
+    avatars: DEFAULT_AVATARS
   })
 })
 

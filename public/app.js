@@ -169,7 +169,7 @@ function escapeHtml (str) {
 function $ (id) { return document.getElementById(id) }
 
 // ===================== Navegación (sidebar) =====================
-const VIEW_TITLES = { discover: 'Descubrir', search: 'Buscar', favorites: 'Favoritos', library: 'Mi biblioteca', add: 'Añadir', settings: 'Ajustes', detail: 'Detalle' }
+const VIEW_TITLES = { discover: 'Descubrir', search: 'Buscar', favorites: 'Favoritos', downloads: 'Descargas', library: 'Actividad de descargas', add: 'Añadir', settings: 'Ajustes', detail: 'Detalle' }
 let CURRENT_VIEW = 'discover'
 
 function switchView (view) {
@@ -246,6 +246,15 @@ async function onLoggedIn (user) {
 }
 
 // ===================== Perfiles =====================
+// Contenido de un avatar: imagen (data-URL/https) o emoji/inicial
+function avatarInner (p) {
+  const av = (p && p.avatar) || (p && p.kids ? '🧒' : ((p && p.name) || '?').charAt(0).toUpperCase())
+  if (typeof av === 'string' && (av.startsWith('data:image/') || av.startsWith('https://'))) {
+    return `<img class="avatar-img" src="${escapeHtml(av)}" alt="" />`
+  }
+  return escapeHtml(av)
+}
+
 async function loadProfilesLocal () {
   try {
     const res = await api('/api/me/profiles')
@@ -276,7 +285,7 @@ async function selectProfile (profile) {
   hideProfilePicker()
   appView.classList.remove('hidden')
   $('user-name').textContent = `${CURRENT_USER.username} · ${profile.name}`
-  $('user-avatar').textContent = profile.kids ? '🧒' : (profile.name || '?').charAt(0).toUpperCase()
+  $('user-avatar').innerHTML = avatarInner(profile)
   applyKidsMode()
   await loadMyState()
   adoptCloudState()
@@ -307,7 +316,7 @@ function renderProfileCards () {
   const el = $('profile-cards')
   el.innerHTML = PROFILES.map((p) => `
     <button class="profile-card" data-pid="${escapeHtml(p.id)}">
-      <span class="profile-avatar ${p.kids ? 'kids' : ''}">${p.kids ? '🧒' : escapeHtml((p.name || '?').charAt(0).toUpperCase())}</span>
+      <span class="profile-avatar ${p.kids ? 'kids' : ''}">${avatarInner(p)}</span>
       <span class="profile-name">${escapeHtml(p.name)}</span>
       ${p.kids ? '<span class="profile-tag">infantil</span>' : ''}
     </button>`).join('') + (PROFILES.length < 5
@@ -321,6 +330,14 @@ function renderProfileCards () {
   if (addBtn) addBtn.addEventListener('click', () => $('profile-new').classList.toggle('hidden'))
 }
 
+let NEW_PROFILE_AVATAR = ''
+$('profile-new-avatar').addEventListener('click', () => {
+  openAvatarEditor(NEW_PROFILE_AVATAR || ($('profile-new-kids').checked ? '🧒' : '🍿'), (val) => {
+    NEW_PROFILE_AVATAR = val
+    $('profile-new-avatar').querySelector('.profile-avatar').innerHTML = avatarInner({ avatar: val })
+  })
+})
+
 $('profile-new').addEventListener('submit', async (e) => {
   e.preventDefault()
   const name = $('profile-new-name').value.trim()
@@ -328,7 +345,7 @@ $('profile-new').addEventListener('submit', async (e) => {
   const kids = $('profile-new-kids').checked
   try {
     const res = await api('/api/me/profiles', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, kids })
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, kids, avatar: NEW_PROFILE_AVATAR || undefined })
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || 'Error')
@@ -336,6 +353,8 @@ $('profile-new').addEventListener('submit', async (e) => {
     cloudSave()
     $('profile-new-name').value = ''
     $('profile-new-kids').checked = false
+    NEW_PROFILE_AVATAR = ''
+    $('profile-new-avatar').querySelector('.profile-avatar').innerHTML = '🍿'
     $('profile-new').classList.add('hidden')
     renderProfileCards()
     renderProfilesSettings()
@@ -344,6 +363,65 @@ $('profile-new').addEventListener('submit', async (e) => {
 
 // El avatar abre el selector de perfiles
 $('user-avatar').addEventListener('click', () => { if (CURRENT_USER) showProfilePicker() })
+
+// ===================== Editor de avatar (emoji / subida / URL) =====================
+let avatarValue = ''
+let avatarOnSave = null
+
+function openAvatarEditor (current, onSave) {
+  avatarValue = current || ''
+  avatarOnSave = onSave
+  const grid = $('avatar-emojis')
+  const emojis = (CONFIG.avatars && CONFIG.avatars.length) ? CONFIG.avatars : ['🍿', '🎬', '🎮', '🦄', '🐱', '🐶', '🦊', '🐼', '👾', '🚀', '⚽', '🌈', '🧸', '🎧', '🦁', '🐸']
+  grid.innerHTML = emojis.map((e) => `<button type="button" class="avatar-emoji" data-emoji="${e}">${e}</button>`).join('')
+  grid.querySelectorAll('.avatar-emoji').forEach((b) => b.addEventListener('click', () => setAvatarValue(b.dataset.emoji)))
+  $('avatar-url').value = /^https:\/\//.test(avatarValue) ? avatarValue : ''
+  updateAvatarPreview()
+  $('avatar-overlay').classList.remove('hidden')
+}
+
+function setAvatarValue (v) {
+  avatarValue = v
+  updateAvatarPreview()
+}
+function updateAvatarPreview () {
+  $('avatar-preview').innerHTML = avatarInner({ avatar: avatarValue })
+}
+
+// Redimensiona la imagen subida a 128px (cuadrada, recorte central) y la
+// convierte a JPEG para que quepa holgadamente en Firestore.
+$('avatar-file').addEventListener('change', () => {
+  const file = $('avatar-file').files[0]
+  if (!file) return
+  const reader = new FileReader()
+  reader.onload = () => {
+    const img = new Image()
+    img.onload = () => {
+      const size = 128
+      const canvas = document.createElement('canvas')
+      canvas.width = size; canvas.height = size
+      const ctx = canvas.getContext('2d')
+      const side = Math.min(img.width, img.height)
+      ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size)
+      setAvatarValue(canvas.toDataURL('image/jpeg', 0.82))
+    }
+    img.onerror = () => toast('No se pudo leer la imagen.', true)
+    img.src = reader.result
+  }
+  reader.readAsDataURL(file)
+})
+
+$('avatar-url').addEventListener('input', () => {
+  const v = $('avatar-url').value.trim()
+  if (/^https:\/\//.test(v)) setAvatarValue(v)
+})
+
+$('avatar-cancel').addEventListener('click', () => $('avatar-overlay').classList.add('hidden'))
+$('avatar-overlay').addEventListener('click', (e) => { if (e.target === $('avatar-overlay')) $('avatar-overlay').classList.add('hidden') })
+$('avatar-save').addEventListener('click', () => {
+  $('avatar-overlay').classList.add('hidden')
+  if (avatarOnSave) avatarOnSave(avatarValue)
+})
 
 // ===================== Estado por usuario =====================
 async function loadMyState () {
@@ -583,8 +661,10 @@ const fmtRuntime = (min) => min >= 60 ? `${Math.floor(min / 60)}h ${min % 60}min
 async function openDetail (d) {
   const m = /^(movie|series):(\d+)$/.exec(d.wid || '')
   if (!m) {
-    // Sin id de TMDB (p.ej. búsqueda manual): cae a la búsqueda clásica
-    if (KIDS()) { toast('En el perfil infantil no se puede buscar ni descargar.'); return }
+    // Sin id de TMDB (p.ej. búsqueda manual): cae a la búsqueda clásica.
+    // Los catálogos infantiles siempre traen id, así que aquí no hace falta
+    // bloquear: si llegara sin id en un perfil infantil, no abrimos búsqueda libre.
+    if (KIDS()) { toast('Abre este título desde el catálogo.'); return }
     SEARCH_CONTEXT = { wid: null, title: d.title }
     $('search-input').value = d.title
     $('search-type').value = d.type
@@ -609,7 +689,7 @@ async function openDetail (d) {
     DETAIL = { ...DETAIL, ...data, title: data.title || d.title }
     SEARCH_CONTEXT = { wid: d.wid, title: DETAIL.title }
     renderDetail(DETAIL)
-    if (type === 'movie' && !KIDS()) loadDetailSources({})
+    if (type === 'movie') loadDetailSources({})
     else if (type === 'series' && DETAIL.seasons && DETAIL.seasons.length) selectSeason(DETAIL.seasons[0].season)
   } catch (err) {
     $('detail-content').innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`
@@ -652,13 +732,12 @@ function renderDetail (d) {
         </div>
         <div id="episodes-list" class="episodes-list"></div>
       </div>` : ''}
-    ${KIDS() ? '' : `
-      <div class="detail-block">
-        <h3 class="row-title" id="sources-title">Fuentes</h3>
-        <p id="detail-sources-status" class="status"></p>
-        <div id="detail-sources-loader" class="loader hidden"><span></span><span></span><span></span></div>
-        <div id="detail-sources" class="results-grid"></div>
-      </div>`}
+    <div class="detail-block">
+      <h3 class="row-title" id="sources-title">Fuentes</h3>
+      <p id="detail-sources-status" class="status"></p>
+      <div id="detail-sources-loader" class="loader hidden"><span></span><span></span><span></span></div>
+      <div id="detail-sources" class="results-grid"></div>
+    </div>
   `
 
   $('detail-back').addEventListener('click', () => switchView(PREV_VIEW || 'discover'))
@@ -701,14 +780,12 @@ async function selectSeason (n) {
           <span class="episode-name">${e.episode}. ${escapeHtml(e.name)}${e.rating ? ` <span class="episode-rating">⭐ ${e.rating}</span>` : ''}</span>
           <span class="episode-overview">${escapeHtml(e.overview)}</span>
         </div>
-        ${KIDS() ? '' : '<span class="episode-cta">Fuentes ›</span>'}
+        <span class="episode-cta">Fuentes ›</span>
       </button>`).join('') || '<p class="empty">Esta temporada no tiene episodios listados.</p>'
-    if (!KIDS()) {
-      list.querySelectorAll('.episode-row').forEach((r) => r.addEventListener('click', () => {
-        list.querySelectorAll('.episode-row').forEach((x) => x.classList.toggle('active', x === r))
-        loadDetailSources({ season: n, episode: Number(r.dataset.ep) })
-      }))
-    }
+    list.querySelectorAll('.episode-row').forEach((r) => r.addEventListener('click', () => {
+      list.querySelectorAll('.episode-row').forEach((x) => x.classList.toggle('active', x === r))
+      loadDetailSources({ season: n, episode: Number(r.dataset.ep) })
+    }))
   } catch (err) {
     list.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`
   }
@@ -1256,7 +1333,8 @@ function render () {
     for (const p of MY.progress) PROGRESS_MAP[p.key] = p
     updateGlobalStats(torrents)
     renderContinueRow(torrents)
-    if (!torrents.length) { listEl.innerHTML = '<p class="empty">Tu biblioteca está vacía.<br>Usa <b>Descubrir</b> o <b>Buscar</b> para encontrar contenido, o <b>Añadir</b> para un magnet/.torrent.</p>'; return }
+    renderDownloads(torrents)
+    if (!torrents.length) { listEl.innerHTML = '<p class="empty">Aún no hay descargas activas.<br>Usa <b>Descubrir</b> o <b>Buscar</b>, y pulsa <b>Ver</b> o <b>Descargar</b> en una fuente.</p>'; return }
     listEl.innerHTML = torrents.map(cardHtml).join('')
     listEl.querySelectorAll('[data-remove]').forEach((b) => b.addEventListener('click', () => removeTorrent(b.dataset.remove)))
     listEl.querySelectorAll('[data-pause]').forEach((b) => b.addEventListener('click', () => togglePause(b.dataset.pause, b.dataset.paused === 'true')))
@@ -1334,6 +1412,53 @@ async function forgetProgress (key) {
   render()
 }
 
+// ---- Descargas (biblioteca offline) ----
+// Muestra las descargas permanentes con vídeos ya en disco, reproducibles
+// sin conexión. Los torrents en modo buffer (temporal) no aparecen aquí.
+function renderDownloads (torrents) {
+  const el = $('downloads-list')
+  const items = torrents
+    .filter((t) => t.mode !== 'buffer')
+    .map((t) => ({ t, videos: t.files.filter((f) => f.isVideo) }))
+    .filter((x) => x.videos.length)
+  if (!items.length) {
+    el.innerHTML = '<p class="empty">No tienes descargas todavía.<br>Abre un título y pulsa <b>⬇ Descargar</b> en una fuente para guardarlo y verlo sin conexión.</p>'
+    return
+  }
+  el.innerHTML = items.map(({ t, videos }) => {
+    const filesHtml = videos.map((f) => {
+      const offline = f.progress >= 1
+      const prog = PROGRESS_MAP[`${t.infoHash}:${f.index}`]
+      const watchedTag = prog && prog.watched ? '<span class="tag watched">✓ visto</span>' : ''
+      let btns = `<button class="btn-play" data-play="${t.infoHash}" data-fileindex="${f.index}" data-mode="stream" ${offline ? '' : 'disabled'}>▶ Ver</button>`
+      if (!f.nativePlayable && CONFIG.ffmpeg) {
+        btns += `<button class="btn-play alt" data-play="${t.infoHash}" data-fileindex="${f.index}" data-mode="transcode" ${offline ? '' : 'disabled'}>⚙ Convertir</button>`
+      }
+      return `<div class="file-row">
+        <span class="fname">${escapeHtml(f.name)} ${watchedTag}
+          ${offline ? '<span class="tag offline">✓ sin conexión</span>' : `<span class="tag">${(f.progress * 100).toFixed(0)}%</span>`}</span>
+        <span class="fmeta">${fmtBytes(f.length)}</span>${btns}</div>`
+    }).join('')
+    return `
+      <div class="torrent-card">
+        <div class="torrent-head">
+          <div class="torrent-name">${escapeHtml(t.name || 'Descarga')}${t.done ? '' : ` <span class="tag">descargando ${(t.progress * 100).toFixed(0)}%</span>`}</div>
+          <div class="torrent-actions">
+            <button class="btn-icon danger" data-remove="${t.infoHash}" title="Eliminar descarga">🗑</button>
+          </div>
+        </div>
+        <div class="files">${filesHtml}</div>
+      </div>`
+  }).join('')
+
+  el.querySelectorAll('[data-remove]').forEach((b) => b.addEventListener('click', () => removeTorrent(b.dataset.remove)))
+  el.querySelectorAll('[data-play]').forEach((b) => b.addEventListener('click', () => {
+    const t = torrents.find((x) => x.infoHash === b.dataset.play)
+    const file = t && t.files[Number(b.dataset.fileindex)]
+    if (file) openPlayer(t.infoHash, file, b.dataset.mode === 'transcode', null, t.titleRef)
+  }))
+}
+
 function cardHtml (t) {
   const pct = (t.progress * 100).toFixed(1)
   const filesHtml = t.files.map((f) => {
@@ -1355,10 +1480,10 @@ function cardHtml (t) {
     <div class="torrent-card">
       <div class="torrent-head">
         <div class="torrent-name">${escapeHtml(t.name || 'Obteniendo metadatos…')}${t.mode === 'buffer' ? ' <span class="tag">⏳ temporal</span>' : ''}${t.paused ? ' <span class="tag">⏸ pausa</span>' : ''}</div>
-        ${KIDS() ? '' : `<div class="torrent-actions">
+        <div class="torrent-actions">
           <button class="btn-icon" data-pause="${t.infoHash}" data-paused="${t.paused}" title="${t.paused ? 'Reanudar' : 'Pausar'}">${t.paused ? '▶' : '⏸'}</button>
           <button class="btn-icon danger" data-remove="${t.infoHash}" title="Eliminar">🗑</button>
-        </div>`}
+        </div>
       </div>
       <div class="progress-outer"><div class="progress-inner" style="width:${pct}%"></div></div>
       <div class="stats">
@@ -1380,11 +1505,30 @@ function renderProfilesSettings () {
   const el = $('profiles-list')
   el.innerHTML = PROFILES.map((p) => `
     <div class="profile-row" data-pid="${escapeHtml(p.id)}">
-      <span class="profile-avatar small ${p.kids ? 'kids' : ''}">${p.kids ? '🧒' : escapeHtml((p.name || '?').charAt(0).toUpperCase())}</span>
+      <button class="profile-avatar small ${p.kids ? 'kids' : ''}" data-edit-avatar="${escapeHtml(p.id)}" title="Cambiar imagen">${avatarInner(p)}</button>
       <span class="profile-row-name">${escapeHtml(p.name)}${ACTIVE_PROFILE && ACTIVE_PROFILE.id === p.id ? ' <span class="tag">activo</span>' : ''}</span>
       <label class="check"><input type="checkbox" data-kids-toggle="${escapeHtml(p.id)}" ${p.kids ? 'checked' : ''}/> Infantil</label>
       <button class="btn-icon danger" data-del-profile="${escapeHtml(p.id)}" ${PROFILES.length <= 1 ? 'disabled' : ''} title="Eliminar perfil">✕</button>
     </div>`).join('')
+
+  el.querySelectorAll('[data-edit-avatar]').forEach((b) => b.addEventListener('click', () => {
+    const pid = b.dataset.editAvatar
+    const p = PROFILES.find((x) => x.id === pid)
+    openAvatarEditor(p && p.avatar, async (val) => {
+      try {
+        const res = await api('/api/me/profiles/' + encodeURIComponent(pid), {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ avatar: val })
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Error')
+        if (p) p.avatar = data.profile.avatar
+        if (ACTIVE_PROFILE && ACTIVE_PROFILE.id === pid) { ACTIVE_PROFILE.avatar = data.profile.avatar; $('user-avatar').innerHTML = avatarInner(ACTIVE_PROFILE) }
+        cloudSave()
+        renderProfilesSettings()
+        toast('Imagen del perfil actualizada.')
+      } catch (err) { toast(err.message, true) }
+    })
+  }))
 
   el.querySelectorAll('[data-kids-toggle]').forEach((c) => c.addEventListener('change', async () => {
     const pid = c.dataset.kidsToggle
