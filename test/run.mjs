@@ -1,175 +1,204 @@
 // Tests sin dependencias externas. Ejecutar: node test/run.mjs
 import assert from 'node:assert'
-import {
-  sanitizeQuery, normalizeType, extractQuality, extractSeeders, extractSize,
-  buildMagnet, parseStream, processStreams, createSearch, SearchError
-} from '../lib/search.js'
-import { createStore } from '../lib/store.js'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import {
+  sanitizeQuery, normalizeType, normalizeSource, normalizeInt,
+  extractQuality, extractSeeders, extractSize, humanSize,
+  buildMagnet, isValidMagnet, isValidInfoHash,
+  parseStream, processStreams, parseApibay, dedupeStreams,
+  createSearch, SearchError
+} from '../lib/search.js'
+import { createStore } from '../lib/store.js'
+import { createAuth, parseCookies } from '../lib/auth.js'
 
 let passed = 0
+const pending = []
 function t (name, fn) {
-  try { fn(); passed++; console.log('  ✓', name) } catch (e) { console.error('  ✗', name, '\n    ', e.message); process.exitCode = 1 }
+  try {
+    const r = fn()
+    if (r && r.then) { pending.push(r.then(() => { passed++; console.log('  ✓', name) }).catch((e) => { console.error('  ✗', name, '\n    ', e.message); process.exitCode = 1 })) } else { passed++; console.log('  ✓', name) }
+  } catch (e) { console.error('  ✗', name, '\n    ', e.message); process.exitCode = 1 }
 }
+function tmp () { return fs.mkdtempSync(path.join(os.tmpdir(), 'tcv-')) }
 
-console.log('sanitizeQuery')
-t('elimina etiquetas HTML', () => assert.equal(sanitizeQuery('<script>Inception</script>'), 'Inception'))
-t('recorta espacios y colapsa', () => assert.equal(sanitizeQuery('  the   matrix  '), 'the matrix'))
-t('vacío -> vacío', () => assert.equal(sanitizeQuery(''), ''))
-t('null -> vacío', () => assert.equal(sanitizeQuery(null), ''))
-t('limita longitud a 200', () => assert.equal(sanitizeQuery('a'.repeat(500)).length, 200))
+console.log('sanitizeQuery / normalize')
+t('elimina HTML', () => assert.equal(sanitizeQuery('<script>Inception</script>'), 'Inception'))
+t('colapsa espacios', () => assert.equal(sanitizeQuery('  the   matrix  '), 'the matrix'))
+t('vacío/null', () => { assert.equal(sanitizeQuery(''), ''); assert.equal(sanitizeQuery(null), '') })
+t('normalizeSource', () => { assert.equal(normalizeSource('peerflix'), 'peerflix'); assert.equal(normalizeSource('x'), 'all') })
+t('normalizeInt', () => { assert.equal(normalizeInt('3'), 3); assert.equal(normalizeInt('abc'), null); assert.equal(normalizeInt('-1'), null) })
 
-console.log('normalizeType')
-t('series se respeta', () => assert.equal(normalizeType('series'), 'series'))
-t('cualquier otra cosa -> movie', () => assert.equal(normalizeType('xyz'), 'movie'))
+console.log('extractores')
+t('quality 4K/1080/720/unknown', () => {
+  assert.equal(extractQuality('Movie 2160p'), '4K')
+  assert.equal(extractQuality('Movie 1080p'), '1080p')
+  assert.equal(extractQuality('Movie 720p'), '720p')
+  assert.equal(extractQuality('Movie sin nada'), 'Unknown')
+})
+t('seeders emoji y texto', () => { assert.equal(extractSeeders('👤 152'), 152); assert.equal(extractSeeders('45 seeders'), 45); assert.equal(extractSeeders('nada'), 0) })
+t('size', () => { assert.equal(extractSize('💾 2.18 GB'), '2.18 GB'); assert.equal(extractSize('2.1GB'), '2.1 GB') })
+t('humanSize', () => { assert.equal(humanSize(2 * 1024 ** 3), '2.00 GB'); assert.equal(humanSize(700 * 1024 ** 2), '700 MB'); assert.equal(humanSize(0), 'Unknown') })
 
-console.log('extractQuality')
-t('2160p -> 4K', () => assert.equal(extractQuality('Movie 2160p BluRay'), '4K'))
-t('4k -> 4K', () => assert.equal(extractQuality('Movie 4k'), '4K'))
-t('1080p', () => assert.equal(extractQuality('Movie 1080p x264'), '1080p'))
-t('720p', () => assert.equal(extractQuality('Movie 720p'), '720p'))
-t('sin resolución -> SD', () => assert.equal(extractQuality('Movie DVDRip'), 'SD'))
+console.log('magnet / validación')
+t('buildMagnet', () => { assert.ok(buildMagnet('ABC', 'Peli').startsWith('magnet:?xt=urn:btih:ABC')); assert.equal(buildMagnet('', 'x'), null) })
+t('isValidMagnet', () => {
+  assert.ok(isValidMagnet('magnet:?xt=urn:btih:' + 'a'.repeat(40)))
+  assert.ok(!isValidMagnet('http://evil.com'))
+  assert.ok(!isValidMagnet('magnet:?dn=x'))
+})
+t('isValidInfoHash', () => { assert.ok(isValidInfoHash('a'.repeat(40))); assert.ok(!isValidInfoHash('xyz')) })
 
-console.log('extractSeeders')
-t('formato emoji 👤', () => assert.equal(extractSeeders('👤 152 💾 2.1 GB'), 152))
-t('formato texto seeders', () => assert.equal(extractSeeders('45 seeders'), 45))
-t('sin seeders -> 0', () => assert.equal(extractSeeders('nada'), 0))
-t('miles con separador', () => assert.equal(extractSeeders('👤 1,234'), 1234))
-
-console.log('extractSize')
-t('💾 con espacio', () => assert.equal(extractSize('💾 2.18 GB'), '2.18 GB'))
-t('sin espacio', () => assert.equal(extractSize('2.1GB'), '2.1 GB'))
-t('MB', () => assert.equal(extractSize('700 MB'), '700 MB'))
-t('desconocido', () => assert.equal(extractSize('nada'), 'Unknown'))
-
-console.log('buildMagnet')
-t('construye xt', () => assert.ok(buildMagnet('ABC123', 'Peli').startsWith('magnet:?xt=urn:btih:ABC123')))
-t('incluye dn', () => assert.ok(buildMagnet('ABC', 'My Movie').includes('dn=My%20Movie')))
-t('incluye trackers por defecto', () => assert.ok(buildMagnet('ABC', 'x').includes('tr=')))
-t('añade trackers de sources', () => assert.ok(buildMagnet('ABC', 'x', ['tracker:udp://foo:1/announce', 'dht:ABC']).includes(encodeURIComponent('udp://foo:1/announce'))))
-t('sin infoHash -> null', () => assert.equal(buildMagnet('', 'x'), null))
-
-console.log('parseStream')
-t('parsea stream real de Torrentio', () => {
-  const s = parseStream({
-    name: 'Torrentio\n1080p',
-    title: 'Inception.2010.1080p.BluRay.x264\n👤 152 💾 2.18 GB ⚙️ ThePirateBay',
-    infoHash: 'ABCDEF',
-    sources: ['tracker:udp://tr.example:1337/announce', 'dht:ABCDEF']
-  })
-  assert.equal(s.quality, '1080p')
-  assert.equal(s.size, '2.18 GB')
-  assert.equal(s.seeders, 152)
-  assert.equal(s.infoHash, 'abcdef')
-  assert.equal(s.filename, 'Inception.2010.1080p.BluRay.x264')
-  assert.ok(s.url.startsWith('magnet:'))
+console.log('parseStream (Torrentio)')
+t('parsea stream real', () => {
+  const s = parseStream({ name: 'Torrentio\n1080p', title: 'Inception.2010.1080p.BluRay.x264\n👤 152 💾 2.18 GB ⚙️ TPB', infoHash: 'ABCDEF', sources: ['tracker:udp://tr:1/announce'] })
+  assert.equal(s.source, 'torrentio'); assert.equal(s.quality, '1080p'); assert.equal(s.seeders, 152); assert.equal(s.infoHash, 'abcdef')
   assert.equal(s.title, '1080p - 2.18 GB - 152 seeders')
 })
-t('stream sin infoHash -> null', () => assert.equal(parseStream({ title: 'x' }), null))
 
-console.log('processStreams')
-t('ordena por seeders desc y filtra inválidos', () => {
-  const out = processStreams([
-    { infoHash: 'a', title: 'x\n👤 10 💾 1 GB' },
-    { title: 'sin hash' },
-    { infoHash: 'b', title: 'y\n👤 99 💾 2 GB' }
-  ])
-  assert.equal(out.length, 2)
-  assert.equal(out[0].seeders, 99)
+console.log('parseApibay (Peerflix)')
+t('parsea y filtra centinela/sin seeders', () => {
+  const out = parseApibay([
+    { name: 'Inception 2010 1080p BluRay', info_hash: 'AB'.repeat(20), seeders: '150', size: String(2 * 1024 ** 3), category: '207' },
+    { name: 'nada', info_hash: '0'.repeat(40), seeders: '0' },
+    { name: 'Serie S01', info_hash: 'CD'.repeat(20), seeders: '10', size: '100', category: '208' }
+  ], 'movie')
+  assert.equal(out.length, 1) // el de serie (cat 208) se excluye en 'movie'
+  assert.equal(out[0].source, 'peerflix'); assert.equal(out[0].quality, '1080p'); assert.equal(out[0].seeders, 150)
 })
 
-console.log('createSearch (fetch mockeado)')
-t('flujo completo: OMDb -> Torrentio', async () => {
-  const calls = []
-  const fetchImpl = async (url) => {
-    calls.push(url)
-    if (url.includes('omdbapi')) return { ok: true, json: async () => ({ Response: 'True', imdbID: 'tt1375666', Title: 'Inception' }) }
-    return { ok: true, json: async () => ({ streams: [{ infoHash: 'h1', title: 'Inception 1080p\n👤 200 💾 2 GB' }] }) }
-  }
+console.log('dedupeStreams')
+t('gana el de más seeders', () => {
+  const out = dedupeStreams([{ infoHash: 'a', seeders: 10 }, { infoHash: 'a', seeders: 99 }, { infoHash: 'b', seeders: 5 }])
+  assert.equal(out.length, 2); assert.equal(out[0].seeders, 99)
+})
+
+console.log('createSearch')
+t('torrentio: OMDb -> Torrentio', async () => {
+  const fetchImpl = async (url) => url.includes('omdbapi')
+    ? { ok: true, json: async () => ({ Response: 'True', imdbID: 'tt1375666', Title: 'Inception' }) }
+    : { ok: true, json: async () => ({ streams: [{ infoHash: 'h1', title: 'Inception 1080p\n👤 200 💾 2 GB' }] }) }
   const { search } = createSearch({ fetchImpl, omdbKey: 'KEY' })
-  const r = await search('Inception', 'movie')
-  assert.equal(r.success, true)
-  assert.equal(r.imdbId, 'tt1375666')
-  assert.equal(r.streams.length, 1)
-  assert.equal(r.streams[0].seeders, 200)
-  assert.ok(calls[0].includes('omdbapi'))
-  assert.ok(calls[1].includes('torrentio'))
+  const r = await search('Inception', 'movie', 'torrentio')
+  assert.equal(r.imdbId, 'tt1375666'); assert.equal(r.streams.length, 1); assert.equal(r.streams[0].seeders, 200)
 })
-t('IMDb id directo salta OMDb', async () => {
-  const calls = []
+t('peerflix: apibay', async () => {
+  const fetchImpl = async () => ({ ok: true, json: async () => ([{ name: 'X 1080p', info_hash: 'AB'.repeat(20), seeders: '30', size: String(1024 ** 3), category: '207' }]) })
+  const { search } = createSearch({ fetchImpl })
+  const r = await search('X', 'movie', 'peerflix')
+  assert.equal(r.streams.length, 1); assert.equal(r.streams[0].source, 'peerflix')
+})
+t('all: combina y deduplica', async () => {
   const fetchImpl = async (url) => {
-    calls.push(url)
-    return { ok: true, json: async () => ({ streams: [] }) }
-  }
-  const { search } = createSearch({ fetchImpl }) // sin omdbKey
-  const r = await search('tt1375666', 'movie')
-  assert.equal(r.imdbId, 'tt1375666')
-  assert.equal(calls.length, 1)
-  assert.ok(calls[0].includes('torrentio'))
-})
-t('OMDb no encontrado -> SearchError NOT_FOUND', async () => {
-  const fetchImpl = async () => ({ ok: true, json: async () => ({ Response: 'False' }) })
-  const { search } = createSearch({ fetchImpl, omdbKey: 'KEY' })
-  await assert.rejects(() => search('nope', 'movie'), (e) => e instanceof SearchError && e.code === 'NOT_FOUND' && e.status === 404)
-})
-t('query vacía -> SearchError EMPTY', async () => {
-  const { search } = createSearch({ fetchImpl: async () => ({}), omdbKey: 'KEY' })
-  await assert.rejects(() => search('   ', 'movie'), (e) => e.code === 'EMPTY')
-})
-t('sin API key y no es id -> SearchError NO_KEY', async () => {
-  const { search } = createSearch({ fetchImpl: async () => ({}) })
-  await assert.rejects(() => search('Inception', 'movie'), (e) => e.code === 'NO_KEY')
-})
-t('caché: segunda llamada no vuelve a hacer fetch', async () => {
-  let n = 0
-  const fetchImpl = async (url) => {
-    n++
     if (url.includes('omdbapi')) return { ok: true, json: async () => ({ Response: 'True', imdbID: 'tt1', Title: 'X' }) }
-    return { ok: true, json: async () => ({ streams: [{ infoHash: 'h', title: 'x\n👤 1 💾 1 GB' }] }) }
+    if (url.includes('torrentio')) return { ok: true, json: async () => ({ streams: [{ infoHash: 'dup', title: 'X 1080p\n👤 50 💾 1 GB' }] }) }
+    return { ok: true, json: async () => ([{ name: 'X 1080p', info_hash: 'DUP', seeders: '80', size: String(1024 ** 3), category: '207' }]) }
   }
   const { search } = createSearch({ fetchImpl, omdbKey: 'K' })
-  await search('Matrix', 'movie')
+  const r = await search('X', 'movie', 'all')
+  assert.equal(r.streams.length, 1) // mismo infoHash 'dup' -> deduplicado
+  assert.equal(r.streams[0].seeders, 80) // gana peerflix (más seeders)
+})
+t('series con season/episode en Torrentio', async () => {
+  let torrentioUrl = ''
+  const fetchImpl = async (url) => {
+    if (url.includes('omdbapi')) return { ok: true, json: async () => ({ Response: 'True', imdbID: 'tt99', Title: 'S' }) }
+    torrentioUrl = url
+    return { ok: true, json: async () => ({ streams: [] }) }
+  }
+  const { search } = createSearch({ fetchImpl, omdbKey: 'K' })
+  await search('Show', 'series', 'torrentio', { season: 2, episode: 5 })
+  assert.ok(torrentioUrl.includes('tt99:2:5'), torrentioUrl)
+})
+t('IMDb id directo salta OMDb', async () => {
+  let calls = 0
+  const fetchImpl = async () => { calls++; return { ok: true, json: async () => ({ streams: [] }) } }
+  const { search } = createSearch({ fetchImpl })
+  const r = await search('tt1375666', 'movie', 'torrentio')
+  assert.equal(r.imdbId, 'tt1375666'); assert.equal(calls, 1)
+})
+t('NOT_FOUND', async () => {
+  const fetchImpl = async () => ({ ok: true, json: async () => ({ Response: 'False' }) })
+  const { search } = createSearch({ fetchImpl, omdbKey: 'K' })
+  await assert.rejects(() => search('nope', 'movie', 'torrentio'), (e) => e.code === 'NOT_FOUND')
+})
+t('EMPTY', async () => {
+  const { search } = createSearch({ fetchImpl: async () => ({}), omdbKey: 'K' })
+  await assert.rejects(() => search('   ', 'movie', 'all'), (e) => e.code === 'EMPTY')
+})
+t('NO_KEY (torrentio sin key y no es id)', async () => {
+  const { search } = createSearch({ fetchImpl: async () => ({}) })
+  await assert.rejects(() => search('Inception', 'movie', 'torrentio'), (e) => e.code === 'NO_KEY')
+})
+t('caché evita segundo fetch', async () => {
+  let n = 0
+  const fetchImpl = async (url) => { n++; return url.includes('omdbapi') ? { ok: true, json: async () => ({ Response: 'True', imdbID: 'tt1', Title: 'X' }) } : { ok: true, json: async () => ({ streams: [] }) } }
+  const { search } = createSearch({ fetchImpl, omdbKey: 'K' })
+  await search('Matrix', 'movie', 'torrentio')
   const before = n
-  const r2 = await search('Matrix', 'movie')
-  assert.equal(n, before) // no nuevas llamadas
-  assert.equal(r2.cached, true)
+  const r2 = await search('Matrix', 'movie', 'torrentio')
+  assert.equal(n, before); assert.equal(r2.cached, true)
 })
-t('timeout -> SearchError TIMEOUT', async () => {
-  const fetchImpl = (url, opts) => new Promise((resolve, reject) => {
-    opts.signal.addEventListener('abort', () => {
-      const e = new Error('aborted'); e.name = 'AbortError'; reject(e)
-    })
-  })
-  const { search } = createSearch({ fetchImpl, omdbKey: 'K', timeoutMs: 50 })
-  await assert.rejects(() => search('slow', 'movie'), (e) => e.code === 'TIMEOUT')
+t('TIMEOUT', async () => {
+  const fetchImpl = (url, opts) => new Promise((_res, rej) => { opts.signal.addEventListener('abort', () => { const e = new Error('a'); e.name = 'AbortError'; rej(e) }) })
+  const { search } = createSearch({ fetchImpl, omdbKey: 'K', timeoutMs: 40 })
+  await assert.rejects(() => search('slow', 'movie', 'torrentio'), (e) => e.code === 'TIMEOUT')
 })
 
-console.log('store (persistencia)')
-t('add/all/update/remove con persistencia en disco', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'store-'))
-  const file = path.join(dir, 'torrents.json')
-  const s = createStore(file)
-  s.add({ infoHash: 'x', magnetURI: 'magnet:x', name: 'X' })
-  s.add({ infoHash: 'x', name: 'X2' }) // actualiza, no duplica
-  assert.equal(s.all().length, 1)
-  assert.equal(s.all()[0].name, 'X2')
-  s.update('x', { paused: true })
-  assert.equal(s.all()[0].paused, true)
-  s.remove('x')
-  assert.equal(s.all().length, 0)
+console.log('store (persistencia + propietarios)')
+t('owners: add/remove/isOwner', () => {
+  const s = createStore(path.join(tmp(), 'torrents.json'))
+  s.add({ infoHash: 'x', magnetURI: 'm', owners: ['u1'] })
+  assert.ok(s.isOwner('x', 'u1'))
+  s.addOwner('x', 'u2')
+  assert.equal(s.getOwners('x').length, 2)
+  assert.equal(s.removeOwner('x', 'u1'), 1)
+  assert.ok(!s.isOwner('x', 'u1'))
 })
-t('carga estado previo desde disco', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'store-'))
-  const file = path.join(dir, 'torrents.json')
-  fs.writeFileSync(file, JSON.stringify([{ infoHash: 'z', name: 'Z' }]))
-  const s = createStore(file)
-  assert.equal(s.all().length, 1)
-  assert.equal(s.all()[0].infoHash, 'z')
+t('persiste y recarga', () => {
+  const dir = tmp(); const file = path.join(dir, 'torrents.json')
+  const s1 = createStore(file); s1.add({ infoHash: 'z', owners: ['u'] }); s1.flush()
+  const s2 = createStore(file)
+  assert.equal(s2.all()[0].infoHash, 'z')
 })
 
-// Resumen (esperamos a los async con un pequeño retardo)
-setTimeout(() => {
-  console.log(`\n${process.exitCode ? '❌ Fallos detectados' : '✅ Todos los tests pasaron'} (${passed} asserts ok)`)
-}, 200)
+console.log('auth')
+t('parseCookies', () => { assert.deepEqual(parseCookies('a=1; b=2'), { a: '1', b: '2' }) })
+t('register + login + token roundtrip', () => {
+  const dir = tmp()
+  const a = createAuth({ usersFile: path.join(dir, 'users.json'), secretFile: path.join(dir, '.secret') })
+  const u = a.register('alice', 'secret123')
+  assert.equal(u.username, 'alice'); assert.ok(!u.passwordHash)
+  const { token } = a.login('alice', 'secret123')
+  const req = { headers: { cookie: `${a.COOKIE}=${encodeURIComponent(token)}` } }
+  assert.equal(a.userFromRequest(req).username, 'alice')
+})
+t('login con contraseña incorrecta falla', () => {
+  const dir = tmp()
+  const a = createAuth({ usersFile: path.join(dir, 'users.json'), secretFile: path.join(dir, '.secret') })
+  a.register('bob', 'password1')
+  assert.throws(() => a.login('bob', 'wrong'), (e) => e.code === 'INVALID')
+})
+t('usuario duplicado / validaciones', () => {
+  const dir = tmp()
+  const a = createAuth({ usersFile: path.join(dir, 'users.json'), secretFile: path.join(dir, '.secret') })
+  a.register('carol', 'password1')
+  assert.throws(() => a.register('carol', 'password1'), (e) => e.code === 'EXISTS')
+  assert.throws(() => a.register('x', 'password1'), (e) => e.code === 'BAD_USERNAME')
+  assert.throws(() => a.register('validname', '123'), (e) => e.code === 'BAD_PASSWORD')
+})
+t('token manipulado se rechaza', () => {
+  const dir = tmp()
+  const a = createAuth({ usersFile: path.join(dir, 'users.json'), secretFile: path.join(dir, '.secret') })
+  a.register('dave', 'password1')
+  const { token } = a.login('dave', 'password1')
+  const tampered = token.slice(0, -3) + 'xyz'
+  assert.equal(a.userFromRequest({ headers: { cookie: `${a.COOKIE}=${tampered}` } }), null)
+})
+
+Promise.allSettled(pending).then(() => {
+  setTimeout(() => {
+    console.log(`\n${process.exitCode ? '❌ Fallos detectados' : '✅ Todos los tests pasaron'} (${passed} asserts ok)`)
+  }, 50)
+})

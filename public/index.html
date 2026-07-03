@@ -9,65 +9,117 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header>
-    <h1>🎬 Torrent Client Viewer</h1>
-    <p class="subtitle">Busca, descarga y reproduce vídeo mientras se baja</p>
-    <div id="global-stats" class="global-stats"></div>
-  </header>
-
-  <main>
-    <!-- ============ BUSCADOR ============ -->
-    <section class="panel">
-      <h2 class="panel-title">🔎 Buscar</h2>
-      <form id="search-form" class="search-form">
-        <input type="text" id="search-input" placeholder="Ej: Inception, Breaking Bad…" autocomplete="off" />
-        <select id="search-type" aria-label="Tipo">
-          <option value="movie">Película</option>
-          <option value="series">Serie</option>
-        </select>
-        <button type="submit" id="search-btn">Buscar</button>
+  <!-- ============ LOGIN ============ -->
+  <div id="login-view" class="login-view hidden">
+    <div class="login-box">
+      <h1>🎬 Torrent Client Viewer</h1>
+      <div class="login-tabs">
+        <button id="tab-login" class="login-tab active">Entrar</button>
+        <button id="tab-register" class="login-tab">Crear cuenta</button>
+      </div>
+      <form id="login-form" class="login-form">
+        <input type="text" id="login-user" placeholder="Usuario" autocomplete="username" />
+        <input type="password" id="login-pass" placeholder="Contraseña" autocomplete="current-password" />
+        <button type="submit" id="login-submit">Entrar</button>
       </form>
-      <p id="search-status" class="status"></p>
-      <div id="search-loader" class="loader hidden"><span></span><span></span><span></span></div>
-      <div id="search-results" class="results-grid"></div>
-    </section>
+      <p id="login-status" class="status"></p>
+    </div>
+  </div>
 
-    <!-- ============ AÑADIR MANUAL ============ -->
-    <section class="panel">
-      <h2 class="panel-title">➕ Añadir manualmente</h2>
-      <form id="magnet-form" class="add-form">
-        <input type="text" id="magnet-input" placeholder="magnet:?xt=urn:btih:…" autocomplete="off" />
-        <button type="submit">Añadir magnet</button>
-      </form>
-      <form id="upload-form" class="add-form">
-        <label class="file-label">
-          <input type="file" id="torrent-file" accept=".torrent" />
-          <span id="file-name">Elegir archivo .torrent…</span>
-        </label>
-        <button type="submit">Subir .torrent</button>
-      </form>
-      <p id="add-status" class="status"></p>
-    </section>
+  <!-- ============ APP ============ -->
+  <div id="app-view" class="hidden">
+    <header>
+      <div class="header-top">
+        <h1>🎬 Torrent Client Viewer</h1>
+        <div class="user-chip">
+          <span id="user-name"></span>
+          <button id="logout-btn" title="Cerrar sesión">Salir</button>
+        </div>
+      </div>
+      <div id="global-stats" class="global-stats"></div>
+    </header>
 
-    <!-- ============ DESCARGAS ============ -->
-    <section class="panel">
-      <h2 class="panel-title">⬇️ Descargas</h2>
-      <div id="torrent-list" class="torrent-list"></div>
-    </section>
-  </main>
+    <main>
+      <!-- CATÁLOGOS -->
+      <section class="panel" id="catalog-panel">
+        <h2 class="panel-title">🍿 Catálogos de streaming</h2>
+        <div class="catalog-controls">
+          <div class="seg" id="catalog-type">
+            <button data-ctype="movie" class="active">Películas</button>
+            <button data-ctype="series">Series</button>
+          </div>
+          <button id="catalog-reload" class="btn-small">↻ Recargar</button>
+        </div>
+        <p id="catalog-status" class="status"></p>
+        <div id="catalog-loader" class="loader hidden"><span></span><span></span><span></span></div>
+        <div id="catalogs"></div>
+      </section>
 
-  <!-- Reproductor en modal -->
+      <!-- BUSCADOR -->
+      <section class="panel">
+        <h2 class="panel-title">🔎 Buscar torrents</h2>
+        <form id="search-form" class="search-form">
+          <input type="text" id="search-input" placeholder="Ej: Inception, Breaking Bad…" autocomplete="off" />
+          <select id="search-type" aria-label="Tipo">
+            <option value="movie">Película</option>
+            <option value="series">Serie</option>
+          </select>
+          <select id="search-source" aria-label="Fuente">
+            <option value="all">Todos</option>
+            <option value="torrentio">Torrentio</option>
+            <option value="peerflix">Peerflix</option>
+          </select>
+          <div id="se-fields" class="se-fields hidden">
+            <input type="number" id="search-season" min="1" placeholder="Temp." />
+            <input type="number" id="search-episode" min="1" placeholder="Ep." />
+          </div>
+          <button type="submit" id="search-btn">Buscar</button>
+        </form>
+        <div id="quality-filters" class="quality-filters"></div>
+        <p id="search-status" class="status"></p>
+        <div id="search-loader" class="loader hidden"><span></span><span></span><span></span></div>
+        <div id="search-results" class="results-grid"></div>
+      </section>
+
+      <!-- AÑADIR MANUAL -->
+      <section class="panel">
+        <h2 class="panel-title">➕ Añadir manualmente</h2>
+        <form id="magnet-form" class="add-form">
+          <input type="text" id="magnet-input" placeholder="magnet:?xt=urn:btih:…" autocomplete="off" />
+          <button type="submit">Añadir magnet</button>
+        </form>
+        <form id="upload-form" class="add-form">
+          <label class="file-label">
+            <input type="file" id="torrent-file" accept=".torrent" />
+            <span id="file-name">Elegir archivo .torrent…</span>
+          </label>
+          <button type="submit">Subir .torrent</button>
+        </form>
+        <p id="add-status" class="status"></p>
+      </section>
+
+      <!-- DESCARGAS -->
+      <section class="panel">
+        <h2 class="panel-title">⬇️ Mi biblioteca</h2>
+        <div id="torrent-list" class="torrent-list"></div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Reproductor -->
   <div id="player-overlay" class="player-overlay hidden">
     <div class="player-box">
       <div class="player-header">
         <span id="player-title"></span>
         <button id="player-close" title="Cerrar" aria-label="Cerrar">✕</button>
       </div>
-      <video id="player" controls autoplay playsinline></video>
+      <video id="player" controls autoplay playsinline crossorigin="use-credentials"></video>
+      <div id="player-subs" class="player-subs"></div>
       <p id="player-note" class="player-note"></p>
     </div>
   </div>
 
+  <script src="config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
