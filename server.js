@@ -15,6 +15,17 @@ import { createCatalog } from './lib/catalog.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
+// Carga .env si existe (KEY=VALUE por línea, sin dependencias).
+// Las variables de entorno reales tienen prioridad sobre el archivo.
+try {
+  for (const line of fs.readFileSync(path.join(__dirname, '.env'), 'utf8').split('\n')) {
+    const m = /^\s*([\w.-]+)\s*=\s*(.*?)\s*$/.exec(line)
+    if (m && !m[1].startsWith('#') && process.env[m[1]] === undefined) {
+      process.env[m[1]] = m[2].replace(/^(["'])(.*)\1$/, '$2')
+    }
+  }
+} catch {}
+
 const PORT = process.env.PORT || 3000
 const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || path.join(__dirname, 'downloads')
 const UPLOAD_DIR = path.join(__dirname, 'uploads')

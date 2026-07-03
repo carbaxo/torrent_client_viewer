@@ -15,14 +15,14 @@ Todo lo que necesitas para dejar la app funcionando. Marca cada paso ✅.
 > Sin OMDb, el buscador Torrentio queda limitado. Sin TMDB, la sección de catálogos se oculta automáticamente. El resto de la app funciona igual.
 
 ### Dónde configurarlas
-**Nunca** en el frontend. Se ponen como variables de entorno en el servidor:
+**Nunca** en el frontend. En local, lo más fácil es el archivo **`.env`** en la raíz del proyecto (el servidor lo carga automáticamente al arrancar; ya está en `.gitignore`):
 
-```bash
-export OMDB_API_KEY=tu_key_de_omdb
-export TMDB_API_KEY=tu_key_de_tmdb
+```
+OMDB_API_KEY=tu_key_de_omdb
+TMDB_API_KEY=tu_key_de_tmdb
 ```
 
-En local puedes crear un archivo `.env` (no lo subas a git) o exportarlas antes de `npm start`.
+Hay una plantilla lista en `.env.example`. En un hosting (Render/Fly.io) se configuran como variables de entorno o secretos del panel — las variables de entorno reales tienen prioridad sobre `.env`.
 
 ---
 
@@ -44,7 +44,7 @@ Si usas el `Dockerfile` incluido, **ffmpeg ya viene dentro**.
 
 ```bash
 npm install
-export OMDB_API_KEY=... TMDB_API_KEY=...
+# copia .env.example a .env y rellena tus claves
 npm start
 # abre http://localhost:3000
 ```

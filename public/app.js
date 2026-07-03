@@ -37,6 +37,32 @@ function escapeHtml (str) {
 }
 function $ (id) { return document.getElementById(id) }
 
+// ===================== Navegación (sidebar) =====================
+const VIEW_TITLES = { discover: 'Descubrir', search: 'Buscar', library: 'Mi biblioteca', add: 'Añadir' }
+let CURRENT_VIEW = 'discover'
+
+function switchView (view) {
+  CURRENT_VIEW = view
+  document.querySelectorAll('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === view))
+  document.querySelectorAll('.view').forEach((v) => v.classList.toggle('hidden', v.id !== 'view-' + view))
+  $('view-title').textContent = VIEW_TITLES[view] || ''
+  window.scrollTo({ top: 0 })
+}
+document.querySelectorAll('.nav-item').forEach((b) => b.addEventListener('click', () => switchView(b.dataset.view)))
+
+// ===================== Toasts =====================
+function toast (msg, isError = false) {
+  const el = document.createElement('div')
+  el.className = 'toast' + (isError ? ' error' : '')
+  el.textContent = msg
+  $('toasts').appendChild(el)
+  requestAnimationFrame(() => el.classList.add('show'))
+  setTimeout(() => {
+    el.classList.remove('show')
+    setTimeout(() => el.remove(), 300)
+  }, 3200)
+}
+
 // ===================== Autenticación =====================
 const loginView = $('login-view')
 const appView = $('app-view')
@@ -63,8 +89,10 @@ async function onLoggedIn (user) {
   CURRENT_USER = user
   loginView.classList.add('hidden')
   appView.classList.remove('hidden')
-  $('user-name').textContent = '👤 ' + user.username
+  $('user-name').textContent = user.username
+  $('user-avatar').textContent = (user.username || '?').charAt(0).toUpperCase()
   await loadConfig()
+  switchView(CONFIG.catalogs ? 'discover' : 'search')
   render()
   if (!pollTimer) pollTimer = setInterval(render, 1000)
   if (CONFIG.catalogs) loadCatalogs()
@@ -75,6 +103,8 @@ async function loadConfig () {
   // Ajusta UI según capacidades
   if (!CONFIG.catalogs) {
     $('catalog-panel').classList.add('hidden')
+    const navDiscover = document.querySelector('.nav-item[data-view="discover"]')
+    if (navDiscover) navDiscover.classList.add('hidden')
   }
 }
 
@@ -157,13 +187,17 @@ async function loadCatalogs () {
 }
 
 function renderCatalogs (catalogs) {
+  const playIcon = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>'
   catalogsEl.innerHTML = catalogs.map((cat) => `
     <div class="catalog-row">
-      <div class="catalog-head"><span class="dot" style="background:${cat.color}"></span>${escapeHtml(cat.name)}</div>
+      <div class="catalog-head"><span class="dot" style="background:${cat.color};color:${cat.color}"></span>${escapeHtml(cat.name)}</div>
       <div class="poster-row">
         ${cat.items.map((it) => `
           <button class="poster-card" data-title="${escapeHtml(it.title)}" data-type="${it.type}" data-year="${escapeHtml(it.year)}">
-            ${it.poster ? `<img loading="lazy" src="${escapeHtml(it.poster)}" alt="${escapeHtml(it.title)}" />` : '<div class="poster-ph">🎬</div>'}
+            <div class="poster-img">
+              ${it.poster ? `<img loading="lazy" src="${escapeHtml(it.poster)}" alt="${escapeHtml(it.title)}" />` : '<div class="poster-ph">🎬</div>'}
+              <span class="poster-play">${playIcon}</span>
+            </div>
             <div class="poster-meta">
               <span class="poster-title">${escapeHtml(it.title)}</span>
               <span class="poster-year">${escapeHtml(it.year)}${it.rating ? ' · ⭐ ' + it.rating : ''}</span>
@@ -177,8 +211,8 @@ function renderCatalogs (catalogs) {
       $('search-input').value = c.dataset.title
       $('search-type').value = c.dataset.type
       toggleSeasonFields()
+      switchView('search')
       $('search-form').dispatchEvent(new Event('submit', { cancelable: true }))
-      document.querySelector('.search-form').scrollIntoView({ behavior: 'smooth', block: 'start' })
     })
   })
 }
@@ -311,12 +345,11 @@ async function addMagnetFromSearch (magnet, btn) {
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || 'Error')
     btn.textContent = '✓ En biblioteca'
-    addStatus(`Añadido: ${data.name || 'torrent'}`)
+    toast(`Añadido a tu biblioteca: ${data.name || 'torrent'}`)
     render()
-    $('torrent-list').scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   } catch (err) {
     btn.disabled = false; btn.textContent = old
-    addStatus('No se pudo añadir: ' + err.message, true)
+    toast('No se pudo añadir: ' + err.message, true)
   }
 }
 
@@ -373,10 +406,10 @@ uploadForm.addEventListener('submit', async (e) => {
 // ===================== Acciones de torrents =====================
 async function removeTorrent (infoHash) {
   const withFiles = confirm('¿Eliminar también los archivos del disco?\n\nAceptar = borrar archivos · Cancelar = solo quitar de mi biblioteca')
-  try { await api(`/api/torrents/${infoHash}?files=${withFiles}`, { method: 'DELETE' }); render() } catch (err) { addStatus('No se pudo eliminar: ' + err.message, true) }
+  try { await api(`/api/torrents/${infoHash}?files=${withFiles}`, { method: 'DELETE' }); render() } catch (err) { toast('No se pudo eliminar: ' + err.message, true) }
 }
 async function togglePause (infoHash, paused) {
-  try { await api(`/api/torrents/${infoHash}/${paused ? 'resume' : 'pause'}`, { method: 'POST' }); render() } catch (err) { addStatus('No se pudo cambiar el estado: ' + err.message, true) }
+  try { await api(`/api/torrents/${infoHash}/${paused ? 'resume' : 'pause'}`, { method: 'POST' }); render() } catch (err) { toast('No se pudo cambiar el estado: ' + err.message, true) }
 }
 
 // ===================== Reproductor + subtítulos =====================
@@ -448,7 +481,7 @@ function render () {
   api('/api/torrents').then((r) => r.ok ? r.json() : []).then((torrents) => {
     if (!Array.isArray(torrents)) return
     updateGlobalStats(torrents)
-    if (!torrents.length) { listEl.innerHTML = '<p class="empty">Tu biblioteca está vacía. Busca arriba o añade un magnet/.torrent.</p>'; return }
+    if (!torrents.length) { listEl.innerHTML = '<p class="empty">Tu biblioteca está vacía.<br>Usa <b>Descubrir</b> o <b>Buscar</b> para encontrar contenido, o <b>Añadir</b> para un magnet/.torrent.</p>'; return }
     listEl.innerHTML = torrents.map(cardHtml).join('')
     listEl.querySelectorAll('[data-remove]').forEach((b) => b.addEventListener('click', () => removeTorrent(b.dataset.remove)))
     listEl.querySelectorAll('[data-pause]').forEach((b) => b.addEventListener('click', () => togglePause(b.dataset.pause, b.dataset.paused === 'true')))
@@ -465,8 +498,13 @@ function updateGlobalStats (torrents) {
   const up = torrents.reduce((a, t) => a + t.uploadSpeed, 0)
   const active = torrents.filter((t) => !t.done && !t.paused).length
   globalStatsEl.innerHTML = torrents.length
-    ? `<span>↓ <b>${fmtSpeed(down)}</b></span><span>↑ ${fmtSpeed(up)}</span><span>${active} activos · ${torrents.length} total</span>`
+    ? `<span class="stat-chip">↓ <b>${fmtSpeed(down)}</b></span>
+       <span class="stat-chip">↑ ${fmtSpeed(up)}</span>
+       <span class="stat-chip">${active} activos · ${torrents.length} total</span>`
     : ''
+  const badge = $('nav-lib-badge')
+  badge.textContent = active
+  badge.classList.toggle('hidden', active === 0)
 }
 
 function cardHtml (t) {

@@ -20,8 +20,7 @@ App web multiusuario para **buscar, descargar y reproducir vídeo en streaming m
 
 ```bash
 npm install
-export OMDB_API_KEY=...   # buscador (https://www.omdbapi.com/apikey.aspx)
-export TMDB_API_KEY=...   # catálogos (https://www.themoviedb.org/settings/api)
+cp .env.example .env      # y rellena OMDB_API_KEY y TMDB_API_KEY dentro
 npm start                 # http://localhost:3000
 ```
 

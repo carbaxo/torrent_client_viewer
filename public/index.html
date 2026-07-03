@@ -3,16 +3,26 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#0f1115" />
+  <meta name="theme-color" content="#0c0b11" />
   <title>Torrent Client Viewer</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%237b5bf5'/><path d='M38 28v44l36-22z' fill='white'/></svg>" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <!-- ============ LOGIN ============ -->
   <div id="login-view" class="login-view hidden">
     <div class="login-box">
-      <h1>🎬 Torrent Client Viewer</h1>
+      <div class="brand brand-login">
+        <svg class="brand-logo" viewBox="0 0 32 32" aria-hidden="true">
+          <defs><linearGradient id="lg-login" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#8f6bff"/><stop offset="1" stop-color="#5b3df0"/>
+          </linearGradient></defs>
+          <rect width="32" height="32" rx="8" fill="url(#lg-login)"/>
+          <path d="M12 9.5v13l11-6.5z" fill="#fff"/>
+        </svg>
+        <span class="brand-name">Torrent<em>Viewer</em></span>
+      </div>
+      <p class="login-sub">Busca, descarga y reproduce mientras se descarga.</p>
       <div class="login-tabs">
         <button id="tab-login" class="login-tab active">Entrar</button>
         <button id="tab-register" class="login-tab">Crear cuenta</button>
@@ -20,90 +30,147 @@
       <form id="login-form" class="login-form">
         <input type="text" id="login-user" placeholder="Usuario" autocomplete="username" />
         <input type="password" id="login-pass" placeholder="Contraseña" autocomplete="current-password" />
-        <button type="submit" id="login-submit">Entrar</button>
+        <button type="submit" id="login-submit" class="btn-primary">Entrar</button>
       </form>
       <p id="login-status" class="status"></p>
     </div>
   </div>
 
   <!-- ============ APP ============ -->
-  <div id="app-view" class="hidden">
-    <header>
-      <div class="header-top">
-        <h1>🎬 Torrent Client Viewer</h1>
-        <div class="user-chip">
-          <span id="user-name"></span>
-          <button id="logout-btn" title="Cerrar sesión">Salir</button>
-        </div>
+  <div id="app-view" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="brand">
+        <svg class="brand-logo" viewBox="0 0 32 32" aria-hidden="true">
+          <defs><linearGradient id="lg-side" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#8f6bff"/><stop offset="1" stop-color="#5b3df0"/>
+          </linearGradient></defs>
+          <rect width="32" height="32" rx="8" fill="url(#lg-side)"/>
+          <path d="M12 9.5v13l11-6.5z" fill="#fff"/>
+        </svg>
+        <span class="brand-name">Torrent<em>Viewer</em></span>
       </div>
-      <div id="global-stats" class="global-stats"></div>
-    </header>
 
-    <main>
-      <!-- CATÁLOGOS -->
-      <section class="panel" id="catalog-panel">
-        <h2 class="panel-title">🍿 Catálogos de streaming</h2>
-        <div class="catalog-controls">
-          <div class="seg" id="catalog-type">
-            <button data-ctype="movie" class="active">Películas</button>
-            <button data-ctype="series">Series</button>
+      <nav class="nav">
+        <button class="nav-item active" data-view="discover" title="Descubrir">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+          <span class="nav-label">Descubrir</span>
+        </button>
+        <button class="nav-item" data-view="search" title="Buscar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <span class="nav-label">Buscar</span>
+        </button>
+        <button class="nav-item" data-view="library" title="Mi biblioteca">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span class="nav-label">Biblioteca</span>
+          <span id="nav-lib-badge" class="nav-badge hidden"></span>
+        </button>
+        <button class="nav-item" data-view="add" title="Añadir manualmente">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+          <span class="nav-label">Añadir</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div id="global-stats" class="global-stats"></div>
+      </div>
+    </aside>
+
+    <div class="content">
+      <header class="topbar">
+        <svg class="topbar-logo" viewBox="0 0 32 32" aria-hidden="true">
+          <defs><linearGradient id="lg-top" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#8f6bff"/><stop offset="1" stop-color="#5b3df0"/>
+          </linearGradient></defs>
+          <rect width="32" height="32" rx="8" fill="url(#lg-top)"/>
+          <path d="M12 9.5v13l11-6.5z" fill="#fff"/>
+        </svg>
+        <h1 id="view-title" class="view-title">Descubrir</h1>
+        <div class="topbar-right">
+          <div class="user-chip">
+            <span id="user-avatar" class="avatar"></span>
+            <span id="user-name" class="user-name"></span>
+            <button id="logout-btn" class="btn-ghost" title="Cerrar sesión" aria-label="Cerrar sesión">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            </button>
           </div>
-          <button id="catalog-reload" class="btn-small">↻ Recargar</button>
         </div>
-        <p id="catalog-status" class="status"></p>
-        <div id="catalog-loader" class="loader hidden"><span></span><span></span><span></span></div>
-        <div id="catalogs"></div>
-      </section>
+      </header>
 
-      <!-- BUSCADOR -->
-      <section class="panel">
-        <h2 class="panel-title">🔎 Buscar torrents</h2>
-        <form id="search-form" class="search-form">
-          <input type="text" id="search-input" placeholder="Ej: Inception, Breaking Bad…" autocomplete="off" />
-          <select id="search-type" aria-label="Tipo">
-            <option value="movie">Película</option>
-            <option value="series">Serie</option>
-          </select>
-          <select id="search-source" aria-label="Fuente">
-            <option value="all">Todos</option>
-            <option value="torrentio">Torrentio</option>
-            <option value="peerflix">Peerflix</option>
-          </select>
-          <div id="se-fields" class="se-fields hidden">
-            <input type="number" id="search-season" min="1" placeholder="Temp." />
-            <input type="number" id="search-episode" min="1" placeholder="Ep." />
+      <main>
+        <!-- DESCUBRIR (catálogos) -->
+        <section class="view" id="view-discover">
+          <div id="catalog-panel">
+            <div class="catalog-controls">
+              <div class="seg" id="catalog-type">
+                <button data-ctype="movie" class="active">Películas</button>
+                <button data-ctype="series">Series</button>
+              </div>
+              <button id="catalog-reload" class="btn-ghost">↻ Recargar</button>
+            </div>
+            <p id="catalog-status" class="status"></p>
+            <div id="catalog-loader" class="loader hidden"><span></span><span></span><span></span></div>
+            <div id="catalogs"></div>
           </div>
-          <button type="submit" id="search-btn">Buscar</button>
-        </form>
-        <div id="quality-filters" class="quality-filters"></div>
-        <p id="search-status" class="status"></p>
-        <div id="search-loader" class="loader hidden"><span></span><span></span><span></span></div>
-        <div id="search-results" class="results-grid"></div>
-      </section>
+        </section>
 
-      <!-- AÑADIR MANUAL -->
-      <section class="panel">
-        <h2 class="panel-title">➕ Añadir manualmente</h2>
-        <form id="magnet-form" class="add-form">
-          <input type="text" id="magnet-input" placeholder="magnet:?xt=urn:btih:…" autocomplete="off" />
-          <button type="submit">Añadir magnet</button>
-        </form>
-        <form id="upload-form" class="add-form">
-          <label class="file-label">
-            <input type="file" id="torrent-file" accept=".torrent" />
-            <span id="file-name">Elegir archivo .torrent…</span>
-          </label>
-          <button type="submit">Subir .torrent</button>
-        </form>
-        <p id="add-status" class="status"></p>
-      </section>
+        <!-- BUSCAR -->
+        <section class="view hidden" id="view-search">
+          <form id="search-form" class="search-form">
+            <div class="search-box">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input type="text" id="search-input" placeholder="Busca una película o serie…" autocomplete="off" />
+            </div>
+            <div class="search-filters">
+              <select id="search-type" aria-label="Tipo">
+                <option value="movie">Película</option>
+                <option value="series">Serie</option>
+              </select>
+              <select id="search-source" aria-label="Fuente">
+                <option value="all">Todos</option>
+                <option value="torrentio">Torrentio</option>
+                <option value="peerflix">Peerflix</option>
+              </select>
+              <div id="se-fields" class="se-fields hidden">
+                <input type="number" id="search-season" min="1" placeholder="Temp." />
+                <input type="number" id="search-episode" min="1" placeholder="Ep." />
+              </div>
+              <button type="submit" id="search-btn" class="btn-primary">Buscar</button>
+            </div>
+          </form>
+          <div id="quality-filters" class="quality-filters"></div>
+          <p id="search-status" class="status"></p>
+          <div id="search-loader" class="loader hidden"><span></span><span></span><span></span></div>
+          <div id="search-results" class="results-grid"></div>
+        </section>
 
-      <!-- DESCARGAS -->
-      <section class="panel">
-        <h2 class="panel-title">⬇️ Mi biblioteca</h2>
-        <div id="torrent-list" class="torrent-list"></div>
-      </section>
-    </main>
+        <!-- BIBLIOTECA -->
+        <section class="view hidden" id="view-library">
+          <div id="torrent-list" class="torrent-list"></div>
+        </section>
+
+        <!-- AÑADIR MANUAL -->
+        <section class="view hidden" id="view-add">
+          <div class="panel">
+            <h2 class="panel-title">Enlace magnet</h2>
+            <form id="magnet-form" class="add-form">
+              <input type="text" id="magnet-input" placeholder="magnet:?xt=urn:btih:…" autocomplete="off" />
+              <button type="submit" class="btn-primary">Añadir magnet</button>
+            </form>
+          </div>
+          <div class="panel">
+            <h2 class="panel-title">Archivo .torrent</h2>
+            <form id="upload-form" class="add-form">
+              <label class="file-label">
+                <input type="file" id="torrent-file" accept=".torrent" />
+                <span id="file-name">Elegir archivo .torrent…</span>
+              </label>
+              <button type="submit" class="btn-primary">Subir .torrent</button>
+            </form>
+          </div>
+          <p id="add-status" class="status"></p>
+        </section>
+      </main>
+    </div>
   </div>
 
   <!-- Reproductor -->
@@ -111,13 +178,18 @@
     <div class="player-box">
       <div class="player-header">
         <span id="player-title"></span>
-        <button id="player-close" title="Cerrar" aria-label="Cerrar">✕</button>
+        <button id="player-close" class="btn-ghost" title="Cerrar" aria-label="Cerrar">✕</button>
       </div>
       <video id="player" controls autoplay playsinline crossorigin="use-credentials"></video>
-      <div id="player-subs" class="player-subs"></div>
-      <p id="player-note" class="player-note"></p>
+      <div class="player-footer">
+        <div id="player-subs" class="player-subs"></div>
+        <p id="player-note" class="player-note"></p>
+      </div>
     </div>
   </div>
+
+  <!-- Notificaciones -->
+  <div id="toasts" class="toasts" aria-live="polite"></div>
 
   <script src="config.js"></script>
   <script src="app.js"></script>
