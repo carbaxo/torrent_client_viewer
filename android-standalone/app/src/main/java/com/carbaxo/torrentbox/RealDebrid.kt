@@ -73,16 +73,16 @@ object RealDebrid {
     fun disconnect() { token = ""; account = null; save() }
 
     /**
-     * Convierte un magnet en una URL directa reproducible.
-     * onDone(url, error, progress): si url != null, listo; si progress != null,
-     * RD aún lo está descargando en sus servidores.
+     * Convierte un magnet en una URL directa (para ver o descargar).
+     * onDone(url, filename, error, progress): si url != null, listo; si
+     * progress != null, RD aún lo está descargando en sus servidores.
      */
-    fun streamMagnet(magnet: String, onDone: (String?, String?, Int?) -> Unit) {
+    fun streamMagnet(magnet: String, onDone: (String?, String?, String?, Int?) -> Unit) {
         io.submit {
             try {
                 val added = rd("POST", "/torrents/addMagnet", mapOf("magnet" to magnet))
                 val id = added.optString("id", "")
-                if (id.isBlank()) return@submit onDone(null, "RD no aceptó el magnet.", null)
+                if (id.isBlank()) return@submit onDone(null, null, "RD no aceptó el magnet.", null)
 
                 var info = rd("GET", "/torrents/info/$id")
                 if (info.optString("status") == "waiting_files_selection") {
@@ -100,20 +100,21 @@ object RealDebrid {
                     info = rd("GET", "/torrents/info/$id")
                     val st = info.optString("status")
                     if (st == "downloaded") break
-                    if (st in listOf("magnet_error", "error", "virus", "dead")) return@submit onDone(null, "RD no pudo procesar el torrent ($st).", null)
+                    if (st in listOf("magnet_error", "error", "virus", "dead")) return@submit onDone(null, null, "RD no pudo procesar el torrent ($st).", null)
                     Thread.sleep(1500)
                 }
                 if (info.optString("status") != "downloaded") {
-                    return@submit onDone(null, null, info.optInt("progress", 0))
+                    return@submit onDone(null, null, null, info.optInt("progress", 0))
                 }
                 val links = info.optJSONArray("links")
-                val link = if (links != null && links.length() > 0) links.getString(0) else return@submit onDone(null, "RD no devolvió enlaces.", null)
+                val link = if (links != null && links.length() > 0) links.getString(0) else return@submit onDone(null, null, "RD no devolvió enlaces.", null)
                 val un = rd("POST", "/unrestrict/link", mapOf("link" to link))
                 val dl = un.optString("download", "")
-                if (dl.isBlank()) onDone(null, "No se pudo generar el enlace directo.", null)
-                else onDone(dl, null, null)
+                val fname = un.optString("filename", "").ifBlank { info.optString("filename", "video") }
+                if (dl.isBlank()) onDone(null, null, "No se pudo generar el enlace directo.", null)
+                else onDone(dl, fname, null, null)
             } catch (e: Throwable) {
-                onDone(null, e.message ?: "Error de Real-Debrid.", null)
+                onDone(null, null, e.message ?: "Error de Real-Debrid.", null)
             }
         }
     }
