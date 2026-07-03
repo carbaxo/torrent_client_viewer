@@ -8,3 +8,10 @@ data/
 .env.local
 buffer/
 dist-app/
+# Android build
+android-standalone/.gradle/
+android-standalone/build/
+android-standalone/app/build/
+android-standalone/local.properties
+android-standalone/.idea/
+*.iml
