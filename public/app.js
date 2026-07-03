@@ -169,7 +169,7 @@ function escapeHtml (str) {
 function $ (id) { return document.getElementById(id) }
 
 // ===================== Navegación (sidebar) =====================
-const VIEW_TITLES = { discover: 'Descubrir', search: 'Buscar', favorites: 'Favoritos', library: 'Mi biblioteca', add: 'Añadir', settings: 'Ajustes' }
+const VIEW_TITLES = { discover: 'Descubrir', search: 'Buscar', favorites: 'Favoritos', library: 'Mi biblioteca', add: 'Añadir', settings: 'Ajustes', detail: 'Detalle' }
 let CURRENT_VIEW = 'discover'
 
 function switchView (view) {
@@ -562,15 +562,191 @@ function wirePosterCards (root) {
   root.querySelectorAll('.poster-card').forEach((c) => {
     c.addEventListener('click', (e) => {
       if (e.target.closest('.poster-fav')) { toggleFavorite(c); return }
-      if (KIDS()) { toast('En el perfil infantil no se puede buscar ni descargar.'); return }
-      SEARCH_CONTEXT = { wid: c.dataset.wid || null, title: c.dataset.title }
-      $('search-input').value = c.dataset.title
-      $('search-type').value = c.dataset.type
-      toggleSeasonFields()
-      switchView('search')
-      $('search-form').dispatchEvent(new Event('submit', { cancelable: true }))
+      openDetail({
+        wid: c.dataset.wid || null,
+        title: c.dataset.title,
+        type: c.dataset.type,
+        year: c.dataset.year,
+        poster: c.dataset.poster,
+        rating: c.dataset.rating
+      })
     })
   })
+}
+
+// ===================== Ficha de detalle (estilo Stremio) =====================
+let PREV_VIEW = 'discover'
+let DETAIL = null // { tmdbId, type, title, seasons?, season? }
+
+const fmtRuntime = (min) => min >= 60 ? `${Math.floor(min / 60)}h ${min % 60}min` : `${min}min`
+
+async function openDetail (d) {
+  const m = /^(movie|series):(\d+)$/.exec(d.wid || '')
+  if (!m) {
+    // Sin id de TMDB (p.ej. búsqueda manual): cae a la búsqueda clásica
+    if (KIDS()) { toast('En el perfil infantil no se puede buscar ni descargar.'); return }
+    SEARCH_CONTEXT = { wid: null, title: d.title }
+    $('search-input').value = d.title
+    $('search-type').value = d.type
+    toggleSeasonFields()
+    switchView('search')
+    $('search-form').dispatchEvent(new Event('submit', { cancelable: true }))
+    return
+  }
+  const type = m[1]
+  const tmdbId = Number(m[2])
+  if (CURRENT_VIEW !== 'detail') PREV_VIEW = CURRENT_VIEW
+  SEARCH_CONTEXT = { wid: d.wid, title: d.title }
+  DETAIL = { type, tmdbId, title: d.title }
+  switchView('detail')
+  $('view-title').textContent = d.title
+  $('detail-content').innerHTML = '<div class="loader"><span></span><span></span><span></span></div>'
+  try {
+    const params = MY.settings.language ? '?lang=' + encodeURIComponent(MY.settings.language) : ''
+    const res = await api(`/api/title/${type}/${tmdbId}` + params)
+    const data = await res.json()
+    if (!res.ok || !data.success) throw new Error(data.error || 'No se pudo cargar la ficha.')
+    DETAIL = { ...DETAIL, ...data, title: data.title || d.title }
+    SEARCH_CONTEXT = { wid: d.wid, title: DETAIL.title }
+    renderDetail(DETAIL)
+    if (type === 'movie' && !KIDS()) loadDetailSources({})
+    else if (type === 'series' && DETAIL.seasons && DETAIL.seasons.length) selectSeason(DETAIL.seasons[0].season)
+  } catch (err) {
+    $('detail-content').innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`
+  }
+}
+
+function renderDetail (d) {
+  const favIdVal = 'tmdb:' + d.tmdbId
+  const isFav = FAV_IDS.has(favIdVal)
+  const watched = watchedWids().has(`${d.type}:${d.tmdbId}`)
+  const meta = [
+    d.type === 'series' ? 'Serie' : 'Película',
+    d.year,
+    d.rating ? '⭐ ' + d.rating : '',
+    d.runtime ? fmtRuntime(d.runtime) : '',
+    ...(d.genres || [])
+  ].filter(Boolean)
+
+  $('detail-content').innerHTML = `
+    <div class="detail-hero" ${d.backdrop ? `style="background-image:linear-gradient(to top, var(--bg) 2%, rgba(12,11,17,.55) 55%, rgba(12,11,17,.25) 100%), url('${escapeHtml(d.backdrop)}')"` : ''}>
+      <button id="detail-back" class="btn-ghost detail-back">← Volver</button>
+      <div class="detail-head">
+        ${d.poster ? `<img class="detail-poster" src="${escapeHtml(d.poster)}" alt="" />` : ''}
+        <div class="detail-info">
+          <h2 class="detail-title">${escapeHtml(d.title)}${watched ? ' <span class="poster-watched static">✓ Visto</span>' : ''}</h2>
+          <div class="detail-meta">${meta.map((x) => `<span>${escapeHtml(String(x))}</span>`).join('')}</div>
+          ${d.tagline ? `<p class="detail-tagline">${escapeHtml(d.tagline)}</p>` : ''}
+          <p class="detail-overview">${escapeHtml(d.overview || 'Sin descripción disponible.')}</p>
+          <div class="detail-actions">
+            <button id="detail-fav" class="btn-ghost">${isFav ? '❤ En favoritos' : '♡ Añadir a favoritos'}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    ${d.type === 'series' && d.seasons && d.seasons.length ? `
+      <div class="detail-block">
+        <h3 class="row-title">Temporadas</h3>
+        <div id="season-chips" class="quality-filters">
+          ${d.seasons.map((s) => `<button class="chip" data-season="${s.season}" title="${escapeHtml(s.name)} · ${s.episodes} ep.">T${s.season}</button>`).join('')}
+        </div>
+        <div id="episodes-list" class="episodes-list"></div>
+      </div>` : ''}
+    ${KIDS() ? '' : `
+      <div class="detail-block">
+        <h3 class="row-title" id="sources-title">Fuentes</h3>
+        <p id="detail-sources-status" class="status"></p>
+        <div id="detail-sources-loader" class="loader hidden"><span></span><span></span><span></span></div>
+        <div id="detail-sources" class="results-grid"></div>
+      </div>`}
+  `
+
+  $('detail-back').addEventListener('click', () => switchView(PREV_VIEW || 'discover'))
+  $('detail-fav').addEventListener('click', async () => {
+    await toggleFavorite({
+      dataset: {
+        id: favIdVal,
+        title: d.title,
+        year: d.year || '',
+        type: d.type,
+        poster: d.poster || '',
+        rating: d.rating != null ? String(d.rating) : ''
+      }
+    })
+    $('detail-fav').textContent = FAV_IDS.has(favIdVal) ? '❤ En favoritos' : '♡ Añadir a favoritos'
+  })
+  const chips = $('season-chips')
+  if (chips) {
+    chips.querySelectorAll('.chip').forEach((c) =>
+      c.addEventListener('click', () => selectSeason(Number(c.dataset.season))))
+  }
+}
+
+async function selectSeason (n) {
+  if (!DETAIL) return
+  DETAIL.season = n
+  const chips = $('season-chips')
+  if (chips) chips.querySelectorAll('.chip').forEach((c) => c.classList.toggle('active', Number(c.dataset.season) === n))
+  const list = $('episodes-list')
+  list.innerHTML = '<div class="loader"><span></span><span></span><span></span></div>'
+  try {
+    const params = MY.settings.language ? '?lang=' + encodeURIComponent(MY.settings.language) : ''
+    const res = await api(`/api/title/series/${DETAIL.tmdbId}/season/${n}` + params)
+    const data = await res.json()
+    if (!res.ok || !data.success) throw new Error(data.error || 'No se pudieron cargar los episodios.')
+    list.innerHTML = data.episodes.map((e) => `
+      <button class="episode-row" data-ep="${e.episode}">
+        ${e.still ? `<img class="episode-still" loading="lazy" src="${escapeHtml(e.still)}" alt="" />` : '<div class="episode-still ph">🎬</div>'}
+        <div class="episode-info">
+          <span class="episode-name">${e.episode}. ${escapeHtml(e.name)}${e.rating ? ` <span class="episode-rating">⭐ ${e.rating}</span>` : ''}</span>
+          <span class="episode-overview">${escapeHtml(e.overview)}</span>
+        </div>
+        ${KIDS() ? '' : '<span class="episode-cta">Fuentes ›</span>'}
+      </button>`).join('') || '<p class="empty">Esta temporada no tiene episodios listados.</p>'
+    if (!KIDS()) {
+      list.querySelectorAll('.episode-row').forEach((r) => r.addEventListener('click', () => {
+        list.querySelectorAll('.episode-row').forEach((x) => x.classList.toggle('active', x === r))
+        loadDetailSources({ season: n, episode: Number(r.dataset.ep) })
+      }))
+    }
+  } catch (err) {
+    list.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`
+  }
+}
+
+// Busca torrents para la película o para un episodio concreto y los pinta
+// en la sección "Fuentes" de la ficha (botones Ver / Descargar / RD).
+async function loadDetailSources ({ season, episode } = {}) {
+  const el = $('detail-sources')
+  if (!el || !DETAIL) return
+  const st = $('detail-sources-status')
+  const ld = $('detail-sources-loader')
+  $('sources-title').textContent = episode ? `Fuentes · T${season} E${episode}` : 'Fuentes'
+  st.textContent = ''
+  st.classList.remove('error')
+  el.innerHTML = ''
+  ld.classList.remove('hidden')
+  // Se busca con el título original (los torrents se publican con él)
+  const params = new URLSearchParams({ query: DETAIL.originalTitle || DETAIL.title, type: DETAIL.type, source: 'all' })
+  if (season) params.set('season', season)
+  if (episode) params.set('episode', episode)
+  try {
+    const res = await api('/api/search?' + params.toString())
+    const data = await res.json()
+    if (!res.ok || !data.success) throw new Error(data.error || 'No se pudieron cargar las fuentes.')
+    if (!data.streams.length) { st.textContent = 'Sin fuentes disponibles.'; return }
+    el.innerHTML = data.streams.map(resultCardHtml).join('')
+    wireResultActions(el)
+    let msg = `${data.streams.length} fuentes`
+    if (data.warnings) msg += ' · aviso: ' + data.warnings.join(', ')
+    st.textContent = msg
+    if (episode) $('sources-title').scrollIntoView({ behavior: 'smooth', block: 'start' })
+  } catch (err) {
+    st.classList.add('error')
+    st.textContent = err.message
+  } finally {
+    ld.classList.add('hidden')
+  }
 }
 
 // ===================== Vista Favoritos =====================
@@ -739,40 +915,46 @@ function renderQualityFilters (streams) {
     }))
 }
 
+// Tarjeta de una fuente (compartida entre Buscar y la ficha de detalle)
+function resultCardHtml (s, i) {
+  const qClass = 'q-' + s.quality.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const srcClass = s.source === 'peerflix' ? 'src-peerflix' : 'src-torrentio'
+  return `
+    <div class="result-card" style="animation-delay:${Math.min(i * 30, 300)}ms">
+      <div class="result-top">
+        <span class="badge source ${srcClass}">${escapeHtml(s.name || s.source)}</span>
+        <span class="badge quality ${qClass}">${escapeHtml(s.quality)}</span>
+      </div>
+      <div class="result-name">${escapeHtml(s.filename)}</div>
+      <div class="result-badges">
+        <span class="badge size">${escapeHtml(s.size)}</span>
+        <span class="badge seeders">▲ ${s.seeders} seeders</span>
+      </div>
+      <div class="result-actions">
+        <button class="btn-watch" data-magnet="${escapeHtml(s.url)}">▶ Ver</button>
+        <button class="btn-dl" data-magnet="${escapeHtml(s.url)}">⬇ Descargar</button>
+        ${RD.configured ? `<button class="btn-rd" data-magnet="${escapeHtml(s.url)}">⚡ RD</button>` : ''}
+        <button class="btn-copy" data-magnet="${escapeHtml(s.url)}" title="Copiar magnet">📋</button>
+      </div>
+    </div>`
+}
+
+function wireResultActions (root) {
+  root.querySelectorAll('.btn-watch').forEach((b) =>
+    b.addEventListener('click', () => watchFromSearch(b.dataset.magnet, b)))
+  root.querySelectorAll('.btn-dl').forEach((b) =>
+    b.addEventListener('click', () => addMagnetFromSearch(b.dataset.magnet, b)))
+  root.querySelectorAll('.btn-rd').forEach((b) =>
+    b.addEventListener('click', () => rdWatch(b.dataset.magnet, b)))
+  root.querySelectorAll('.btn-copy').forEach((b) =>
+    b.addEventListener('click', () => copyMagnet(b.dataset.magnet, b)))
+}
+
 function renderResults (streams) {
   const filtered = QUALITY_FILTER === 'all' ? streams : streams.filter((s) => s.quality === QUALITY_FILTER)
   if (!filtered.length) { searchResults.innerHTML = '<p class="empty">No hay resultados con ese filtro.</p>'; return }
-  searchResults.innerHTML = filtered.map((s, i) => {
-    const qClass = 'q-' + s.quality.toLowerCase().replace(/[^a-z0-9]/g, '')
-    const srcClass = s.source === 'peerflix' ? 'src-peerflix' : 'src-torrentio'
-    return `
-      <div class="result-card" style="animation-delay:${Math.min(i * 30, 300)}ms">
-        <div class="result-top">
-          <span class="badge source ${srcClass}">${escapeHtml(s.name || s.source)}</span>
-          <span class="badge quality ${qClass}">${escapeHtml(s.quality)}</span>
-        </div>
-        <div class="result-name">${escapeHtml(s.filename)}</div>
-        <div class="result-badges">
-          <span class="badge size">${escapeHtml(s.size)}</span>
-          <span class="badge seeders">▲ ${s.seeders} seeders</span>
-        </div>
-        <div class="result-actions">
-          <button class="btn-watch" data-magnet="${escapeHtml(s.url)}">▶ Ver</button>
-          <button class="btn-dl" data-magnet="${escapeHtml(s.url)}">⬇ Descargar</button>
-          ${RD.configured ? `<button class="btn-rd" data-magnet="${escapeHtml(s.url)}">⚡ RD</button>` : ''}
-          <button class="btn-copy" data-magnet="${escapeHtml(s.url)}" title="Copiar magnet">📋</button>
-        </div>
-      </div>`
-  }).join('')
-
-  searchResults.querySelectorAll('.btn-watch').forEach((b) =>
-    b.addEventListener('click', () => watchFromSearch(b.dataset.magnet, b)))
-  searchResults.querySelectorAll('.btn-dl').forEach((b) =>
-    b.addEventListener('click', () => addMagnetFromSearch(b.dataset.magnet, b)))
-  searchResults.querySelectorAll('.btn-rd').forEach((b) =>
-    b.addEventListener('click', () => rdWatch(b.dataset.magnet, b)))
-  searchResults.querySelectorAll('.btn-copy').forEach((b) =>
-    b.addEventListener('click', () => copyMagnet(b.dataset.magnet, b)))
+  searchResults.innerHTML = filtered.map(resultCardHtml).join('')
+  wireResultActions(searchResults)
 }
 
 // "Ver": descarga al buffer temporal y abre el reproductor en cuanto hay

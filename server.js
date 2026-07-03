@@ -389,6 +389,27 @@ app.get('/api/catalogs', searchLimiter, async (req, res) => {
   }
 })
 
+// Ficha de un título y episodios por temporada (para la vista de detalle)
+app.use('/api/title', auth.requireAuth)
+
+app.get('/api/title/series/:id/season/:n', searchLimiter, async (req, res) => {
+  try {
+    const data = await catalog.getSeason(req.params.id, req.params.n, { lang: req.query.lang })
+    res.json({ success: true, ...data })
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, code: err.code, error: err.message })
+  }
+})
+
+app.get('/api/title/:type/:id', searchLimiter, async (req, res) => {
+  try {
+    const data = await catalog.getDetails(req.params.type, req.params.id, { lang: req.query.lang })
+    res.json({ success: true, ...data })
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, code: err.code, error: err.message })
+  }
+})
+
 // Recomendaciones según favoritos/vistos: ?ids=movie:123,series:456&lang=
 app.use('/api/recommendations', auth.requireAuth)
 app.get('/api/recommendations', searchLimiter, async (req, res) => {
