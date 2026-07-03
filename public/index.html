@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Torrent Client Viewer</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>🎬 Torrent Client Viewer</h1>
+    <p class="subtitle">Descarga por magnet o archivo .torrent y reproduce el vídeo mientras baja</p>
+  </header>
+
+  <main>
+    <section class="add-panel">
+      <form id="magnet-form" class="add-form">
+        <input
+          type="text"
+          id="magnet-input"
+          placeholder="magnet:?xt=urn:btih:..."
+          autocomplete="off"
+        />
+        <button type="submit">Añadir magnet</button>
+      </form>
+
+      <form id="upload-form" class="add-form">
+        <label class="file-label">
+          <input type="file" id="torrent-file" accept=".torrent" />
+          <span id="file-name">Elegir archivo .torrent…</span>
+        </label>
+        <button type="submit">Subir .torrent</button>
+      </form>
+
+      <p id="status" class="status"></p>
+    </section>
+
+    <section id="torrent-list" class="torrent-list"></section>
+  </main>
+
+  <!-- Reproductor en modal -->
+  <div id="player-overlay" class="player-overlay hidden">
+    <div class="player-box">
+      <div class="player-header">
+        <span id="player-title"></span>
+        <button id="player-close" title="Cerrar">✕</button>
+      </div>
+      <video id="player" controls autoplay></video>
+      <p id="player-note" class="player-note"></p>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
