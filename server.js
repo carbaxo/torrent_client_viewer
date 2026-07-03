@@ -82,7 +82,8 @@ app.use((req, res, next) => {
     "img-src 'self' data: https://image.tmdb.org https://lh3.googleusercontent.com",
     "media-src 'self' blob: data:",
     "style-src 'self' 'unsafe-inline'",
-    "script-src 'self'",
+    // apis.google.com: lo carga el SDK de Firebase Auth para el popup de Google
+    "script-src 'self' https://apis.google.com",
     "connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firestore.googleapis.com https://www.googleapis.com",
     "frame-src 'self' https://*.firebaseapp.com https://accounts.google.com",
     "frame-ancestors 'self'"
