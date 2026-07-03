@@ -18,11 +18,14 @@ class PlayerActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
+        // Puede reproducir un torrent local (infoHash) o una URL directa (Real-Debrid)
+        val directUrl = intent.getStringExtra("url")
         val infoHash = intent.getStringExtra("infoHash")
-        if (infoHash == null) { finish(); return }
-
-        StreamServer.ensureStarted()
-        val url = StreamServer.urlFor(infoHash)
+        val url: String = when {
+            !directUrl.isNullOrBlank() -> directUrl
+            infoHash != null -> { StreamServer.ensureStarted(); StreamServer.urlFor(infoHash) }
+            else -> { finish(); return }
+        }
 
         val view = PlayerView(this)
         setContentView(view)

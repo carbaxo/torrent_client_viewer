@@ -54,6 +54,7 @@ class MainActivity : ComponentActivity() {
         DownloadService.start(this)
         StreamServer.ensureStarted()
         Sync.init(this)
+        RealDebrid.init(this)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
@@ -70,6 +71,9 @@ class MainActivity : ComponentActivity() {
                         initialMagnet = magnetFromIntent(intent),
                         onPlay = { infoHash ->
                             startActivity(Intent(this, PlayerActivity::class.java).putExtra("infoHash", infoHash))
+                        },
+                        onPlayUrl = { url ->
+                            startActivity(Intent(this, PlayerActivity::class.java).putExtra("url", url))
                         }
                     )
                 }
@@ -86,12 +90,13 @@ class MainActivity : ComponentActivity() {
 private enum class Tab(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     DISCOVER("Descubrir", Icons.Filled.Explore),
     SEARCH("Buscar", Icons.Filled.Search),
-    DOWNLOADS("Descargas", Icons.Filled.Download)
+    DOWNLOADS("Descargas", Icons.Filled.Download),
+    SETTINGS("Ajustes", Icons.Filled.Settings)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String) -> Unit) {
+fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String) -> Unit, onPlayUrl: (String) -> Unit) {
     var tab by remember { mutableStateOf(Tab.DISCOVER) }
     var detail by remember { mutableStateOf<Tmdb.Title?>(null) }
     var catalogType by remember { mutableStateOf("movie") }
@@ -130,7 +135,8 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String) -> Unit) 
             title = d,
             onBack = { detail = null },
             onWatch = { magnet -> addMagnet(magnet, true); tab = Tab.DOWNLOADS; detail = null },
-            onDownload = { magnet -> addMagnet(magnet, false) }
+            onDownload = { magnet -> addMagnet(magnet, false) },
+            onPlayUrl = onPlayUrl
         )
         return
     }
@@ -158,6 +164,7 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String) -> Unit) 
                 Tab.DISCOVER -> DiscoverScreen(catalogType, { catalogType = it }, onOpen = { detail = it })
                 Tab.SEARCH -> SearchScreen(onOpen = { detail = it })
                 Tab.DOWNLOADS -> DownloadsScreen(downloads, onPlay)
+                Tab.SETTINGS -> SettingsScreen()
             }
         }
     }
@@ -310,6 +317,56 @@ fun SearchScreen(onOpen: (Tmdb.Title) -> Unit) {
 }
 
 @Composable
+fun SettingsScreen() {
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+        Sync.onSignInResult(res.data) { _, _ -> }
+    }
+    var rdInput by remember { mutableStateOf("") }
+    var rdStatus by remember { mutableStateOf("") }
+
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text("Ajustes", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+
+        // --- Cuenta (Google / sincronización) ---
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Cuenta", fontWeight = FontWeight.Bold)
+                if (!Sync.enabled) {
+                    Text("El login con Google no está disponible en esta compilación.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                } else if (Sync.email == null) {
+                    Text("Inicia sesión para sincronizar tu lista con la app del PC.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Button(onClick = { Sync.signInIntent()?.let { launcher.launch(it) } }) { Text("Entrar con Google") }
+                } else {
+                    Text("👤 ${Sync.email}", style = MaterialTheme.typography.bodyMedium)
+                    OutlinedButton(onClick = { Sync.signOut() }) { Text("Cerrar sesión") }
+                }
+            }
+        }
+
+        // --- Real-Debrid ---
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Real-Debrid", fontWeight = FontWeight.Bold)
+                if (RealDebrid.configured) {
+                    Text("⚡ Conectado${RealDebrid.account?.let { " · $it" } ?: ""}", color = Color(0xFF34D399), style = MaterialTheme.typography.bodyMedium)
+                    OutlinedButton(onClick = { RealDebrid.disconnect() }) { Text("Desconectar") }
+                } else {
+                    Text("Pega tu token para reproducir por streaming directo (sin descargar en el móvil).", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(value = rdInput, onValueChange = { rdInput = it }, label = { Text("Token de Real-Debrid") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Button(onClick = {
+                        rdStatus = "Validando…"
+                        RealDebrid.connect(rdInput) { ok, msg -> onMain { rdStatus = if (ok) "Conectado como $msg" else (msg ?: "Error") } }
+                    }, enabled = rdInput.isNotBlank()) { Text("Conectar") }
+                    Text("Consíguelo en real-debrid.com/apitoken", color = Muted, style = MaterialTheme.typography.labelSmall)
+                }
+                if (rdStatus.isNotBlank()) Text(rdStatus, color = Muted, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
 fun DownloadsScreen(downloads: List<TorrentEngine.Snapshot>, onPlay: (String) -> Unit) {
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
         item {
@@ -343,11 +400,12 @@ fun DownloadCard(d: TorrentEngine.Snapshot, onPlay: (String) -> Unit) {
 }
 
 @Composable
-fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Unit, onDownload: (String) -> Unit) {
+fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Unit, onDownload: (String) -> Unit, onPlayUrl: (String) -> Unit) {
     var detail by remember { mutableStateOf<Tmdb.Detail?>(null) }
     var sources by remember { mutableStateOf<List<Search.Result>>(emptyList()) }
     var status by remember { mutableStateOf("Cargando…") }
     var loadingSources by remember { mutableStateOf(false) }
+    var rdStatus by remember { mutableStateOf("") }
 
     LaunchedEffect(title.tmdbId) {
         Tmdb.detail(title.type, title.tmdbId) { d, _ -> onMain { detail = d; status = "" } }
@@ -404,10 +462,25 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Uni
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = { onWatch(r.magnet) }) { Text("▶ Ver") }
                             OutlinedButton(onClick = { onDownload(r.magnet) }) { Text("⬇ Descargar") }
+                            if (RealDebrid.configured) {
+                                OutlinedButton(onClick = {
+                                    rdStatus = "⚡ Preparando en Real-Debrid…"
+                                    RealDebrid.streamMagnet(r.magnet) { url, err, progress ->
+                                        onMain {
+                                            when {
+                                                url != null -> { rdStatus = ""; onPlayUrl(url) }
+                                                progress != null -> rdStatus = "Real-Debrid descargando… ${progress}% (vuelve a pulsar ⚡ en un rato)"
+                                                else -> rdStatus = err ?: "Error de Real-Debrid"
+                                            }
+                                        }
+                                    }
+                                }) { Text("⚡ RD") }
+                            }
                         }
                     }
                 }
             }
+            if (rdStatus.isNotBlank()) Text(rdStatus, color = Muted, style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(24.dp))
         }
     }
