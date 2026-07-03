@@ -83,6 +83,8 @@ body {
 .login-tab.active { background: var(--accent); color: #fff; box-shadow: 0 4px 14px rgba(123, 91, 245, .4); }
 .login-form { display: flex; flex-direction: column; gap: 10px; }
 .login-form input { width: 100%; }
+.link-btn { background: transparent; border: none; color: var(--muted); font-size: .82rem; padding: 8px; margin-top: 8px; text-decoration: underline; cursor: pointer; }
+.link-btn:hover { color: var(--accent); filter: none; }
 .login-alt { margin-top: 14px; }
 .login-divider {
   display: flex; align-items: center; gap: 10px; margin-bottom: 14px;

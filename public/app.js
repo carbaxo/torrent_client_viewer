@@ -219,8 +219,22 @@ async function checkSession () {
 function backendMissing () {
   const st = $('login-status')
   st.classList.add('error')
-  st.textContent = 'No hay conexión con el backend. Despliega el servidor Node y pon su URL en config.js (window.TCV_API_BASE). Ver SETUP.md.'
+  st.textContent = API_BASE
+    ? `No hay conexión con el servidor (${API_BASE}). Comprueba que está encendido y accesible.`
+    : 'No hay conexión con el backend. Pulsa "Conectar a un servidor" para indicar su dirección.'
 }
+
+// Configuración de la URL del backend (para el cliente de escritorio/Android
+// que apunta a un servidor remoto). Se guarda en localStorage y recarga.
+$('server-config-btn').addEventListener('click', () => {
+  const current = localStorage.getItem('tcv_api_base') || API_BASE || ''
+  const url = prompt('Dirección del servidor (déjalo vacío para usar este mismo sitio):\n\nEj.: http://192.168.1.50:3000', current)
+  if (url === null) return
+  const clean = url.trim().replace(/\/$/, '')
+  if (clean) localStorage.setItem('tcv_api_base', clean)
+  else localStorage.removeItem('tcv_api_base')
+  location.reload()
+})
 
 function showLogin () {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
