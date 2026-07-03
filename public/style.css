@@ -243,6 +243,19 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .catalog-row { margin-bottom: 10px; }
 .catalog-head { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 1.02rem; margin-bottom: 12px; letter-spacing: .2px; }
 .catalog-head .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; box-shadow: 0 0 10px currentColor; }
+.see-more { margin-left: auto; background: transparent; border: none; color: var(--accent); font-size: .84rem; font-weight: 700; padding: 4px 6px; }
+.see-more:hover { filter: none; text-decoration: underline; }
+
+/* Filtros de categoría (Buscar) */
+.genre-block { margin-bottom: 4px; }
+.genre-label { display: block; font-size: .78rem; color: var(--muted); font-weight: 600; margin-bottom: 8px; }
+.genre-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* Vista Explorar */
+.browse-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.browse-head .seg.hidden { display: none; }
+.browse-more { display: flex; justify-content: center; padding: 8px 0 4px; }
+.browse-more .btn-ghost { padding: 10px 26px; }
 
 .poster-row {
   display: grid; grid-auto-flow: column; grid-auto-columns: 148px; gap: 14px;

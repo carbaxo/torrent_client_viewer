@@ -169,7 +169,7 @@ function escapeHtml (str) {
 function $ (id) { return document.getElementById(id) }
 
 // ===================== Navegación (sidebar) =====================
-const VIEW_TITLES = { discover: 'Descubrir', search: 'Buscar', favorites: 'Favoritos', downloads: 'Descargas', library: 'Actividad de descargas', add: 'Añadir', settings: 'Ajustes', detail: 'Detalle' }
+const VIEW_TITLES = { discover: 'Descubrir', search: 'Buscar', favorites: 'Favoritos', downloads: 'Descargas', library: 'Actividad de descargas', add: 'Añadir', settings: 'Ajustes', detail: 'Detalle', browse: 'Explorar' }
 let CURRENT_VIEW = 'discover'
 
 function switchView (view) {
@@ -309,7 +309,7 @@ async function selectProfile (profile) {
   switchView(CONFIG.catalogs ? 'discover' : (KIDS() ? 'library' : 'search'))
   render()
   if (!pollTimer) pollTimer = setInterval(render, 1000)
-  if (CONFIG.catalogs) { loadCatalogs(); loadRecommendations() }
+  if (CONFIG.catalogs) { loadCatalogs(); loadRecommendations(); loadGenres() }
   if (!KIDS()) { loadRdStatus(); loadServerDirs() }
   renderProfilesSettings()
 }
@@ -607,10 +607,15 @@ function renderCatalogs (catalogs) {
   LAST_CATALOGS = catalogs
   catalogsEl.innerHTML = catalogs.map((cat) => `
     <div class="catalog-row">
-      <div class="catalog-head"><span class="dot" style="background:${cat.color};color:${cat.color}"></span>${escapeHtml(cat.name)}</div>
+      <div class="catalog-head">
+        <span class="dot" style="background:${cat.color};color:${cat.color}"></span>${escapeHtml(cat.name)}
+        <button class="see-more" data-provider="${escapeHtml(cat.platform)}" data-name="${escapeHtml(cat.name)}" data-type="${escapeHtml(cat.type)}">Ver más ›</button>
+      </div>
       <div class="poster-row">${cat.items.map(posterCardHtml).join('')}</div>
     </div>`).join('')
   wirePosterCards(catalogsEl)
+  catalogsEl.querySelectorAll('.see-more').forEach((b) => b.addEventListener('click', () =>
+    openBrowse({ title: b.dataset.name, provider: b.dataset.provider, type: b.dataset.type })))
 }
 
 // ===================== Pósters + favoritos =====================
@@ -876,6 +881,97 @@ async function loadRecommendations () {
   } catch { el.innerHTML = '' }
 }
 
+// ===================== Explorar (Ver más / por categoría) =====================
+let BROWSE = null
+
+async function openBrowse (opts) {
+  // opts: { title, provider?, genre?, type }
+  if (CURRENT_VIEW !== 'browse' && CURRENT_VIEW !== 'detail') PREV_VIEW = CURRENT_VIEW
+  BROWSE = {
+    title: opts.title,
+    provider: opts.provider || null,
+    genre: opts.genre || null,
+    type: opts.type === 'series' ? 'series' : 'movie',
+    page: 0, totalPages: 1, items: []
+  }
+  switchView('browse')
+  $('view-title').textContent = opts.title
+  // El tipo (película/serie) lo fija el contexto de origen (pestaña de
+  // Descubrir o selector de Buscar); los IDs de género difieren entre tipos,
+  // así que no ofrecemos aquí un toggle que los mezclaría.
+  $('browse-type').classList.add('hidden')
+  $('browse-grid').innerHTML = ''
+  $('browse-status').textContent = ''
+  $('browse-status').classList.remove('error')
+  await loadMoreBrowse(true)
+}
+
+async function loadMoreBrowse (reset) {
+  if (!BROWSE) return
+  if (!reset && BROWSE.page >= BROWSE.totalPages) return
+  $('browse-more-btn').classList.add('hidden')
+  $('browse-loader').classList.remove('hidden')
+  try {
+    const params = new URLSearchParams({ type: BROWSE.type, page: String(BROWSE.page + 1) })
+    if (BROWSE.provider) params.set('provider', BROWSE.provider)
+    if (BROWSE.genre) params.set('genre', BROWSE.genre)
+    if (MY.settings.language) params.set('lang', MY.settings.language)
+    if (KIDS()) params.set('kids', '1')
+    const res = await api('/api/discover?' + params.toString())
+    const data = await res.json()
+    if (!res.ok || !data.success) throw new Error(data.error || 'No se pudo cargar.')
+    BROWSE.page = data.page
+    BROWSE.totalPages = data.totalPages
+    const seen = new Set(BROWSE.items.map((i) => i.tmdbId))
+    for (const it of data.items) if (!seen.has(it.tmdbId)) BROWSE.items.push(it)
+    renderBrowse()
+    if (!BROWSE.items.length) $('browse-status').textContent = 'Sin resultados.'
+  } catch (err) {
+    $('browse-status').classList.add('error')
+    $('browse-status').textContent = err.message
+  } finally {
+    $('browse-loader').classList.add('hidden')
+  }
+}
+
+function renderBrowse () {
+  const el = $('browse-grid')
+  el.innerHTML = BROWSE.items.map(posterCardHtml).join('')
+  wirePosterCards(el)
+  $('browse-more-btn').classList.toggle('hidden', BROWSE.page >= BROWSE.totalPages)
+}
+
+$('browse-back').addEventListener('click', () => switchView(PREV_VIEW || 'discover'))
+$('browse-more-btn').addEventListener('click', () => loadMoreBrowse(false))
+$('browse-type').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+  if (!BROWSE || b.dataset.btype === BROWSE.type) return
+  BROWSE.type = b.dataset.btype
+  $('browse-type').querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b))
+  BROWSE.page = 0; BROWSE.totalPages = 1; BROWSE.items = []
+  $('browse-grid').innerHTML = ''
+  loadMoreBrowse(true)
+}))
+
+// ===================== Filtros de categoría (Buscar) =====================
+async function loadGenres () {
+  const block = $('genre-filters').closest('.genre-block')
+  if (!CONFIG.catalogs) { if (block) block.classList.add('hidden'); return }
+  const type = searchType.value === 'series' ? 'series' : 'movie'
+  try {
+    const params = new URLSearchParams({ type })
+    if (MY.settings.language) params.set('lang', MY.settings.language)
+    const res = await api('/api/genres?' + params.toString())
+    const data = await res.json()
+    if (!res.ok || !data.success || !data.genres.length) { if (block) block.classList.add('hidden'); return }
+    if (block) block.classList.remove('hidden')
+    const el = $('genre-filters')
+    el.innerHTML = data.genres.map((g) =>
+      `<button class="chip" data-genre="${g.id}" data-name="${escapeHtml(g.name)}">${escapeHtml(g.name)}</button>`).join('')
+    el.querySelectorAll('.chip').forEach((c) => c.addEventListener('click', () =>
+      openBrowse({ title: c.dataset.name, genre: c.dataset.genre, type })))
+  } catch { if (block) block.classList.add('hidden') }
+}
+
 async function toggleFavorite (card) {
   const id = card.dataset.id
   try {
@@ -946,6 +1042,7 @@ function searchStatus (msg, isError = false) {
 searchType.addEventListener('change', () => {
   toggleSeasonFields()
   saveSettings({ searchType: searchType.value })
+  loadGenres()
 })
 searchSource.addEventListener('change', () => saveSettings({ searchSource: searchSource.value }))
 function toggleSeasonFields () {
@@ -1584,6 +1681,7 @@ $('setting-lang').addEventListener('change', () => {
   saveSettings({ language: $('setting-lang').value })
   loadCatalogs()
   loadRecommendations()
+  loadGenres()
 })
 
 // --- Carpetas del servidor ---
