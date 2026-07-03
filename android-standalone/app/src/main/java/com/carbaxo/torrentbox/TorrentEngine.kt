@@ -178,7 +178,7 @@ object TorrentEngine {
         val startPiece = (abs / ti.pieceLength()).toInt()
         val ahead = 24 // ~ piezas por delante que priorizamos
         for (p in startPiece until minOf(startPiece + ahead, ti.numPieces())) {
-            try { handle.piecePriority(p, Priority.SEVEN) } catch (_: Throwable) {}
+            try { handle.piecePriority(p, Priority.TOP_PRIORITY) } catch (_: Throwable) {}
         }
     }
 
