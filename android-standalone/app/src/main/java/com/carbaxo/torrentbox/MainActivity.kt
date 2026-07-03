@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -101,14 +102,18 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String) -> Unit, 
     var detail by remember { mutableStateOf<Tmdb.Title?>(null) }
     var catalogType by remember { mutableStateOf("movie") }
     val downloads = remember { mutableStateListOf<TorrentEngine.Snapshot>() }
+    val rdDownloads = remember { mutableStateListOf<RdDownloads.Snap>() }
     var pendingPlay by remember { mutableStateOf<String?>(null) }
+    val ctx = LocalContext.current
 
-    // Refresco de descargas + auto-reproducción cuando el vídeo está listo
+    // Refresco de descargas (torrent + Real-Debrid) + auto-reproducción
     LaunchedEffect(Unit) {
         while (true) {
             val snaps = TorrentEngine.snapshots()
+            val rd = try { RdDownloads.snapshots(ctx) } catch (_: Throwable) { emptyList() }
             onMain {
                 downloads.clear(); downloads.addAll(snaps)
+                rdDownloads.clear(); rdDownloads.addAll(rd)
                 val p = pendingPlay
                 if (p != null) {
                     val s = snaps.find { it.infoHash == p && it.hasVideo }
@@ -163,7 +168,7 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String) -> Unit, 
             when (tab) {
                 Tab.DISCOVER -> DiscoverScreen(catalogType, { catalogType = it }, onOpen = { detail = it })
                 Tab.SEARCH -> SearchScreen(onOpen = { detail = it })
-                Tab.DOWNLOADS -> DownloadsScreen(downloads, onPlay)
+                Tab.DOWNLOADS -> DownloadsScreen(downloads, rdDownloads, onPlay, onPlayUrl)
                 Tab.SETTINGS -> SettingsScreen()
             }
         }
@@ -367,14 +372,51 @@ fun SettingsScreen() {
 }
 
 @Composable
-fun DownloadsScreen(downloads: List<TorrentEngine.Snapshot>, onPlay: (String) -> Unit) {
+fun DownloadsScreen(
+    downloads: List<TorrentEngine.Snapshot>,
+    rdDownloads: List<RdDownloads.Snap>,
+    onPlay: (String) -> Unit,
+    onPlayUrl: (String) -> Unit
+) {
+    val ctx = LocalContext.current
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
         item {
             Text("Descargas", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(10.dp))
-            if (downloads.isEmpty()) Text("Aún no hay descargas. Abre un título y pulsa Ver o Descargar.", color = Muted, style = MaterialTheme.typography.bodySmall)
+            if (downloads.isEmpty() && rdDownloads.isEmpty()) Text("Aún no hay descargas. Abre un título y pulsa Ver o Descargar.", color = Muted, style = MaterialTheme.typography.bodySmall)
         }
-        items(downloads.size) { i -> DownloadCard(downloads[i], onPlay) }
+        if (rdDownloads.isNotEmpty()) {
+            item { Text("⚡ Real-Debrid", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp, bottom = 4.dp)) }
+            items(rdDownloads.size) { i -> RdDownloadCard(rdDownloads[i], onPlayUrl = { onPlayUrl(RdDownloads.playUri(ctx, rdDownloads[i].id) ?: rdDownloads[i].localUri ?: "") }, onRemove = { RdDownloads.remove(ctx, rdDownloads[i].id) }) }
+        }
+        if (downloads.isNotEmpty()) {
+            item { Text("⬇ En el móvil (torrent)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)) }
+            items(downloads.size) { i -> DownloadCard(downloads[i], onPlay) }
+        }
+    }
+}
+
+@Composable
+fun RdDownloadCard(d: RdDownloads.Snap, onPlayUrl: () -> Unit, onRemove: () -> Unit) {
+    Card(Modifier.fillMaxWidth().padding(vertical = 6.dp), colors = CardDefaults.cardColors(containerColor = Surface1)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(d.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            val prog = if (d.total > 0) d.bytes.toFloat() / d.total else 0f
+            LinearProgressIndicator(progress = { prog }, modifier = Modifier.fillMaxWidth())
+            Text(
+                when {
+                    d.failed -> "Error en la descarga"
+                    d.done -> "✓ Disponible sin conexión · ${Search.humanSize(d.total)}"
+                    else -> "${(prog * 100).toInt()}% · ${Search.humanSize(d.bytes)} / ${Search.humanSize(d.total)}"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = if (d.done) Color(0xFF34D399) else Muted
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (d.done) Button(onClick = onPlayUrl) { Text("▶ Ver") }
+                OutlinedButton(onClick = onRemove) { Text("Borrar") }
+            }
+        }
     }
 }
 
@@ -399,8 +441,10 @@ fun DownloadCard(d: TorrentEngine.Snapshot, onPlay: (String) -> Unit) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Unit, onDownload: (String) -> Unit, onPlayUrl: (String) -> Unit) {
+    val ctx = LocalContext.current
     var detail by remember { mutableStateOf<Tmdb.Detail?>(null) }
     var sources by remember { mutableStateOf<List<Search.Result>>(emptyList()) }
     var status by remember { mutableStateOf("Cargando…") }
@@ -459,22 +503,40 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Uni
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(r.name, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Text("▲ ${r.seeders} seeders · ${Search.humanSize(r.sizeBytes)}", style = MaterialTheme.typography.labelSmall, color = Muted)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = { onWatch(r.magnet) }) { Text("▶ Ver") }
                             OutlinedButton(onClick = { onDownload(r.magnet) }) { Text("⬇ Descargar") }
                             if (RealDebrid.configured) {
+                                Button(
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF34D399)),
+                                    onClick = {
+                                        rdStatus = "⚡ Preparando en Real-Debrid…"
+                                        RealDebrid.streamMagnet(r.magnet) { url, _, err, progress ->
+                                            onMain {
+                                                when {
+                                                    url != null -> { rdStatus = ""; onPlayUrl(url) }
+                                                    progress != null -> rdStatus = "Real-Debrid preparando… ${progress}% (reintenta en un momento)"
+                                                    else -> rdStatus = err ?: "Error de Real-Debrid"
+                                                }
+                                            }
+                                        }
+                                    }
+                                ) { Text("⚡ Ver RD") }
                                 OutlinedButton(onClick = {
-                                    rdStatus = "⚡ Preparando en Real-Debrid…"
-                                    RealDebrid.streamMagnet(r.magnet) { url, err, progress ->
+                                    rdStatus = "⚡ Preparando descarga con Real-Debrid…"
+                                    RealDebrid.streamMagnet(r.magnet) { url, fname, err, progress ->
                                         onMain {
                                             when {
-                                                url != null -> { rdStatus = ""; onPlayUrl(url) }
-                                                progress != null -> rdStatus = "Real-Debrid descargando… ${progress}% (vuelve a pulsar ⚡ en un rato)"
+                                                url != null -> {
+                                                    RdDownloads.enqueue(ctx, url, fname ?: title.title)
+                                                    rdStatus = "Descargando con Real-Debrid… (mira la pestaña Descargas)"
+                                                }
+                                                progress != null -> rdStatus = "Real-Debrid preparando… ${progress}% (reintenta en un momento)"
                                                 else -> rdStatus = err ?: "Error de Real-Debrid"
                                             }
                                         }
                                     }
-                                }) { Text("⚡ RD") }
+                                }) { Text("⚡ Descargar RD") }
                             }
                         }
                     }
