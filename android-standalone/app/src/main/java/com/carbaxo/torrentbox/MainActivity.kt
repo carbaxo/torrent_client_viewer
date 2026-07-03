@@ -9,25 +9,40 @@ import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 import java.io.File
 
 private val mainHandler = Handler(Looper.getMainLooper())
 private fun onMain(block: () -> Unit) = mainHandler.post(block)
 
-class MainActivity : ComponentActivity() {
+// Paleta al estilo de la web (morado Stremio)
+private val Accent = Color(0xFF7B5BF5)
+private val Bg = Color(0xFF0C0B11)
+private val Surface1 = Color(0xFF15141D)
+private val Muted = Color(0xFF8F8BA1)
 
+class MainActivity : ComponentActivity() {
     private lateinit var saveRoot: File
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,8 +59,10 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
-                Surface(Modifier.fillMaxSize()) {
+            MaterialTheme(
+                colorScheme = darkColorScheme(primary = Accent, background = Bg, surface = Surface1)
+            ) {
+                Surface(Modifier.fillMaxSize(), color = Bg) {
                     AppScreen(
                         saveRoot = saveRoot,
                         initialMagnet = magnetFromIntent(intent),
@@ -64,123 +81,295 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private enum class Tab(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
+    DISCOVER("Descubrir", Icons.Filled.Explore),
+    SEARCH("Buscar", Icons.Filled.Search),
+    DOWNLOADS("Descargas", Icons.Filled.Download)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String) -> Unit) {
-    var magnet by remember { mutableStateOf(initialMagnet ?: "") }
-    var query by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf("") }
-    var searching by remember { mutableStateOf(false) }
-    val results = remember { mutableStateListOf<Search.Result>() }
+    var tab by remember { mutableStateOf(Tab.DISCOVER) }
+    var detail by remember { mutableStateOf<Tmdb.Title?>(null) }
+    var catalogType by remember { mutableStateOf("movie") }
     val downloads = remember { mutableStateListOf<TorrentEngine.Snapshot>() }
+    var pendingPlay by remember { mutableStateOf<String?>(null) }
 
-    // Refresco del estado de descargas cada segundo
+    // Refresco de descargas + auto-reproducción cuando el vídeo está listo
     LaunchedEffect(Unit) {
         while (true) {
             val snaps = TorrentEngine.snapshots()
-            onMain { downloads.clear(); downloads.addAll(snaps) }
+            onMain {
+                downloads.clear(); downloads.addAll(snaps)
+                val p = pendingPlay
+                if (p != null) {
+                    val s = snaps.find { it.infoHash == p && it.hasVideo }
+                    if (s != null) { pendingPlay = null; onPlay(p) }
+                }
+            }
             kotlinx.coroutines.delay(1000)
         }
     }
 
-    fun add(m: String) {
+    fun addMagnet(m: String, autoplay: Boolean) {
         if (m.isBlank()) return
-        status = "Añadiendo… (obteniendo metadatos)"
-        TorrentEngine.addMagnet(m.trim(), saveRoot) { d, err ->
-            onMain { status = if (d != null) "Añadido: ${d.name}" else "Error: $err" }
+        TorrentEngine.addMagnet(m.trim(), saveRoot) { d, _ ->
+            if (autoplay && d != null) onMain { pendingPlay = d.infoHash }
         }
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Text("🎬 TorrentBox", style = MaterialTheme.typography.headlineSmall)
-        Text("Descarga y reproduce en el propio móvil", style = MaterialTheme.typography.bodySmall)
+    LaunchedEffect(initialMagnet) { if (!initialMagnet.isNullOrBlank()) addMagnet(initialMagnet, false) }
 
-        // Añadir magnet
-        OutlinedTextField(
-            value = magnet, onValueChange = { magnet = it },
-            label = { Text("Enlace magnet") }, singleLine = true,
-            modifier = Modifier.fillMaxWidth()
+    // Ficha de detalle a pantalla completa
+    val d = detail
+    if (d != null) {
+        DetailScreen(
+            title = d,
+            onBack = { detail = null },
+            onWatch = { magnet -> addMagnet(magnet, true); tab = Tab.DOWNLOADS; detail = null },
+            onDownload = { magnet -> addMagnet(magnet, false) }
         )
-        Button(onClick = { add(magnet); magnet = "" }, modifier = Modifier.fillMaxWidth()) {
-            Text("Añadir y descargar")
-        }
+        return
+    }
 
-        HorizontalDivider()
-
-        // Buscar
-        OutlinedTextField(
-            value = query, onValueChange = { query = it },
-            label = { Text("Buscar película/serie") }, singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            modifier = Modifier.fillMaxWidth()
-        )
-        Button(
-            onClick = {
-                if (query.isBlank()) return@Button
-                searching = true; results.clear()
-                Search.search(query.trim()) { list, err ->
-                    onMain {
-                        searching = false
-                        if (list != null) { results.addAll(list); status = "${list.size} resultados" }
-                        else status = "Error: $err"
-                    }
-                }
-            },
-            enabled = !searching, modifier = Modifier.fillMaxWidth()
-        ) { Text(if (searching) "Buscando…" else "Buscar") }
-
-        if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodySmall)
-
-        results.forEach { r ->
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp)) {
-                    Text(r.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2)
-                    Text("▲ ${r.seeders} seeders · ${Search.humanSize(r.sizeBytes)}",
-                        style = MaterialTheme.typography.bodySmall)
-                    TextButton(onClick = { add(r.magnet) }) { Text("Descargar") }
+    Scaffold(
+        containerColor = Bg,
+        bottomBar = {
+            NavigationBar(containerColor = Surface1) {
+                Tab.values().forEach { t ->
+                    NavigationBarItem(
+                        selected = tab == t,
+                        onClick = { tab = t },
+                        icon = { Icon(t.icon, contentDescription = t.label) },
+                        label = { Text(t.label) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Accent, selectedTextColor = Accent, indicatorColor = Surface1
+                        )
+                    )
                 }
             }
         }
-
-        HorizontalDivider()
-        Text("Mis descargas", style = MaterialTheme.typography.titleMedium)
-
-        if (downloads.isEmpty()) {
-            Text("Aún no hay descargas.", style = MaterialTheme.typography.bodySmall)
+    ) { pad ->
+        Box(Modifier.padding(pad)) {
+            when (tab) {
+                Tab.DISCOVER -> DiscoverScreen(catalogType, { catalogType = it }, onOpen = { detail = it })
+                Tab.SEARCH -> SearchScreen(onOpen = { detail = it })
+                Tab.DOWNLOADS -> DownloadsScreen(downloads, onPlay)
+            }
         }
-        downloads.forEach { d ->
-            DownloadCard(d, onPlay)
+    }
+}
+
+@Composable
+fun PosterCard(t: Tmdb.Title, width: Int = 120, onClick: () -> Unit) {
+    Column(Modifier.width(width.dp).clickable { onClick() }) {
+        AsyncImage(
+            model = t.poster,
+            contentDescription = t.title,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f)
+                .clip(RoundedCornerShape(10.dp))
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(t.title, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(
+            t.year + (if (t.rating > 0) "  ⭐ ${t.rating}" else ""),
+            style = MaterialTheme.typography.labelSmall, color = Muted, maxLines = 1
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DiscoverScreen(type: String, onType: (String) -> Unit, onOpen: (Tmdb.Title) -> Unit) {
+    var rows by remember { mutableStateOf<List<Tmdb.Row>>(emptyList()) }
+    var status by remember { mutableStateOf(if (Tmdb.hasKey) "Cargando catálogos…" else "") }
+
+    LaunchedEffect(type) {
+        if (!Tmdb.hasKey) { status = "" ; return@LaunchedEffect }
+        status = "Cargando catálogos…"; rows = emptyList()
+        Tmdb.catalogs(type) { list, err ->
+            onMain { rows = list ?: emptyList(); status = if (list == null) (err ?: "Error") else "" }
         }
-        Spacer(Modifier.height(40.dp))
+    }
+
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
+        item {
+            Text("Descubrir", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(10.dp))
+            SingleChoiceSegmentedButtonRow {
+                SegmentedButton(selected = type == "movie", onClick = { onType("movie") },
+                    shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("Películas") }
+                SegmentedButton(selected = type == "series", onClick = { onType("series") },
+                    shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Series") }
+            }
+            if (!Tmdb.hasKey) {
+                Spacer(Modifier.height(12.dp))
+                Text("Catálogos no disponibles en esta compilación.", color = Muted, style = MaterialTheme.typography.bodySmall)
+            }
+            if (status.isNotBlank()) { Spacer(Modifier.height(12.dp)); Text(status, color = Muted, style = MaterialTheme.typography.bodySmall) }
+            Spacer(Modifier.height(8.dp))
+        }
+        items(rows.size) { idx ->
+            val row = rows[idx]
+            Column(Modifier.padding(vertical = 8.dp)) {
+                Text(row.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(row.items.size) { i -> PosterCard(row.items[i]) { onOpen(row.items[i]) } }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SearchScreen(onOpen: (Tmdb.Title) -> Unit) {
+    var query by remember { mutableStateOf("") }
+    var type by remember { mutableStateOf("movie") }
+    var results by remember { mutableStateOf<List<Tmdb.Title>>(emptyList()) }
+    var status by remember { mutableStateOf("") }
+
+    fun go() {
+        if (query.isBlank() || !Tmdb.hasKey) return
+        status = "Buscando…"; results = emptyList()
+        Tmdb.searchText(query.trim(), type) { list, err ->
+            onMain { results = list ?: emptyList(); status = if (list == null) (err ?: "Error") else "${results.size} resultados" }
+        }
+    }
+
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
+        item {
+            Text("Buscar", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(
+                value = query, onValueChange = { query = it },
+                label = { Text("Película o serie…") }, singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                SingleChoiceSegmentedButtonRow {
+                    SegmentedButton(selected = type == "movie", onClick = { type = "movie" },
+                        shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("Películas") }
+                    SegmentedButton(selected = type == "series", onClick = { type = "series" },
+                        shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Series") }
+                }
+                Button(onClick = { go() }) { Text("Buscar") }
+            }
+            if (status.isNotBlank()) { Spacer(Modifier.height(10.dp)); Text(status, color = Muted, style = MaterialTheme.typography.bodySmall) }
+            Spacer(Modifier.height(10.dp))
+        }
+        items(results.size) { i ->
+            Row(Modifier.fillMaxWidth().clickable { onOpen(results[i]) }.padding(vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                AsyncImage(model = results[i].poster, contentDescription = null, contentScale = ContentScale.Crop,
+                    modifier = Modifier.width(70.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)))
+                Column(Modifier.weight(1f).align(Alignment.CenterVertically)) {
+                    Text(results[i].title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(results[i].year + (if (results[i].rating > 0) "  ⭐ ${results[i].rating}" else ""),
+                        style = MaterialTheme.typography.labelSmall, color = Muted)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun DownloadsScreen(downloads: List<TorrentEngine.Snapshot>, onPlay: (String) -> Unit) {
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
+        item {
+            Text("Descargas", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(10.dp))
+            if (downloads.isEmpty()) Text("Aún no hay descargas. Abre un título y pulsa Ver o Descargar.", color = Muted, style = MaterialTheme.typography.bodySmall)
+        }
+        items(downloads.size) { i -> DownloadCard(downloads[i], onPlay) }
     }
 }
 
 @Composable
 fun DownloadCard(d: TorrentEngine.Snapshot, onPlay: (String) -> Unit) {
-    Card(Modifier.fillMaxWidth()) {
+    Card(Modifier.fillMaxWidth().padding(vertical = 6.dp), colors = CardDefaults.cardColors(containerColor = Surface1)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(d.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2)
+            Text(d.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             LinearProgressIndicator(progress = { d.progress }, modifier = Modifier.fillMaxWidth())
             Text(
-                "${(d.progress * 100).toInt()}%  ·  ↓ ${Search.humanSize(d.downloadRate.toLong())}/s  ·  " +
-                    "${d.numPeers} peers  ·  ${d.state}",
-                style = MaterialTheme.typography.bodySmall
+                "${(d.progress * 100).toInt()}%  ·  ↓ ${Search.humanSize(d.downloadRate.toLong())}/s  ·  ${d.numPeers} peers",
+                style = MaterialTheme.typography.bodySmall, color = Muted
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (d.hasVideo) {
-                    Button(onClick = { onPlay(d.infoHash) }) { Text("▶ Ver") }
-                }
+                if (d.hasVideo) Button(onClick = { onPlay(d.infoHash) }) { Text("▶ Ver") }
                 OutlinedButton(onClick = {
                     if (d.paused) TorrentEngine.resume(d.infoHash) else TorrentEngine.pause(d.infoHash)
                 }) { Text(if (d.paused) "Reanudar" else "Pausar") }
                 OutlinedButton(onClick = { TorrentEngine.remove(d.infoHash, deleteFiles = true) }) { Text("Borrar") }
             }
+        }
+    }
+}
+
+@Composable
+fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Unit, onDownload: (String) -> Unit) {
+    var detail by remember { mutableStateOf<Tmdb.Detail?>(null) }
+    var sources by remember { mutableStateOf<List<Search.Result>>(emptyList()) }
+    var status by remember { mutableStateOf("Cargando…") }
+    var loadingSources by remember { mutableStateOf(false) }
+
+    LaunchedEffect(title.tmdbId) {
+        Tmdb.detail(title.type, title.tmdbId) { d, _ -> onMain { detail = d; status = "" } }
+    }
+
+    fun loadSources(dt: Tmdb.Detail) {
+        loadingSources = true; sources = emptyList()
+        Search.search(dt.originalTitle) { list, err ->
+            onMain { loadingSources = false; sources = list ?: emptyList(); if (list == null) status = err ?: "Sin fuentes" }
+        }
+    }
+
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        val dt = detail
+        Box {
+            AsyncImage(
+                model = dt?.backdrop ?: title.poster,
+                contentDescription = null, contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxWidth().height(220.dp)
+            )
+            TextButton(onClick = onBack, modifier = Modifier.padding(8.dp)) { Text("← Volver", color = Color.White) }
+        }
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(title.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text(
+                listOfNotNull(
+                    if (title.type == "series") "Serie" else "Película",
+                    title.year.ifBlank { null },
+                    if (title.rating > 0) "⭐ ${title.rating}" else null,
+                    dt?.genres?.joinToString(" · ")?.ifBlank { null }
+                ).joinToString("  ·  "),
+                style = MaterialTheme.typography.bodySmall, color = Muted
+            )
+            if (dt != null && dt.overview.isNotBlank()) Text(dt.overview, style = MaterialTheme.typography.bodyMedium)
+            if (status.isNotBlank()) Text(status, color = Muted, style = MaterialTheme.typography.bodySmall)
+
+            Button(onClick = { dt?.let { loadSources(it) } }, enabled = dt != null && !loadingSources, modifier = Modifier.fillMaxWidth()) {
+                Text(if (loadingSources) "Buscando fuentes…" else "Buscar fuentes")
+            }
+
+            sources.forEach { r ->
+                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(r.name, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text("▲ ${r.seeders} seeders · ${Search.humanSize(r.sizeBytes)}", style = MaterialTheme.typography.labelSmall, color = Muted)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { onWatch(r.magnet) }) { Text("▶ Ver") }
+                            OutlinedButton(onClick = { onDownload(r.magnet) }) { Text("⬇ Descargar") }
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(24.dp))
         }
     }
 }
