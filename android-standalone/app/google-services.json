@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "457371422941",
+    "project_id": "torrent-7dd4b",
+    "storage_bucket": "torrent-7dd4b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:457371422941:android:db2e3c488f3d7e99834b34",
+        "android_client_info": {
+          "package_name": "com.carbaxo.torrentbox"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "457371422941-h4mrcnr3905llcpp3k6l39bn2h5na9uq.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC0NLtsMISHFvZTFEWxsmIS35hMwjNpNPQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "457371422941-h4mrcnr3905llcpp3k6l39bn2h5na9uq.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

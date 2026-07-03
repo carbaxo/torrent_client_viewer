@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -52,6 +53,7 @@ class MainActivity : ComponentActivity() {
         TorrentEngine.start()
         DownloadService.start(this)
         StreamServer.ensureStarted()
+        Sync.init(this)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
@@ -194,10 +196,39 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, onOpen: (Tmdb.Title) 
         }
     }
 
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+        Sync.onSignInResult(res.data) { _, _ -> }
+    }
+
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
         item {
-            Text("Descubrir", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(10.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("Descubrir", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                if (Sync.enabled) {
+                    if (Sync.email == null) {
+                        OutlinedButton(onClick = { Sync.signInIntent()?.let { launcher.launch(it) } }) { Text("Entrar con Google") }
+                    } else {
+                        TextButton(onClick = { Sync.signOut() }) { Text("👤 Salir") }
+                    }
+                }
+            }
+            if (Sync.enabled && Sync.email != null) {
+                Text("Sincronizado: ${Sync.email}", style = MaterialTheme.typography.labelSmall, color = Muted)
+            }
+            // Mi lista (favoritos sincronizados con la cuenta)
+            if (Sync.favorites.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                Text("Mi lista", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(Sync.favorites.size) { i ->
+                        val f = Sync.favorites[i]
+                        val t = Tmdb.Title(f.tmdbId, f.title, f.title, f.year, f.poster, f.rating, f.type)
+                        PosterCard(t) { onOpen(t) }
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
             SingleChoiceSegmentedButtonRow {
                 SegmentedButton(selected = type == "movie", onClick = { onType("movie") },
                     shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("Películas") }
@@ -352,6 +383,14 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Uni
             )
             if (dt != null && dt.overview.isNotBlank()) Text(dt.overview, style = MaterialTheme.typography.bodyMedium)
             if (status.isNotBlank()) Text(status, color = Muted, style = MaterialTheme.typography.bodySmall)
+
+            // Favorito (sincroniza con la cuenta)
+            if (Sync.enabled && Sync.email != null) {
+                val fid = "tmdb:${title.tmdbId}"
+                OutlinedButton(onClick = { Sync.toggleFavorite(title) }) {
+                    Text(if (Sync.isFav(fid)) "❤ En Mi lista" else "🤍 Añadir a Mi lista")
+                }
+            }
 
             Button(onClick = { dt?.let { loadSources(it) } }, enabled = dt != null && !loadingSources, modifier = Modifier.fillMaxWidth()) {
                 Text(if (loadingSources) "Buscando fuentes…" else "Buscar fuentes")

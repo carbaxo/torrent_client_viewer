@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -91,4 +92,10 @@ dependencies {
 
     // Carga de imágenes (carátulas TMDB)
     implementation("io.coil-kt:coil-compose:2.7.0")
+
+    // Firebase: login con Google + Firestore (sincroniza con la cuenta del PC)
+    implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
+    implementation("com.google.firebase:firebase-auth")
+    implementation("com.google.firebase:firebase-firestore")
+    implementation("com.google.android.gms:play-services-auth:21.2.0")
 }
