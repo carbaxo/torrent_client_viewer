@@ -155,7 +155,60 @@ Notas:
 
 ---
 
-## 7. Notas de seguridad
+## 7. App de escritorio para Windows (Electron → MSI / portable)
+
+La app puede empaquetarse como programa de escritorio: Electron arranca el
+servidor Node embebido y abre una ventana; no hace falta terminal ni navegador.
+
+```bash
+npm install          # instala también electron y electron-builder
+npm run electron     # probar en modo escritorio (sin empaquetar)
+npm run dist         # genera instalador MSI + portable en dist-app/
+npm run dist:msi     # solo MSI
+npm run dist:portable# solo .exe portable (sin instalar)
+```
+
+- Salida en `dist-app/`: `Torrent Viewer-1.0.0-x64.msi` (instalador) y
+  `Torrent Viewer-1.0.0-portable.exe` (portable). Carpeta ignorada por git.
+- Datos del usuario en `%APPDATA%/Torrent Viewer/data`; descargas en
+  `Descargas/TorrentViewer`. Se pueden cambiar en Ajustes.
+- Las API keys (OMDb/TMDB/Firebase) se leen de las variables de entorno o del
+  `.env` junto al ejecutable; el token de Real-Debrid se guarda por cuenta.
+- **ffmpeg**: la transcodificación y los subtítulos embebidos requieren ffmpeg
+  en el PATH. El MSI no lo incluye; instálalo aparte o añade `ffmpeg-static`
+  al empaquetado si lo necesitas (el resto de la app funciona sin él).
+- El icono se genera con `node build/make-icon.mjs` (edítalo para cambiarlo).
+
+## 8. App para Android (cliente del servidor)
+
+⚠️ **Importante:** el motor de torrents (WebTorrent/Node) **no se ejecuta en
+Android**. La vía realista es una app que actúe de **cliente del backend** que
+corre en tu PC (o en un servidor): el PC descarga y sirve, el móvil ve el
+catálogo, lanza descargas y reproduce en streaming. Con Real-Debrid, el vídeo
+se reproduce por streaming directo desde sus servidores.
+
+El frontend ya soporta apuntar a un backend remoto:
+1. En **Ajustes → Servidor**, o en la pantalla de acceso, indica la URL del
+   backend (p.ej. `http://192.168.1.50:3000` en tu red, o una URL pública).
+2. En el servidor, define `ALLOWED_ORIGINS` con el origen de la app para
+   permitir CORS con credenciales.
+
+Para generar el APK (requiere **JDK 17** + **Android Studio / SDK**, que no
+vienen en este repo) se incluye configuración de Capacitor:
+
+```bash
+npm install -D @capacitor/cli @capacitor/core @capacitor/android
+npx cap add android      # crea el proyecto nativo android/
+npx cap sync
+npx cap open android     # compila/firma el APK desde Android Studio
+```
+
+`capacitor.config.json` empaqueta la carpeta `public/` como app; la URL del
+backend se configura dentro de la app en el primer arranque.
+
+---
+
+## 9. Notas de seguridad
 
 - Contraseñas hasheadas con **scrypt**; sesiones firmadas con **HMAC** en cookie `httpOnly`.
 - Define `SESSION_SECRET` en producción (si no, se autogenera y se pierde al recrear el contenedor, cerrando todas las sesiones).

@@ -2,12 +2,17 @@
   "name": "torrent-client-viewer",
   "version": "1.0.0",
   "description": "Descarga torrents por magnet o archivo .torrent y reproduce el vídeo mientras se descarga",
+  "author": "carbaxo",
   "type": "module",
-  "main": "server.js",
+  "main": "electron/main.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node test/run.mjs"
+    "test": "node test/run.mjs",
+    "electron": "electron .",
+    "dist": "electron-builder --win",
+    "dist:msi": "electron-builder --win msi",
+    "dist:portable": "electron-builder --win portable"
   },
   "engines": {
     "node": ">=18"
@@ -17,5 +22,43 @@
     "express": "^4.19.2",
     "multer": "^1.4.5-lts.1",
     "webtorrent": "^1.9.7"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.carbaxo.torrentviewer",
+    "productName": "Torrent Viewer",
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "files": [
+      "electron/**",
+      "server.js",
+      "lib/**",
+      "public/**",
+      "!**/*.map"
+    ],
+    "extraMetadata": {
+      "main": "electron/main.js"
+    },
+    "win": {
+      "target": [
+        "msi",
+        "portable"
+      ],
+      "icon": "build/icon.png"
+    },
+    "msi": {
+      "oneClick": false,
+      "perMachine": false,
+      "runAfterFinish": true
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.exe"
+    },
+    "directories": {
+      "output": "dist-app",
+      "buildResources": "build"
+    }
   }
 }
