@@ -1,3 +1,6 @@
+import { loadEnv } from './lib/loadEnv.js'
+loadEnv() // carga .env si existe (antes de leer process.env)
+
 import express from 'express'
 import cors from 'cors'
 import multer from 'multer'
