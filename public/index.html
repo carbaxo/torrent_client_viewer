@@ -2,7 +2,8 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f1115" />
   <title>Torrent Client Viewer</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>" />
   <link rel="stylesheet" href="style.css" />
@@ -10,21 +11,34 @@
 <body>
   <header>
     <h1>🎬 Torrent Client Viewer</h1>
-    <p class="subtitle">Descarga por magnet o archivo .torrent y reproduce el vídeo mientras baja</p>
+    <p class="subtitle">Busca, descarga y reproduce vídeo mientras se baja</p>
+    <div id="global-stats" class="global-stats"></div>
   </header>
 
   <main>
-    <section class="add-panel">
+    <!-- ============ BUSCADOR ============ -->
+    <section class="panel">
+      <h2 class="panel-title">🔎 Buscar</h2>
+      <form id="search-form" class="search-form">
+        <input type="text" id="search-input" placeholder="Ej: Inception, Breaking Bad…" autocomplete="off" />
+        <select id="search-type" aria-label="Tipo">
+          <option value="movie">Película</option>
+          <option value="series">Serie</option>
+        </select>
+        <button type="submit" id="search-btn">Buscar</button>
+      </form>
+      <p id="search-status" class="status"></p>
+      <div id="search-loader" class="loader hidden"><span></span><span></span><span></span></div>
+      <div id="search-results" class="results-grid"></div>
+    </section>
+
+    <!-- ============ AÑADIR MANUAL ============ -->
+    <section class="panel">
+      <h2 class="panel-title">➕ Añadir manualmente</h2>
       <form id="magnet-form" class="add-form">
-        <input
-          type="text"
-          id="magnet-input"
-          placeholder="magnet:?xt=urn:btih:..."
-          autocomplete="off"
-        />
+        <input type="text" id="magnet-input" placeholder="magnet:?xt=urn:btih:…" autocomplete="off" />
         <button type="submit">Añadir magnet</button>
       </form>
-
       <form id="upload-form" class="add-form">
         <label class="file-label">
           <input type="file" id="torrent-file" accept=".torrent" />
@@ -32,11 +46,14 @@
         </label>
         <button type="submit">Subir .torrent</button>
       </form>
-
-      <p id="status" class="status"></p>
+      <p id="add-status" class="status"></p>
     </section>
 
-    <section id="torrent-list" class="torrent-list"></section>
+    <!-- ============ DESCARGAS ============ -->
+    <section class="panel">
+      <h2 class="panel-title">⬇️ Descargas</h2>
+      <div id="torrent-list" class="torrent-list"></div>
+    </section>
   </main>
 
   <!-- Reproductor en modal -->
@@ -44,9 +61,9 @@
     <div class="player-box">
       <div class="player-header">
         <span id="player-title"></span>
-        <button id="player-close" title="Cerrar">✕</button>
+        <button id="player-close" title="Cerrar" aria-label="Cerrar">✕</button>
       </div>
-      <video id="player" controls autoplay></video>
+      <video id="player" controls autoplay playsinline></video>
       <p id="player-note" class="player-note"></p>
     </div>
   </div>
