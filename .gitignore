@@ -1,0 +1,10 @@
+node_modules/
+downloads/
+uploads/
+data/
+*.log
+.DS_Store
+.env
+.env.local
+buffer/
+dist-app/

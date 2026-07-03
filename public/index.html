@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0c0b11" />
+  <title>Torrent Client Viewer</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%237b5bf5'/><path d='M38 28v44l36-22z' fill='white'/></svg>" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- ============ LOGIN ============ -->
+  <div id="login-view" class="login-view hidden">
+    <div class="login-box">
+      <div class="brand brand-login">
+        <svg class="brand-logo" viewBox="0 0 32 32" aria-hidden="true">
+          <defs><linearGradient id="lg-login" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#8f6bff"/><stop offset="1" stop-color="#5b3df0"/>
+          </linearGradient></defs>
+          <rect width="32" height="32" rx="8" fill="url(#lg-login)"/>
+          <path d="M12 9.5v13l11-6.5z" fill="#fff"/>
+        </svg>
+        <span class="brand-name">Torrent<em>Viewer</em></span>
+      </div>
+      <p class="login-sub">Busca, descarga y reproduce mientras se descarga.</p>
+      <div class="login-tabs">
+        <button id="tab-login" class="login-tab active">Entrar</button>
+        <button id="tab-register" class="login-tab">Crear cuenta</button>
+      </div>
+      <form id="login-form" class="login-form">
+        <input type="text" id="login-user" placeholder="Usuario" autocomplete="username" />
+        <input type="password" id="login-pass" placeholder="Contraseña" autocomplete="current-password" />
+        <button type="submit" id="login-submit" class="btn-primary">Entrar</button>
+      </form>
+      <div id="login-alt" class="login-alt hidden">
+        <div class="login-divider"><span>o</span></div>
+        <button id="google-btn" class="btn-google">
+          <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+          Continuar con Google
+        </button>
+      </div>
+      <p id="login-status" class="status"></p>
+      <button id="server-config-btn" class="link-btn" type="button">⚙ Conectar a un servidor</button>
+    </div>
+  </div>
+
+  <!-- ============ APP ============ -->
+  <div id="app-view" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="brand">
+        <svg class="brand-logo" viewBox="0 0 32 32" aria-hidden="true">
+          <defs><linearGradient id="lg-side" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#8f6bff"/><stop offset="1" stop-color="#5b3df0"/>
+          </linearGradient></defs>
+          <rect width="32" height="32" rx="8" fill="url(#lg-side)"/>
+          <path d="M12 9.5v13l11-6.5z" fill="#fff"/>
+        </svg>
+        <span class="brand-name">Torrent<em>Viewer</em></span>
+      </div>
+
+      <nav class="nav">
+        <button class="nav-item active" data-view="discover" title="Descubrir">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+          <span class="nav-label">Descubrir</span>
+        </button>
+        <button class="nav-item" data-view="search" title="Buscar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <span class="nav-label">Buscar</span>
+        </button>
+        <button class="nav-item" data-view="favorites" title="Favoritos">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+          <span class="nav-label">Favoritos</span>
+        </button>
+        <button class="nav-item" data-view="downloads" title="Descargas">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+          <span class="nav-label">Descargas</span>
+        </button>
+        <button class="nav-item" data-view="library" title="Actividad de descargas">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span class="nav-label">Actividad</span>
+          <span id="nav-lib-badge" class="nav-badge hidden"></span>
+        </button>
+        <button class="nav-item" data-view="add" title="Añadir manualmente">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+          <span class="nav-label">Añadir</span>
+        </button>
+        <button class="nav-item" data-view="settings" title="Ajustes">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <span class="nav-label">Ajustes</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div id="global-stats" class="global-stats"></div>
+      </div>
+    </aside>
+
+    <div class="content">
+      <header class="topbar">
+        <svg class="topbar-logo" viewBox="0 0 32 32" aria-hidden="true">
+          <defs><linearGradient id="lg-top" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#8f6bff"/><stop offset="1" stop-color="#5b3df0"/>
+          </linearGradient></defs>
+          <rect width="32" height="32" rx="8" fill="url(#lg-top)"/>
+          <path d="M12 9.5v13l11-6.5z" fill="#fff"/>
+        </svg>
+        <h1 id="view-title" class="view-title">Descubrir</h1>
+        <div class="topbar-right">
+          <div class="user-chip">
+            <span id="user-avatar" class="avatar"></span>
+            <span id="user-name" class="user-name"></span>
+            <button id="logout-btn" class="btn-ghost" title="Cerrar sesión" aria-label="Cerrar sesión">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <!-- DESCUBRIR (catálogos) -->
+        <section class="view" id="view-discover">
+          <div id="my-list"></div>
+          <div id="recs-row"></div>
+          <div id="catalog-panel">
+            <div class="catalog-controls">
+              <div class="seg" id="catalog-type">
+                <button data-ctype="movie" class="active">Películas</button>
+                <button data-ctype="series">Series</button>
+              </div>
+              <button id="catalog-reload" class="btn-ghost">↻ Recargar</button>
+            </div>
+            <p id="catalog-status" class="status"></p>
+            <div id="catalog-loader" class="loader hidden"><span></span><span></span><span></span></div>
+            <div id="catalogs"></div>
+          </div>
+        </section>
+
+        <!-- BUSCAR -->
+        <section class="view hidden" id="view-search">
+          <form id="search-form" class="search-form">
+            <div class="search-box">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input type="text" id="search-input" placeholder="Busca una película o serie…" autocomplete="off" />
+            </div>
+            <div class="search-filters">
+              <select id="search-type" aria-label="Tipo">
+                <option value="movie">Película</option>
+                <option value="series">Serie</option>
+              </select>
+              <select id="search-source" aria-label="Fuente">
+                <option value="all">Todos</option>
+                <option value="torrentio">Torrentio</option>
+                <option value="peerflix">Peerflix</option>
+              </select>
+              <div id="se-fields" class="se-fields hidden">
+                <input type="number" id="search-season" min="1" placeholder="Temp." />
+                <input type="number" id="search-episode" min="1" placeholder="Ep." />
+              </div>
+              <button type="submit" id="search-btn" class="btn-primary">Buscar</button>
+            </div>
+          </form>
+          <div id="quality-filters" class="quality-filters"></div>
+          <p id="search-status" class="status"></p>
+          <div id="search-loader" class="loader hidden"><span></span><span></span><span></span></div>
+          <div id="search-results" class="results-grid"></div>
+        </section>
+
+        <!-- DETALLE (película/serie) -->
+        <section class="view hidden" id="view-detail">
+          <div id="detail-content"></div>
+        </section>
+
+        <!-- FAVORITOS -->
+        <section class="view hidden" id="view-favorites">
+          <div id="favorites-grid" class="poster-grid"></div>
+        </section>
+
+        <!-- DESCARGAS (biblioteca offline) -->
+        <section class="view hidden" id="view-downloads">
+          <div id="downloads-list" class="downloads-list"></div>
+        </section>
+
+        <!-- ACTIVIDAD (torrents en curso) -->
+        <section class="view hidden" id="view-library">
+          <div id="continue-row"></div>
+          <div id="torrent-list" class="torrent-list"></div>
+        </section>
+
+        <!-- AÑADIR MANUAL -->
+        <section class="view hidden" id="view-add">
+          <div class="panel">
+            <h2 class="panel-title">Enlace magnet</h2>
+            <form id="magnet-form" class="add-form">
+              <input type="text" id="magnet-input" placeholder="magnet:?xt=urn:btih:…" autocomplete="off" />
+              <button type="submit" class="btn-primary">Añadir magnet</button>
+            </form>
+          </div>
+          <div class="panel">
+            <h2 class="panel-title">Archivo .torrent</h2>
+            <form id="upload-form" class="add-form">
+              <label class="file-label">
+                <input type="file" id="torrent-file" accept=".torrent" />
+                <span id="file-name">Elegir archivo .torrent…</span>
+              </label>
+              <button type="submit" class="btn-primary">Subir .torrent</button>
+            </form>
+          </div>
+          <p id="add-status" class="status"></p>
+        </section>
+
+        <!-- AJUSTES -->
+        <section class="view hidden" id="view-settings">
+          <div class="panel">
+            <h2 class="panel-title">Perfiles</h2>
+            <div id="profiles-list" class="profiles-list"></div>
+            <div class="settings-row">
+              <button id="switch-profile-btn" class="btn-ghost">Cambiar de perfil</button>
+            </div>
+            <p class="hint">Cada perfil tiene sus propios favoritos, historial y ajustes. Los perfiles infantiles solo ven catálogos familiares y no pueden buscar, añadir ni borrar.</p>
+          </div>
+
+          <div class="panel">
+            <h2 class="panel-title">Idioma de los catálogos</h2>
+            <select id="setting-lang">
+              <option value="es-ES">Español</option>
+              <option value="en-US">English</option>
+            </select>
+          </div>
+
+          <div class="panel">
+            <h2 class="panel-title">Carpetas del servidor</h2>
+            <div class="settings-field">
+              <label for="setting-download-dir">Carpeta de descargas (permanentes)</label>
+              <input type="text" id="setting-download-dir" placeholder="D:\Descargas" autocomplete="off" />
+            </div>
+            <div class="settings-field">
+              <label for="setting-buffer-dir">Carpeta de buffer (al usar "Ver": se borra tras verlo)</label>
+              <input type="text" id="setting-buffer-dir" placeholder="D:\Buffer" autocomplete="off" />
+            </div>
+            <div class="settings-row">
+              <button id="save-dirs-btn" class="btn-primary">Guardar carpetas</button>
+            </div>
+            <p id="dirs-status" class="status"></p>
+            <p class="hint">Se aplican a los torrents nuevos. Deben ser carpetas distintas.</p>
+          </div>
+
+          <div class="panel">
+            <h2 class="panel-title">Real-Debrid</h2>
+            <div id="rd-config"></div>
+            <p id="rd-status" class="status"></p>
+            <p class="hint">Tu token es privado de esta cuenta: se guarda solo en el servidor y ninguna otra cuenta puede usarlo. Consíguelo en <span class="mono">real-debrid.com/apitoken</span>.</p>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <!-- Selector de perfil -->
+  <div id="profile-overlay" class="profile-overlay hidden">
+    <div class="profile-box">
+      <h2>¿Quién está viendo?</h2>
+      <div id="profile-cards" class="profile-cards"></div>
+      <form id="profile-new" class="profile-new hidden">
+        <button type="button" id="profile-new-avatar" class="avatar-edit-btn" title="Elegir imagen"><span class="profile-avatar">🍿</span><span class="avatar-edit-hint">Cambiar</span></button>
+        <input type="text" id="profile-new-name" placeholder="Nombre del perfil" maxlength="24" autocomplete="off" />
+        <label class="check"><input type="checkbox" id="profile-new-kids" /> Perfil infantil</label>
+        <button type="submit" class="btn-primary">Crear perfil</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Editor de avatar -->
+  <div id="avatar-overlay" class="avatar-overlay hidden">
+    <div class="avatar-box">
+      <div class="avatar-box-head">
+        <span id="avatar-preview" class="profile-avatar big">🍿</span>
+        <h3>Imagen del perfil</h3>
+      </div>
+      <div id="avatar-emojis" class="avatar-emojis"></div>
+      <div class="avatar-custom">
+        <label class="btn-ghost avatar-upload">📁 Subir imagen
+          <input type="file" id="avatar-file" accept="image/*" hidden />
+        </label>
+        <input type="text" id="avatar-url" placeholder="o pega la URL de una imagen (https://…)" autocomplete="off" />
+      </div>
+      <div class="avatar-box-actions">
+        <button id="avatar-cancel" class="btn-ghost">Cancelar</button>
+        <button id="avatar-save" class="btn-primary">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reproductor -->
+  <div id="player-overlay" class="player-overlay hidden">
+    <div class="player-box">
+      <div class="player-header">
+        <span id="player-title"></span>
+        <button id="player-close" class="btn-ghost" title="Cerrar" aria-label="Cerrar">✕</button>
+      </div>
+      <video id="player" controls autoplay playsinline crossorigin="use-credentials"></video>
+      <div class="player-footer">
+        <div id="player-subs" class="player-subs"></div>
+        <p id="player-note" class="player-note"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notificaciones -->
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <script src="vendor/firebase-app-compat.js"></script>
+  <script src="vendor/firebase-auth-compat.js"></script>
+  <script src="vendor/firebase-firestore-compat.js"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
