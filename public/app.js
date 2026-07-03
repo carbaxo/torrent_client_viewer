@@ -75,8 +75,19 @@ async function checkSession () {
       onLoggedIn(user)
       return
     }
-  } catch {}
+    // Un backend real responde 401 aquí; un 404 significa que detrás de este
+    // origen no hay backend (p.ej. frontend en GitHub Pages sin configurar).
+    if (res.status === 404) backendMissing()
+  } catch {
+    backendMissing()
+  }
   showLogin()
+}
+
+function backendMissing () {
+  const st = $('login-status')
+  st.classList.add('error')
+  st.textContent = 'No hay conexión con el backend. Despliega el servidor Node y pon su URL en config.js (window.TCV_API_BASE). Ver SETUP.md.'
 }
 
 function showLogin () {
