@@ -85,22 +85,30 @@ La primera vez, pulsa **Crear cuenta** para registrar tu usuario. Cada usuario t
 > Persistencia en Render: el disco es efímero en el plan free. Para conservar datos necesitas un **Disk** (de pago) montado en `DATA_DIR` y `DOWNLOAD_DIR`.
 
 ### 5.B Backend en Fly.io (gratis CON persistencia)
-1. Instala flyctl y `fly launch` (detecta el `Dockerfile`).
-2. Crea un volumen gratis y móntalo:
+El repo **ya incluye `fly.toml`** (con volumen persistente en `/data` e imagen `Dockerfile` con ffmpeg). Solo tienes que:
+1. Instala flyctl. Edita `fly.toml` y cambia `app` por un nombre único tuyo.
+2. Crea el volumen persistente:
    ```bash
-   fly volumes create data --size 1
+   fly volumes create data --size 1 --region mad
    ```
-   y en `fly.toml` monta el volumen en `/data`, con `DATA_DIR=/data` y `DOWNLOAD_DIR=/data/downloads`.
-3. `fly secrets set OMDB_API_KEY=... TMDB_API_KEY=... SESSION_SECRET=... ALLOWED_ORIGINS=https://carbaxo.github.io`
+3. Guarda los secretos (NO van en `fly.toml`):
+   ```bash
+   fly secrets set OMDB_API_KEY=... TMDB_API_KEY=... SESSION_SECRET=<algo-largo> \
+     ALLOWED_ORIGINS=https://carbaxo.github.io
+   ```
 4. `fly deploy`.
 
-### 5.C Frontend en GitHub Pages
-1. En este repo: **Settings → Pages → Deploy from a branch**, carpeta `/public` (o publica el contenido de `public/` con una GitHub Action).
-2. Edita **`public/config.js`** y pon la URL de tu backend:
+> Por defecto la máquina se apaga en reposo (`min_machines_running = 0`) para ahorrar; eso **pausa las descargas** cuando no hay nadie. Ponlo a `1` en `fly.toml` si quieres que siga descargando.
+
+### 5.C Frontend en GitHub Pages (automático)
+El repo **ya incluye el workflow** `.github/workflows/deploy-pages.yml`, que publica `public/` en Pages en cada push.
+1. Edita **`public/config.js`** y pon la URL de tu backend, y haz commit:
    ```js
    window.TCV_API_BASE = 'https://tu-backend.onrender.com'
    ```
-3. Asegúrate de que en el backend `ALLOWED_ORIGINS` incluye tu URL de Pages (`https://carbaxo.github.io`). Esto activa CORS con credenciales y cookies `SameSite=None; Secure`.
+2. En GitHub: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
+3. Haz push (o lánzalo a mano en **Actions → Deploy frontend to GitHub Pages → Run workflow**). Tu web quedará en `https://carbaxo.github.io/torrent_client_viewer/`.
+4. En el backend, `ALLOWED_ORIGINS` debe incluir tu URL de Pages (`https://carbaxo.github.io`). Esto activa CORS con credenciales y cookies `SameSite=None; Secure`.
 
 ### 5.D Alternativa más simple: todo en un solo host
 Si no quieres lidiar con CORS, **no uses GitHub Pages**: despliega solo el backend (5.A o 5.B) y ábrelo directamente — el servidor Node ya sirve el frontend. Cero configuración de CORS.

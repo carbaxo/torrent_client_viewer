@@ -1,0 +1,42 @@
+# Configuración de Fly.io para el BACKEND Node (con volumen persistente).
+#
+# Pasos:
+#   1) fly launch --no-deploy        (o edita 'app' con un nombre único tuyo)
+#   2) fly volumes create data --size 1 --region mad
+#   3) fly secrets set OMDB_API_KEY=... TMDB_API_KEY=... SESSION_SECRET=<algo largo> \
+#        ALLOWED_ORIGINS=https://carbaxo.github.io
+#   4) fly deploy
+#
+# Los SECRETOS (API keys, SESSION_SECRET) NO van aquí: usa `fly secrets set`.
+
+app = "torrent-client-viewer"       # <-- cámbialo por un nombre único
+primary_region = "mad"              # Madrid; ajusta a tu zona
+
+[build]
+  dockerfile = "Dockerfile"          # imagen con Node + ffmpeg
+
+[env]
+  PORT = "3000"
+  DATA_DIR = "/data"                 # usuarios, sesiones y estado de torrents
+  DOWNLOAD_DIR = "/data/downloads"   # archivos descargados (en el volumen)
+  TMDB_REGION = "ES"
+  SECURE_COOKIE = "true"             # Fly sirve por HTTPS
+
+# Volumen persistente montado en /data (sobrevive a reinicios/redeploys)
+[[mounts]]
+  source = "data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  # auto_stop apaga la máquina en reposo (ahorra recursos gratis) pero PAUSA
+  # las descargas activas. Pon min_machines_running = 1 si quieres que siga
+  # descargando aunque no haya nadie conectado.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"                   # sube a 1gb si transcodificas mucho con ffmpeg
