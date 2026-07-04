@@ -14,21 +14,27 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import androidx.media3.cast.CastPlayer
+import androidx.media3.cast.SessionAvailabilityListener
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.TrackSelectionDialogBuilder
+import com.google.android.gms.cast.framework.CastButtonFactory
+import com.google.android.gms.cast.framework.CastContext
 
 @UnstableApi
-class PlayerActivity : ComponentActivity() {
+class PlayerActivity : AppCompatActivity() {
 
     private var player: ExoPlayer? = null
+    private var castPlayer: CastPlayer? = null
     private lateinit var playerView: PlayerView
     private lateinit var toast: TextView       // feedback de gestos (volumen/brillo/salto)
     private lateinit var nextBtn: TextView     // "Siguiente episodio"
@@ -113,6 +119,12 @@ class PlayerActivity : ComponentActivity() {
         val lpBtn = LinearLayout.LayoutParams(-2, -2)
         lpBtn.marginEnd = 12
         overlay.addView(speedBtn, lpBtn); overlay.addView(audioBtn, lpBtn); overlay.addView(srtBtn, lpBtn)
+        // Botón de Chromecast (solo si hay Google Play Services)
+        runCatching {
+            val castBtn = androidx.mediarouter.app.MediaRouteButton(this)
+            CastButtonFactory.setUpMediaRouteButton(applicationContext, castBtn)
+            overlay.addView(castBtn, LinearLayout.LayoutParams(-2, -2))
+        }
         val lpOverlay = FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END)
         lpOverlay.topMargin = 40; lpOverlay.rightMargin = 24
         root.addView(overlay, lpOverlay)
@@ -161,6 +173,61 @@ class PlayerActivity : ComponentActivity() {
 
         // El IMDb id hace falta para buscar el siguiente episodio en Torrentio
         if (mediaType == "series" && tmdbId > 0) Tmdb.imdbId("series", tmdbId) { id -> imdb = id }
+
+        // Chromecast: al conectar con una TV se pasa la reproducción al CastPlayer
+        runCatching {
+            val cc = CastContext.getSharedInstance(this)
+            castPlayer = CastPlayer(cc).also { cp ->
+                cp.setSessionAvailabilityListener(object : SessionAvailabilityListener {
+                    override fun onCastSessionAvailable() = switchToCast()
+                    override fun onCastSessionUnavailable() = switchToLocal()
+                })
+            }
+        }
+    }
+
+    // ------------------- Chromecast -------------------
+    /** URL que la TV pueda alcanzar: el stream local se sirve por la IP de la WiFi. */
+    private fun castableUrl(u: String): String {
+        if (!u.contains("127.0.0.1")) return u
+        return runCatching {
+            @Suppress("DEPRECATION")
+            val wm = applicationContext.getSystemService(WIFI_SERVICE) as android.net.wifi.WifiManager
+            @Suppress("DEPRECATION")
+            val ip = wm.connectionInfo.ipAddress
+            if (ip == 0) u else u.replace(
+                "127.0.0.1",
+                String.format("%d.%d.%d.%d", ip and 0xff, ip shr 8 and 0xff, ip shr 16 and 0xff, ip shr 24 and 0xff)
+            )
+        }.getOrDefault(u)
+    }
+
+    private fun switchToCast() {
+        val cp = castPlayer ?: return
+        val local = player ?: return
+        val pos = local.currentPosition
+        local.playWhenReady = false
+        val item = MediaItem.Builder()
+            .setUri(castableUrl(currentUrl))
+            .setMimeType(MimeTypes.VIDEO_MP4)
+            .setMediaMetadata(MediaMetadata.Builder().setTitle(titleName.ifBlank { "TorrentBox" }).build())
+            .build()
+        cp.setMediaItem(item, pos)
+        cp.prepare()
+        cp.playWhenReady = true
+        playerView.player = cp
+        showToast("📺 Enviando a la TV…")
+    }
+
+    private fun switchToLocal() {
+        val cp = castPlayer ?: return
+        val local = player ?: return
+        val pos = runCatching { cp.currentPosition }.getOrDefault(0L)
+        runCatching { cp.stop() }
+        playerView.player = local
+        if (pos > 0) local.seekTo(pos)
+        local.playWhenReady = true
+        showToast("De vuelta al móvil")
     }
 
     // ------------------- Gestos -------------------
@@ -333,6 +400,8 @@ class PlayerActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         saveProgress()
+        runCatching { castPlayer?.setSessionAvailabilityListener(null); castPlayer?.release() }
+        castPlayer = null
         player?.release()
         player = null
     }
