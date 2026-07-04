@@ -29,7 +29,9 @@ object AceStream {
         val name: String,
         val contentId: String,       // 40 hex
         val info: String,            // categoría / detalle si se pudo extraer
-        val pageUrl: String          // página en acestreamid.com (fallback)
+        val pageUrl: String,         // página en acestreamid.com (fallback)
+        val likes: Int = -1,         // -1 = no encontrado en el HTML
+        val dislikes: Int = -1
     )
 
     // Paquetes conocidos de AceStream en Android. "Ace Stream Media" de la
@@ -119,23 +121,45 @@ object AceStream {
      * Busca contenidos en acestreamid.com scrapeando el HTML de resultados.
      * onResult(list, error). Best-effort: si cambia el HTML, devuelve lo que encuentre.
      */
-    fun search(query: String, onResult: (List<Result>?, String?) -> Unit) {
+    fun search(query: String, onResult: (List<Result>?, String?) -> Unit) =
+        search(query, 1, onResult)
+
+    /**
+     * Busca (o lista todo si query está vacía) con paginación. page empieza en 1.
+     * Para el listado completo prueba varias rutas de paginación conocidas y usa
+     * la primera que devuelva resultados.
+     */
+    fun search(query: String, page: Int, onResult: (List<Result>?, String?) -> Unit) {
         io.submit {
             try {
-                val q = java.net.URLEncoder.encode(query.trim(), "UTF-8")
-                // acestreamid.com sirve el buscador en la home con ?q=
-                val url = "$SITE/?an=0&q=$q"
-                val req = Request.Builder().url(url)
-                    .header("User-Agent", "Mozilla/5.0 (Android) TorrentBox")
-                    .header("Accept", "text/html,application/xhtml+xml")
-                    .build()
-                client.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) return@submit onResult(null, "acestreamid.com respondió ${resp.code}")
-                    val html = resp.body?.string() ?: ""
-                    val out = parseHtml(html)
-                    if (out.isEmpty()) onResult(emptyList(), "Sin resultados (o el sitio cambió). Prueba a pegar el enlace a mano.")
-                    else onResult(out, null)
+                val q = query.trim()
+                val urls: List<String> = if (q.isBlank()) {
+                    // Listado completo (sin búsqueda), distintas convenciones de página
+                    if (page <= 1) listOf("$SITE/", "$SITE/?page=1")
+                    else listOf("$SITE/?page=$page", "$SITE/page/$page/", "$SITE/?p=$page")
+                } else {
+                    val enc = java.net.URLEncoder.encode(q, "UTF-8")
+                    if (page <= 1) listOf("$SITE/?an=0&q=$enc")
+                    else listOf("$SITE/?an=0&q=$enc&page=$page", "$SITE/page/$page/?an=0&q=$enc")
                 }
+                var lastCode = 0
+                for (url in urls) {
+                    val req = Request.Builder().url(url)
+                        .header("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36")
+                        .header("Accept", "text/html,application/xhtml+xml")
+                        .build()
+                    val out = try {
+                        client.newCall(req).execute().use { resp ->
+                            lastCode = resp.code
+                            if (!resp.isSuccessful) null else parseHtml(resp.body?.string() ?: "")
+                        }
+                    } catch (_: Throwable) { null }
+                    if (!out.isNullOrEmpty()) return@submit onResult(out, null)
+                }
+                if (lastCode != 0 && lastCode !in 200..299)
+                    onResult(null, "acestreamid.com respondió $lastCode")
+                else
+                    onResult(emptyList(), if (page > 1) "No hay más páginas." else "Sin resultados (o el sitio cambió). Prueba a pegar el enlace a mano.")
             } catch (e: Throwable) {
                 onResult(null, e.message ?: "Error de red (AceStream).")
             }
@@ -143,8 +167,10 @@ object AceStream {
     }
 
     /**
-     * Extrae de forma tolerante content-ids y un título aproximado del HTML.
-     * Busca bloques con un id de 40 hex y toma el texto/atributo más cercano.
+     * Extrae de forma tolerante content-ids, título aproximado y votos del HTML.
+     * Busca bloques con un id de 40 hex y toma el texto/atributo más cercano;
+     * los likes/dislikes se buscan en una ventana alrededor de cada id con
+     * varios patrones habituales (👍/👎, clases like/dislike, iconos thumbs).
      */
     fun parseHtml(html: String): List<Result> {
         val seen = LinkedHashMap<String, Result>()
@@ -156,16 +182,20 @@ object AceStream {
         for (m in anchor.findAll(html)) {
             val id = m.groupValues[1].lowercase()
             val label = cleanText(m.groupValues[2])
-            if (label.isNotBlank()) seen.putIfAbsent(id, Result(label, id, "", pageUrl(id)))
+            if (label.isNotBlank()) {
+                val (lk, dk) = nearbyVotes(html, m.range.first)
+                seen.putIfAbsent(id, Result(label, id, "", pageUrl(id), lk, dk))
+            }
         }
         // 2) cualquier content-id suelto: título = título de la etiqueta cercana
         for (m in CONTENT_ID.findAll(html)) {
             val id = m.value.lowercase()
             if (seen.containsKey(id)) continue
             val label = nearbyTitle(html, m.range.first).ifBlank { "AceStream ${id.take(8)}…" }
-            seen.putIfAbsent(id, Result(label, id, "", pageUrl(id)))
+            val (lk, dk) = nearbyVotes(html, m.range.first)
+            seen.putIfAbsent(id, Result(label, id, "", pageUrl(id), lk, dk))
         }
-        return seen.values.take(40)
+        return seen.values.take(60)
     }
 
     /** Busca hacia atrás/adelante un texto legible (title="..." o texto de etiqueta). */
@@ -178,6 +208,28 @@ object AceStream {
         // texto entre >...< inmediatamente anterior
         Regex(">([^<>]{3,120})<[^>]*$").find(window)?.let { return cleanText(it.groupValues[1]) }
         return ""
+    }
+
+    // Patrones de votos: 👍 12 / 👎 3, class="like">12<, fa-thumbs-up ... 12, data-likes="12"…
+    private val DISLIKES = Regex(
+        "(?:👎|thumbs?[-_ ]?down|dislikes?)[^0-9<]{0,40}>?\\s*(\\d{1,6})|data-dislikes?\\s*=\\s*[\"'](\\d{1,6})",
+        RegexOption.IGNORE_CASE
+    )
+    private val LIKES = Regex(
+        "(?:👍|thumbs?[-_ ]?up|(?<![Dd][Ii][Ss])likes?)[^0-9<]{0,40}>?\\s*(\\d{1,6})|data-likes?\\s*=\\s*[\"'](\\d{1,6})",
+        RegexOption.IGNORE_CASE
+    )
+
+    /** Votos (likes, dislikes) cerca de la posición dada; -1 si no se encuentran. */
+    private fun nearbyVotes(html: String, at: Int): Pair<Int, Int> {
+        val from = (at - 400).coerceAtLeast(0)
+        val to = (at + 600).coerceAtMost(html.length)
+        val window = html.substring(from, to)
+        val dk = DISLIKES.find(window)?.let { m -> (m.groupValues[1].ifBlank { m.groupValues[2] }).toIntOrNull() } ?: -1
+        // Quita los "dislike" de la ventana para que LIKES no los cuente
+        val cleaned = window.replace(Regex("dislikes?", RegexOption.IGNORE_CASE), "")
+        val lk = LIKES.find(cleaned)?.let { m -> (m.groupValues[1].ifBlank { m.groupValues[2] }).toIntOrNull() } ?: -1
+        return lk to dk
     }
 
     private fun cleanText(s: String): String =
