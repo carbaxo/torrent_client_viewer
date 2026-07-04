@@ -19,6 +19,9 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="acestream" />
         </intent>
+        <intent>
+            <action android:name="org.acestream.engine.service.v0.IAceStreamEngine" />
+        </intent>
     </queries>
 
     <application

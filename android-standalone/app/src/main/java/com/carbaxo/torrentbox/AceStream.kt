@@ -67,8 +67,36 @@ object AceStream {
         return runCatching { pm.resolveActivity(probe, 0) != null }.getOrDefault(false)
     }
 
-    /** Intenta arrancar la app de AceStream instalada para que levante el engine local. */
+    // Conexión viva con el servicio del engine (mantenerla evita que Android lo mate)
+    private var engineConn: android.content.ServiceConnection? = null
+
+    /**
+     * Arranca el engine EN SEGUNDO PLANO enlazando con su servicio oficial
+     * (org.acestream.engine.service.v0.IAceStreamEngine), sin abrir la app de
+     * AceStream ni robar el foco. Es lo que usa el SDK oficial.
+     */
+    private fun startEngineSilently(ctx: Context): Boolean {
+        val app = ctx.applicationContext
+        engineConn?.let { runCatching { app.unbindService(it) }; engineConn = null }
+        for (pkg in ENGINE_PACKAGES) {
+            val intent = Intent("org.acestream.engine.service.v0.IAceStreamEngine").setPackage(pkg)
+            val conn = object : android.content.ServiceConnection {
+                override fun onServiceConnected(name: android.content.ComponentName?, binder: android.os.IBinder?) {}
+                override fun onServiceDisconnected(name: android.content.ComponentName?) {}
+            }
+            val ok = runCatching { app.bindService(intent, conn, Context.BIND_AUTO_CREATE) }.getOrDefault(false)
+            if (ok) { engineConn = conn; return true }
+            runCatching { app.unbindService(conn) }
+        }
+        return false
+    }
+
+    /**
+     * Intenta arrancar el engine: primero en silencio (servicio, sin UI); solo
+     * si eso no es posible abre la app de AceStream como último recurso.
+     */
     fun startEngine(ctx: Context): Boolean {
+        if (startEngineSilently(ctx)) return true
         val pm = ctx.packageManager
         for (pkg in ENGINE_PACKAGES) {
             val launch = runCatching { pm.getLaunchIntentForPackage(pkg) }.getOrNull() ?: continue
