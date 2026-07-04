@@ -679,12 +679,15 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
                     Text("${shownCh.size} canales", style = MaterialTheme.typography.labelSmall, color = Muted)
                     shownCh.take(300).forEach { ch ->
                         Row(
-                            Modifier.fillMaxWidth().clickable { openInAce(ch.contentId) }.padding(vertical = 6.dp),
+                            Modifier.fillMaxWidth().clickable { if (!AceStream.openChannel(ctx, ch)) status = "No hay app de AceStream instalada." }.padding(vertical = 6.dp),
                             horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(Modifier.weight(1f)) {
-                                Text(ch.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(ch.name + (if (ch.isInfohash) "  ·(infohash)" else ""), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text("${ch.category}  ·  ${ch.country}", style = MaterialTheme.typography.labelSmall, color = Muted)
+                            }
+                            IconButton(onClick = { status = "Enlace: ${ch.rawUrl}" }) {
+                                Icon(Icons.Filled.Info, contentDescription = "Ver enlace", tint = Muted)
                             }
                             IconButton(onClick = { Prefs.toggleAceFav(ch.contentId, ch.name) }) {
                                 Icon(
