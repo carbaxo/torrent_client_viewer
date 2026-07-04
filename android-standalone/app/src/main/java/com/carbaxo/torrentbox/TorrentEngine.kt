@@ -60,6 +60,23 @@ object TorrentEngine {
         started = false
     }
 
+    /** Límites de velocidad en KB/s (0 = sin límite). */
+    fun setLimits(downKB: Int, upKB: Int) {
+        runCatching {
+            val sp = org.libtorrent4j.SettingsPack()
+            sp.downloadRateLimit(if (downKB > 0) downKB * 1024 else 0)
+            sp.uploadRateLimit(if (upKB > 0) upKB * 1024 else 0)
+            session.applySettings(sp)
+        }
+    }
+
+    /** Quita (borrando ficheros) todos los torrents guardados en `dir` y limpia restos. */
+    fun clearDir(dir: File) {
+        downloads.values.filter { it.saveDir.absolutePath == dir.absolutePath }
+            .forEach { remove(it.infoHash, deleteFiles = true) }
+        runCatching { dir.listFiles()?.forEach { it.deleteRecursively() } }
+    }
+
     fun snapshots(): List<Snapshot> = downloads.values.map { d ->
         val s = d.handle.status()
         Snapshot(

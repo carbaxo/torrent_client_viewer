@@ -59,9 +59,20 @@ class MainActivity : ComponentActivity() {
         Prefs.init(this)
         WatchStore.init(this)
         TorrentEngine.start()
+        TorrentEngine.setLimits(Prefs.downLimitKB.value, Prefs.upLimitKB.value)
         DownloadService.start(this)
         StreamServer.ensureStarted()
         RealDebrid.init(this)
+        Update.check()
+        // Limpia el buffer de la sesión anterior (lo visto ya no sirve al reiniciar)
+        Thread {
+            runCatching {
+                if (Prefs.autoCleanBuffer.value) {
+                    val b = Prefs.bufferDirFile(); val dl = Prefs.downloadDirFile()
+                    if (b.absolutePath != dl.absolutePath) b.listFiles()?.forEach { it.deleteRecursively() }
+                }
+            }
+        }.start()
         // El token de Real-Debrid guardado en la nube (cuenta) se adopta aquí
         Sync.onRdToken = { t -> RealDebrid.adoptToken(t) }
         Sync.init(this)
@@ -285,7 +296,22 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, onOpen: (Tmdb.Title) 
         return
     }
 
+    val ctx = LocalContext.current
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
+        // Aviso de nueva versión (auto-actualización)
+        Update.available?.let { up ->
+            item {
+                Card(
+                    Modifier.fillMaxWidth().padding(bottom = 10.dp).clickable { Update.downloadAndInstall(ctx) },
+                    colors = CardDefaults.cardColors(containerColor = Accent.copy(alpha = 0.18f))
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("⬆️ Nueva versión disponible (build ${up.build}) — toca para instalar", fontWeight = FontWeight.Bold)
+                        if (Update.status.isNotBlank()) Text(Update.status, style = MaterialTheme.typography.labelSmall, color = Muted)
+                    }
+                }
+            }
+        }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("Descubrir", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -319,6 +345,25 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, onOpen: (Tmdb.Title) 
                     shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("Películas") }
                 SegmentedButton(selected = type == "series", onClick = { onType("series") },
                     shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Series") }
+            }
+            // Explorar por género
+            if (Tmdb.hasKey) {
+                Spacer(Modifier.height(10.dp))
+                val genres = if (type == "movie") listOf(
+                    28 to "Acción", 35 to "Comedia", 18 to "Drama", 27 to "Terror",
+                    878 to "Ciencia ficción", 16 to "Animación", 53 to "Thriller",
+                    10749 to "Romance", 12 to "Aventura", 80 to "Crimen", 99 to "Documental", 14 to "Fantasía"
+                ) else listOf(
+                    10759 to "Acción y aventura", 35 to "Comedia", 18 to "Drama", 16 to "Animación",
+                    80 to "Crimen", 9648 to "Misterio", 10765 to "Ciencia ficción y fantasía",
+                    99 to "Documental", 10751 to "Familia"
+                )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(genres.size) { i ->
+                        val (gid, gname) = genres[i]
+                        AssistChip(onClick = { browse = "genre:$gid" to gname }, label = { Text(gname) })
+                    }
+                }
             }
             if (!Tmdb.hasKey) {
                 Spacer(Modifier.height(12.dp))
@@ -383,7 +428,10 @@ fun BrowseScreen(provider: String, name: String, type: String, onOpen: (Tmdb.Tit
         if (loading || end) return
         loading = true
         val next = page + 1
-        Tmdb.discover(type, provider, null, next) { list, _ ->
+        // provider puede ser una plataforma ("8") o un género ("genre:28")
+        val genreId = provider.substringAfter("genre:", "").toIntOrNull()
+        val prov = if (genreId == null) provider else null
+        Tmdb.discover(type, prov, genreId, next) { list, _ ->
             onMain {
                 loading = false
                 if (list.isNullOrEmpty()) end = true else { page = next; items.addAll(list) }
@@ -530,6 +578,17 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
                 Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, contentDescription = null)
             }
             if (expanded) {
+                // Canales favoritos (acceso rápido)
+                if (Prefs.aceFavs.isNotEmpty()) {
+                    Text("⭐ Favoritos", style = MaterialTheme.typography.labelMedium, color = Muted)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(Prefs.aceFavs.size) { i ->
+                            val parts = Prefs.aceFavs[i].split("|", limit = 2)
+                            val fid = parts[0]; val fname = parts.getOrElse(1) { "Canal" }
+                            AssistChip(onClick = { play(fname, fid) }, label = { Text("▶ $fname") })
+                        }
+                    }
+                }
                 if (!AceStream.engineInstalled(ctx)) {
                     Text("Requiere la app «Ace Stream Media» (gratis) — esa app YA incluye el engine. La reproducción es P2P dentro de tu app.",
                         style = MaterialTheme.typography.labelSmall, color = Muted)
@@ -572,7 +631,17 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
                 results.forEach { r ->
                     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Bg)) {
                         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(r.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(r.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                IconButton(onClick = { Prefs.toggleAceFav(r.contentId, r.name) }) {
+                                    Icon(
+                                        if (Prefs.isAceFav(r.contentId)) Icons.Filled.Star else Icons.Filled.StarBorder,
+                                        contentDescription = "Favorito",
+                                        tint = if (Prefs.isAceFav(r.contentId)) Color(0xFFFBBF24) else Muted
+                                    )
+                                }
+                            }
                             val votes = if (r.likes >= 0 || r.dislikes >= 0)
                                 "👍 ${r.likes.coerceAtLeast(0)} · 👎 ${r.dislikes.coerceAtLeast(0)} · " else ""
                             Text(votes + r.contentId.take(12) + "…", style = MaterialTheme.typography.labelSmall, color = Muted)
@@ -754,6 +823,45 @@ fun SettingsScreen() {
             }
         }
 
+        // --- Velocidad y buffer ---
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Velocidad y buffer", fontWeight = FontWeight.Bold)
+                var down by remember { mutableStateOf(Prefs.downLimitKB.value.takeIf { it > 0 }?.toString() ?: "") }
+                var up by remember { mutableStateOf(Prefs.upLimitKB.value.takeIf { it > 0 }?.toString() ?: "") }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = down, onValueChange = { down = it.filter { c -> c.isDigit() } },
+                        label = { Text("Bajada KB/s (vacío = ∞)") }, singleLine = true, modifier = Modifier.weight(1f))
+                    OutlinedTextField(value = up, onValueChange = { up = it.filter { c -> c.isDigit() } },
+                        label = { Text("Subida KB/s") }, singleLine = true, modifier = Modifier.weight(1f))
+                }
+                Button(onClick = { Prefs.setLimits(down.toIntOrNull() ?: 0, up.toIntOrNull() ?: 0) }) { Text("Aplicar límites") }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = Prefs.autoCleanBuffer.value, onCheckedChange = { Prefs.setAutoCleanBuffer(it) })
+                    Text("Vaciar el buffer al abrir la app", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+
+        // --- Actualizaciones ---
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Actualizaciones", fontWeight = FontWeight.Bold)
+                Text("Versión instalada: ${BuildConfig.VERSION_NAME} (build ${BuildConfig.CI_BUILD})",
+                    style = MaterialTheme.typography.bodySmall, color = Muted)
+                val up = Update.available
+                if (up != null) {
+                    Text("⬆️ Hay una versión nueva: build ${up.build}", color = Color(0xFF34D399), fontWeight = FontWeight.Bold)
+                    Button(onClick = { Update.downloadAndInstall(ctx) }) { Text("Descargar e instalar") }
+                } else {
+                    Text(if (Update.checked) "Estás en la última versión." else "…",
+                        style = MaterialTheme.typography.bodySmall, color = Muted)
+                    OutlinedButton(onClick = { Update.check() }) { Text("Buscar actualización") }
+                }
+                if (Update.status.isNotBlank()) Text(Update.status, color = Muted, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
         // --- Salir ---
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -799,7 +907,24 @@ fun DownloadsScreen(
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
         item {
             Text("Descargas", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(4.dp))
+            // Espacio libre y tamaño del buffer (se recalcula al cambiar las descargas)
+            var space by remember { mutableStateOf("") }
+            LaunchedEffect(downloads.size, downloads.sumOf { (it.progress * 100).toInt() } / 25) {
+                space = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    runCatching {
+                        val free = Prefs.downloadDirFile().usableSpace
+                        val buf = Prefs.bufferDirFile().walkTopDown().filter { it.isFile }.sumOf { it.length() }
+                        "Libre: ${Search.humanSize(free)} · Buffer: ${Search.humanSize(buf)}"
+                    }.getOrDefault("")
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(space, style = MaterialTheme.typography.labelSmall, color = Muted, modifier = Modifier.weight(1f))
+                TextButton(onClick = {
+                    Thread { runCatching { TorrentEngine.clearDir(Prefs.bufferDirFile()) } }.start()
+                }) { Text("Vaciar buffer") }
+            }
             if (nothing) Text("Aún no hay descargas. Abre un título y pulsa Ver o Descargar.", color = Muted, style = MaterialTheme.typography.bodySmall)
         }
 
