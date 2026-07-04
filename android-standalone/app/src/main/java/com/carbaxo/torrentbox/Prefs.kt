@@ -1,6 +1,9 @@
 package com.carbaxo.torrentbox
 
 import android.content.Context
+import android.net.Uri
+import android.os.Environment
+import android.provider.DocumentsContract
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import java.io.File
@@ -67,4 +70,54 @@ object Prefs {
 
     fun downloadDirFile(): File = File(downloadDir.value ?: defaultDownloadDir().absolutePath).apply { mkdirs() }
     fun bufferDirFile(): File = File(bufferDir.value ?: defaultBufferDir().absolutePath).apply { mkdirs() }
+
+    /** Etiqueta corta y legible de una ruta (para mostrar en Ajustes). */
+    fun shortLabel(path: String?): String {
+        if (path.isNullOrBlank()) return "—"
+        val root = Environment.getExternalStorageDirectory()?.absolutePath
+        return when {
+            root != null && path.startsWith(root) -> "Almacenamiento" + path.removePrefix(root)
+            path.contains("/Android/data/") -> "App" + path.substringAfter("/files")
+            else -> path
+        }
+    }
+
+    /**
+     * Convierte el árbol elegido con el selector del sistema (SAF) en una RUTA
+     * real del sistema de ficheros, que es lo único que libtorrent sabe escribir.
+     * Devuelve la ruta si es escribible, o null si el sistema no permite escribir
+     * ahí sin permisos especiales (almacenamiento aislado de Android moderno).
+     */
+    fun resolveTreeUri(uri: Uri): String? {
+        val real = treeUriToPath(uri) ?: return null
+        return if (isWritable(real)) real else null
+    }
+
+    private fun treeUriToPath(uri: Uri): String? {
+        val docId = runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull() ?: return null
+        val split = docId.split(":", limit = 2)
+        val type = split.getOrNull(0) ?: return null
+        val rel = split.getOrNull(1) ?: ""
+        if (type.equals("primary", ignoreCase = true)) {
+            val base = Environment.getExternalStorageDirectory() ?: return null
+            return File(base, rel).absolutePath
+        }
+        // Volumen extraíble (SD): derivar la raíz desde getExternalFilesDirs
+        for (f in appCtx.getExternalFilesDirs(null).filterNotNull()) {
+            val p = f.absolutePath
+            val idx = p.indexOf("/Android/data")
+            if (idx > 0) {
+                val root = p.substring(0, idx)
+                if (root.contains(type)) return File(root, rel).absolutePath
+            }
+        }
+        return null
+    }
+
+    private fun isWritable(path: String): Boolean = runCatching {
+        val dir = File(path).apply { mkdirs() }
+        if (!dir.isDirectory) return false
+        val probe = File(dir, ".tcv_write_test")
+        probe.writeText("ok"); val ok = probe.exists(); probe.delete(); ok
+    }.getOrDefault(false)
 }
