@@ -588,7 +588,10 @@ fun IptvPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
         }
     }
 
-    val groups = remember(channels) { channels.map { it.group }.distinct() }
+    val groups = remember(channels) {
+        channels.map { it.group }.distinct()
+            .sortedWith(compareBy({ it == "Otros" || it == "General" }, { it }))
+    }
     val shown = channels.filter {
         (group == null || it.group == group) &&
             (filter.isBlank() || it.name.contains(filter, ignoreCase = true))
@@ -611,7 +614,12 @@ fun IptvPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
                 if (mode == 0) {
                     OutlinedTextField(value = m3u, onValueChange = { m3u = it },
                         label = { Text("URL de la lista (.m3u / .m3u8)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    Button(onClick = { loadM3u() }, enabled = m3u.isNotBlank()) { Text("Cargar lista") }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { loadM3u() }, enabled = m3u.isNotBlank()) { Text("Cargar lista") }
+                        OutlinedButton(onClick = { m3u = Iptv.ACE_PLAYLIST; loadM3u() }) { Text("Canales AceStream (search-ace.stream)") }
+                    }
+                    Text("Consejo: la lista de search-ace.stream son canales AceStream; al pulsar un canal se abre en la app de AceStream (gratis).",
+                        style = MaterialTheme.typography.labelSmall, color = Muted)
                 } else {
                     OutlinedTextField(value = host, onValueChange = { host = it },
                         label = { Text("Host (http://servidor:puerto)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -643,8 +651,15 @@ fun IptvPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
                     Text("${shown.size} canales", style = MaterialTheme.typography.labelSmall, color = Muted)
                     // Lista (limitada para no petar la UI; el filtro reduce)
                     shown.take(300).forEach { ch ->
+                        val aceId = ch.aceId
                         Row(
-                            Modifier.fillMaxWidth().clickable { onPlayUrl(ch.url, PlayCtx(name = ch.name)) }.padding(vertical = 6.dp),
+                            Modifier.fillMaxWidth().clickable {
+                                // Canal AceStream -> se abre en la app de AceStream (gratis);
+                                // canal IPTV normal -> se reproduce en TorrentBox.
+                                if (aceId != null) {
+                                    if (!AceStream.openExternal(ctx, aceId)) status = "Instala «Ace Stream Media» para ver este canal."
+                                } else onPlayUrl(ch.url, PlayCtx(name = ch.name))
+                            }.padding(vertical = 6.dp),
                             horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically
                         ) {
                             if (ch.logo != null) AsyncImage(model = ch.logo, contentDescription = null,
@@ -653,7 +668,7 @@ fun IptvPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
                                 Text(ch.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 if (group == null) Text(ch.group, style = MaterialTheme.typography.labelSmall, color = Muted)
                             }
-                            Text("▶", color = Accent)
+                            Text(if (aceId != null) "📡" else "▶", color = Accent)
                         }
                     }
                     if (shown.size > 300) Text("Mostrando 300 de ${shown.size}. Usa el filtro o una categoría.", style = MaterialTheme.typography.labelSmall, color = Muted)

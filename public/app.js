@@ -1453,8 +1453,9 @@ function initIptvOnce () {
     }
   } catch { /* nada guardado */ }
 
-  $('iptv-m3u-load').addEventListener('click', loadIptvM3u)
-  $('iptv-xt-load').addEventListener('click', loadIptvXtream)
+  $('iptv-m3u-load').addEventListener('click', () => loadIptvM3u())
+  $('iptv-m3u-ace').addEventListener('click', () => { $('iptv-m3u-url').value = 'https://search-ace.stream/playlist'; loadIptvM3u() })
+  $('iptv-xt-load').addEventListener('click', () => loadIptvXtream())
   $('iptv-filter').addEventListener('input', renderIptvChannels)
   $('iptv-clear').addEventListener('click', () => {
     localStorage.removeItem('tcv_iptv')
@@ -1511,6 +1512,7 @@ function afterIptvLoad () {
 function renderIptvGroups () {
   const box = $('iptv-groups')
   const groups = [...new Set(IPTV_CHANNELS.map((c) => c.group))]
+    .sort((a, b) => (a === 'Otros' || a === 'General' ? 1 : 0) - (b === 'Otros' || b === 'General' ? 1 : 0) || a.localeCompare(b))
   if (groups.length <= 1) { box.innerHTML = ''; return }
   box.innerHTML = ''
   const mk = (label, val) => {
@@ -1537,9 +1539,16 @@ function renderIptvChannels () {
     row.className = 'iptv-channel'
     row.innerHTML =
       (c.logo ? `<img src="${escapeHtml(c.logo)}" alt="" loading="lazy" onerror="this.style.display='none'"/>` : '<span class="iptv-noicon">📺</span>') +
-      `<span class="iptv-name">${escapeHtml(c.name)}</span><span class="iptv-play">▶</span>`
+      `<span class="iptv-name">${escapeHtml(c.name)}</span><span class="iptv-play">${c.ace ? '📡' : '▶'}</span>`
     row.addEventListener('click', () => {
-      openPlayerDirect(API_BASE + '/iptv/play?url=' + encodeURIComponent(c.url), c.name, 'IPTV · ' + c.group)
+      if (c.ace) {
+        // Canal AceStream: el navegador no tiene motor; se intenta abrir la app
+        // de escritorio (acestream://) y se avisa. En Android usa la app TorrentBox.
+        $('iptv-status').textContent = 'Canal AceStream: requiere la app AceStream (o ábrelo desde la app Android). Intentando abrir…'
+        try { window.location.href = 'acestream://' + c.ace } catch { /* sin handler */ }
+      } else {
+        openPlayerDirect(API_BASE + '/iptv/play?url=' + encodeURIComponent(c.url), c.name, 'IPTV · ' + c.group)
+      }
     })
     box.appendChild(row)
   })

@@ -25,7 +25,65 @@ object Iptv {
         val url: String,
         val logo: String?,
         val group: String
+    ) {
+        /** content-id AceStream si la URL es acestream:// o del motor local. */
+        val aceId: String? get() = if (isAce(url)) AceStream.extractContentId(url) else null
+    }
+
+    fun isAce(url: String): Boolean =
+        url.startsWith("acestream://", true) || url.contains("ace/getstream", true) ||
+            url.contains(":6878") || Regex("^[0-9a-fA-F]{40}$").matches(url.trim())
+
+    // Playlist mixta muy conocida (canales AceStream de search-ace.stream)
+    const val ACE_PLAYLIST = "https://search-ace.stream/playlist"
+
+    // --- País: se deduce de la bandera emoji o de palabras clave del nombre ---
+    private val ISO_NAME = mapOf(
+        "ES" to "🇪🇸 España", "MX" to "🇲🇽 México", "AR" to "🇦🇷 Argentina", "CO" to "🇨🇴 Colombia",
+        "CL" to "🇨🇱 Chile", "PE" to "🇵🇪 Perú", "VE" to "🇻🇪 Venezuela", "EC" to "🇪🇨 Ecuador",
+        "UY" to "🇺🇾 Uruguay", "PY" to "🇵🇾 Paraguay", "BO" to "🇧🇴 Bolivia", "US" to "🇺🇸 EE. UU.",
+        "GB" to "🇬🇧 Reino Unido", "UK" to "🇬🇧 Reino Unido", "PT" to "🇵🇹 Portugal", "FR" to "🇫🇷 Francia",
+        "IT" to "🇮🇹 Italia", "DE" to "🇩🇪 Alemania", "BR" to "🇧🇷 Brasil", "NL" to "🇳🇱 Países Bajos",
+        "TR" to "🇹🇷 Turquía", "GR" to "🇬🇷 Grecia", "PL" to "🇵🇱 Polonia", "RU" to "🇷🇺 Rusia",
+        "RO" to "🇷🇴 Rumanía", "MA" to "🇲🇦 Marruecos", "CA" to "🇨🇦 Canadá", "IE" to "🇮🇪 Irlanda"
     )
+    private val KEYWORDS = listOf(
+        "España" to "ES", "Spain" to "ES", "Latino" to "MX", "Latin" to "MX", "México" to "MX",
+        "Mexico" to "MX", "Argentina" to "AR", "Colombia" to "CO", "Chile" to "CL", "Perú" to "PE",
+        "Portugal" to "PT", "Brasil" to "BR", "Brazil" to "BR", "Italia" to "IT", "Italy" to "IT",
+        "France" to "FR", "Francia" to "FR", "Deutsch" to "DE", "Germany" to "DE", "UK" to "GB",
+        "United Kingdom" to "GB", "USA" to "US", "United States" to "US", "Turk" to "TR"
+    )
+
+    /** ISO del primer par de banderas-emoji del texto (regional indicators). */
+    private fun flagIso(s: String): String? {
+        val cps = s.codePoints().toArray()
+        for (i in 0 until cps.size - 1) {
+            val a = cps[i]; val b = cps[i + 1]
+            if (a in 0x1F1E6..0x1F1FF && b in 0x1F1E6..0x1F1FF) {
+                val c1 = 'A' + (a - 0x1F1E6); val c2 = 'A' + (b - 0x1F1E6)
+                return "$c1$c2"
+            }
+        }
+        return null
+    }
+
+    /** País (con bandera) para agrupar, o null si no se reconoce. */
+    fun detectCountry(vararg texts: String?): String? {
+        for (t in texts) {
+            val s = t ?: continue
+            flagIso(s)?.let { iso -> ISO_NAME[iso]?.let { return it } }
+        }
+        for (t in texts) {
+            val s = t ?: continue
+            // prefijos tipo "ES:", "[ES]", "ES " al principio
+            Regex("^\\s*[\\[(]?([A-Z]{2})[\\]):| ]").find(s)?.groupValues?.get(1)?.let { iso ->
+                ISO_NAME[iso]?.let { return it }
+            }
+            for ((kw, iso) in KEYWORDS) if (s.contains(kw, ignoreCase = true)) return ISO_NAME[iso] ?: continue
+        }
+        return null
+    }
 
     private const val FILE = "tcv_iptv"
     private val client = OkHttpClient.Builder()
@@ -86,7 +144,9 @@ object Iptv {
                 name = attr(line, "tvg-name") ?: line.substringAfterLast(',', "").trim()
             } else if (line.isNotBlank() && !line.startsWith("#")) {
                 if (name.isBlank()) name = line.substringAfterLast('/').ifBlank { "Canal" }
-                out.add(Channel(name, line, logo?.takeIf { it.isNotBlank() }, group.ifBlank { "General" }))
+                // Agrupa por país (bandera/keyword); si no se reconoce, usa el group-title
+                val country = detectCountry(name, group) ?: group.ifBlank { "Otros" }
+                out.add(Channel(name, line, logo?.takeIf { it.isNotBlank() }, country))
                 name = ""; logo = null; group = "General"
             }
             i++
