@@ -534,9 +534,131 @@ fun AceScreen(onPlayUrl: (String, PlayCtx) -> Unit) {
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
         item {
             Text("TV en directo", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text("Canales y eventos vía AceStream (P2P)", style = MaterialTheme.typography.labelSmall, color = Muted)
             Spacer(Modifier.height(10.dp))
+            IptvPanel(onPlayUrl)
+            Spacer(Modifier.height(12.dp))
             AceStreamPanel(onPlayUrl)
+        }
+    }
+}
+
+/**
+ * Reproductor IPTV genérico (M3U o Xtream Codes). El usuario aporta la fuente
+ * (una lista o unas credenciales de su proveedor); TorrentBox solo reproduce,
+ * directo en el reproductor, sin restricciones. No incluye ningún canal.
+ */
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+@Composable
+fun IptvPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
+    val ctx = LocalContext.current
+    var expanded by remember { mutableStateOf(true) }
+    var mode by remember { mutableStateOf(0) } // 0 = M3U, 1 = Xtream
+    var m3u by remember { mutableStateOf(Iptv.savedM3u(ctx)) }
+    val savedXt = remember { Iptv.savedXtream(ctx) }
+    var host by remember { mutableStateOf(savedXt?.host ?: "") }
+    var user by remember { mutableStateOf(savedXt?.user ?: "") }
+    var pass by remember { mutableStateOf(savedXt?.pass ?: "") }
+    var status by remember { mutableStateOf("") }
+    var channels by remember { mutableStateOf<List<Iptv.Channel>>(emptyList()) }
+    var group by remember { mutableStateOf<String?>(null) }   // categoría seleccionada
+    var filter by remember { mutableStateOf("") }
+
+    fun onLoaded(list: List<Iptv.Channel>?, err: String?) = onMain {
+        if (list == null) { status = err ?: "Error" }
+        else { channels = list; group = null; status = "${list.size} canales" }
+    }
+
+    fun loadM3u() {
+        if (m3u.isBlank()) { status = "Pon la URL de tu lista M3U"; return }
+        Iptv.saveM3u(ctx, m3u); status = "Cargando lista…"
+        Iptv.loadM3u(m3u) { l, e -> onLoaded(l, e) }
+    }
+    fun loadXtream() {
+        if (host.isBlank() || user.isBlank()) { status = "Pon host, usuario y contraseña"; return }
+        val x = Iptv.Xtream(host, user, pass)
+        Iptv.saveXtream(ctx, x); status = "Conectando…"
+        Iptv.loadXtream(x) { l, e -> onLoaded(l, e) }
+    }
+
+    // Carga automática al abrir si ya hay fuente guardada
+    LaunchedEffect(Unit) {
+        when {
+            Iptv.savedXtream(ctx) != null -> loadXtream()
+            Iptv.savedM3u(ctx).isNotBlank() -> loadM3u()
+        }
+    }
+
+    val groups = remember(channels) { channels.map { it.group }.distinct() }
+    val shown = channels.filter {
+        (group == null || it.group == group) &&
+            (filter.isBlank() || it.name.contains(filter, ignoreCase = true))
+    }
+
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth().clickable { expanded = !expanded }, verticalAlignment = Alignment.CenterVertically) {
+                Text("📺 IPTV (tu lista M3U o Xtream)", style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, contentDescription = null)
+            }
+            if (expanded) {
+                Text("Reproduce tu propia fuente IPTV (proveedor que pagues, lista pública…). No se incluye ningún canal.",
+                    style = MaterialTheme.typography.labelSmall, color = Muted)
+                SingleChoiceSegmentedButtonRow {
+                    SegmentedButton(selected = mode == 0, onClick = { mode = 0 }, shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("Lista M3U") }
+                    SegmentedButton(selected = mode == 1, onClick = { mode = 1 }, shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Xtream Codes") }
+                }
+                if (mode == 0) {
+                    OutlinedTextField(value = m3u, onValueChange = { m3u = it },
+                        label = { Text("URL de la lista (.m3u / .m3u8)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Button(onClick = { loadM3u() }, enabled = m3u.isNotBlank()) { Text("Cargar lista") }
+                } else {
+                    OutlinedTextField(value = host, onValueChange = { host = it },
+                        label = { Text("Host (http://servidor:puerto)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(value = user, onValueChange = { user = it }, label = { Text("Usuario") }, singleLine = true, modifier = Modifier.weight(1f))
+                        OutlinedTextField(value = pass, onValueChange = { pass = it }, label = { Text("Contraseña") }, singleLine = true, modifier = Modifier.weight(1f))
+                    }
+                    Button(onClick = { loadXtream() }, enabled = host.isNotBlank() && user.isNotBlank()) { Text("Conectar") }
+                }
+                if (channels.isNotEmpty()) {
+                    TextButton(onClick = { Iptv.clear(ctx); channels = emptyList(); m3u = ""; host = ""; user = ""; pass = ""; status = "Fuente borrada" }) {
+                        Text("Borrar fuente guardada")
+                    }
+                }
+                if (status.isNotBlank()) Text(status, color = Muted, style = MaterialTheme.typography.bodySmall)
+
+                if (channels.isNotEmpty()) {
+                    OutlinedTextField(value = filter, onValueChange = { filter = it },
+                        label = { Text("Filtrar canal…") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    // Categorías
+                    if (groups.size > 1) {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            item { FilterChip(selected = group == null, onClick = { group = null }, label = { Text("Todos") }) }
+                            items(groups.size) { i ->
+                                FilterChip(selected = group == groups[i], onClick = { group = groups[i] }, label = { Text(groups[i]) })
+                            }
+                        }
+                    }
+                    Text("${shown.size} canales", style = MaterialTheme.typography.labelSmall, color = Muted)
+                    // Lista (limitada para no petar la UI; el filtro reduce)
+                    shown.take(300).forEach { ch ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable { onPlayUrl(ch.url, PlayCtx(name = ch.name)) }.padding(vertical = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (ch.logo != null) AsyncImage(model = ch.logo, contentDescription = null,
+                                modifier = Modifier.width(44.dp).height(44.dp).clip(RoundedCornerShape(6.dp)))
+                            Column(Modifier.weight(1f)) {
+                                Text(ch.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (group == null) Text(ch.group, style = MaterialTheme.typography.labelSmall, color = Muted)
+                            }
+                            Text("▶", color = Accent)
+                        }
+                    }
+                    if (shown.size > 300) Text("Mostrando 300 de ${shown.size}. Usa el filtro o una categoría.", style = MaterialTheme.typography.labelSmall, color = Muted)
+                }
+            }
         }
     }
 }
