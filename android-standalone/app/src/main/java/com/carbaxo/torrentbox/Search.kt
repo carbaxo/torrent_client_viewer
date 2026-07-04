@@ -69,7 +69,7 @@ object Search {
                                 seeders = seeders,
                                 sizeBytes = o.optString("size", "0").toLongOrNull() ?: 0,
                                 magnet = buildMagnet(hash.lowercase(), name),
-                                lang = Lang.detect(name)
+                                lang = Lang.detectFromTitle(name)
                             )
                         )
                     }
