@@ -476,15 +476,22 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
 
     fun play(name: String, contentId: String) {
-        if (!AceStream.engineInstalled(ctx)) {
-            status = "Necesitas el AceStream Engine instalado y abierto."
-            return
-        }
-        status = "⚡ Resolviendo en el engine…"
-        AceStream.resolve(contentId) { url, err ->
+        // No bloqueamos por la comprobación de paquete: comprobamos el engine
+        // de verdad (get_version en el puerto 6878) y lo arrancamos si hace falta.
+        status = "Comprobando AceStream Engine…"
+        AceStream.ensureEngine(ctx, onStatus = { s -> onMain { status = s } }) { ok, err ->
             onMain {
-                if (url != null) { status = ""; onPlayUrl(url, PlayCtx(name = name)) }
-                else status = err ?: "No se pudo reproducir."
+                if (!ok) {
+                    status = (err ?: "Engine no disponible") + " También puedes usar «Abrir en AceStream»."
+                    return@onMain
+                }
+                status = "⚡ Resolviendo en el engine…"
+                AceStream.resolve(contentId) { url, rerr ->
+                    onMain {
+                        if (url != null) { status = ""; onPlayUrl(url, PlayCtx(name = name)) }
+                        else status = (rerr ?: "No se pudo reproducir.") + " Prueba «Abrir en AceStream»."
+                    }
+                }
             }
         }
     }
@@ -509,9 +516,9 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
             }
             if (expanded) {
                 if (!AceStream.engineInstalled(ctx)) {
-                    Text("Requiere la app AceStream Engine (gratis). La reproducción es P2P dentro de tu app.",
+                    Text("Requiere la app «Ace Stream Media» (gratis) — esa app YA incluye el engine. La reproducción es P2P dentro de tu app.",
                         style = MaterialTheme.typography.labelSmall, color = Muted)
-                    OutlinedButton(onClick = { AceStream.openEngineInstall(ctx) }) { Text("Instalar AceStream Engine") }
+                    OutlinedButton(onClick = { AceStream.openEngineInstall(ctx) }) { Text("Instalar Ace Stream Media") }
                 }
                 OutlinedTextField(
                     value = query, onValueChange = { query = it },
@@ -536,6 +543,9 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
                         }
                     ) { Text("▶ Reproducir enlace") }
                     AceStream.extractContentId(manual)?.let { id ->
+                        OutlinedButton(onClick = {
+                            if (!AceStream.openExternal(ctx, id)) status = "No hay app que abra acestream://"
+                        }) { Text("Abrir en AceStream") }
                         OutlinedButton(onClick = { AceStream.openPage(ctx, id) }) { Text("Abrir página") }
                     }
                 }
@@ -549,6 +559,9 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
                             Text(r.contentId.take(12) + "…", style = MaterialTheme.typography.labelSmall, color = Muted)
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Button(onClick = { play(r.name, r.contentId) }) { Text("▶ Reproducir") }
+                                OutlinedButton(onClick = {
+                                    if (!AceStream.openExternal(ctx, r.contentId)) status = "No hay app que abra acestream://"
+                                }) { Text("Abrir en AceStream") }
                                 OutlinedButton(onClick = { AceStream.openPage(ctx, r.pageUrl) }) { Text("Abrir página") }
                             }
                         }
