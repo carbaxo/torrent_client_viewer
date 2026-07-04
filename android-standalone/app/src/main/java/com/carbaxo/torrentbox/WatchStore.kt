@@ -60,7 +60,8 @@ object WatchStore {
         val out = ArrayList<Prog>()
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
-            val key = o.optString("key").ifBlank { continue }
+            val key = o.optString("key")
+            if (key.isBlank()) continue
             out.add(Prog(
                 key = key,
                 titleId = o.optString("titleId", key),
