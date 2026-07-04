@@ -10,10 +10,15 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -206,6 +211,8 @@ fun PosterCard(t: Tmdb.Title, width: Int = 120, onClick: () -> Unit) {
 fun DiscoverScreen(type: String, onType: (String) -> Unit, onOpen: (Tmdb.Title) -> Unit) {
     var rows by remember { mutableStateOf<List<Tmdb.Row>>(emptyList()) }
     var status by remember { mutableStateOf(if (Tmdb.hasKey) "Cargando catálogos…" else "") }
+    // Explorar una plataforma en modo rejilla paginada ("Ver más")
+    var browse by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     LaunchedEffect(type) {
         if (!Tmdb.hasKey) { status = "" ; return@LaunchedEffect }
@@ -217,6 +224,11 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, onOpen: (Tmdb.Title) 
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
         Sync.onSignInResult(res.data) { _, _ -> }
+    }
+
+    browse?.let { (prov, nm) ->
+        BrowseScreen(prov, nm, type, onOpen = onOpen, onBack = { browse = null })
+        return
     }
 
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
@@ -268,6 +280,58 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, onOpen: (Tmdb.Title) 
                 Spacer(Modifier.height(8.dp))
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(row.items.size) { i -> PosterCard(row.items[i]) { onOpen(row.items[i]) } }
+                    val prov = Tmdb.PLATFORMS.firstOrNull { it.name == row.name }?.providers
+                    if (prov != null) item {
+                        Box(
+                            Modifier.width(120.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(10.dp))
+                                .background(Surface1).clickable { browse = prov to row.name },
+                            contentAlignment = Alignment.Center
+                        ) { Text("Ver más ›", color = Accent, fontWeight = FontWeight.Bold) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun BrowseScreen(provider: String, name: String, type: String, onOpen: (Tmdb.Title) -> Unit, onBack: () -> Unit) {
+    val items = remember { mutableStateListOf<Tmdb.Title>() }
+    var page by remember { mutableStateOf(0) }
+    var loading by remember { mutableStateOf(false) }
+    var end by remember { mutableStateOf(false) }
+
+    fun loadNext() {
+        if (loading || end) return
+        loading = true
+        val next = page + 1
+        Tmdb.discover(type, provider, null, next) { list, _ ->
+            onMain {
+                loading = false
+                if (list.isNullOrEmpty()) end = true else { page = next; items.addAll(list) }
+            }
+        }
+    }
+    LaunchedEffect(provider, type) { items.clear(); page = 0; end = false; loadNext() }
+
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("← Volver") }
+            Text(name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        }
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(110.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(bottom = 24.dp)
+        ) {
+            gridItems(items.size) { i -> PosterCard(items[i], width = 110) { onOpen(items[i]) } }
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                    if (!end) Button(onClick = { loadNext() }, enabled = !loading) {
+                        Text(if (loading) "Cargando…" else "Ver más")
+                    } else Text("No hay más resultados", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -492,19 +556,32 @@ fun DownloadsScreen(
     onPlayUrl: (String) -> Unit
 ) {
     val ctx = LocalContext.current
+    // Separa la ACTIVIDAD (descargando) de lo que ya está LISTO PARA VER
+    val torrentsReady = downloads.filter { it.progress >= 0.999f }
+    val torrentsActive = downloads.filter { it.progress < 0.999f }
+    val rdReady = rdDownloads.filter { it.done }
+    val rdActive = rdDownloads.filter { !it.done }
+    val nothing = downloads.isEmpty() && rdDownloads.isEmpty()
+
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
         item {
             Text("Descargas", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(10.dp))
-            if (downloads.isEmpty() && rdDownloads.isEmpty()) Text("Aún no hay descargas. Abre un título y pulsa Ver o Descargar.", color = Muted, style = MaterialTheme.typography.bodySmall)
+            if (nothing) Text("Aún no hay descargas. Abre un título y pulsa Ver o Descargar.", color = Muted, style = MaterialTheme.typography.bodySmall)
         }
-        if (rdDownloads.isNotEmpty()) {
-            item { Text("⚡ Real-Debrid", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp, bottom = 4.dp)) }
-            items(rdDownloads.size) { i -> RdDownloadCard(rdDownloads[i], onPlayUrl = { onPlayUrl(RdDownloads.playUri(ctx, rdDownloads[i].id) ?: rdDownloads[i].localUri ?: "") }, onRemove = { RdDownloads.remove(ctx, rdDownloads[i].id) }) }
+
+        // --- Listas para ver ---
+        if (torrentsReady.isNotEmpty() || rdReady.isNotEmpty()) {
+            item { Text("▶ Listas para ver", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color(0xFF34D399), modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)) }
+            items(rdReady.size) { i -> RdDownloadCard(rdReady[i], onPlayUrl = { onPlayUrl(RdDownloads.playUri(ctx, rdReady[i].id) ?: rdReady[i].localUri ?: "") }, onRemove = { RdDownloads.remove(ctx, rdReady[i].id) }) }
+            items(torrentsReady.size) { i -> DownloadCard(torrentsReady[i], onPlay) }
         }
-        if (downloads.isNotEmpty()) {
-            item { Text("⬇ En el móvil (torrent)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)) }
-            items(downloads.size) { i -> DownloadCard(downloads[i], onPlay) }
+
+        // --- Descargando (actividad) ---
+        if (torrentsActive.isNotEmpty() || rdActive.isNotEmpty()) {
+            item { Text("⏳ Descargando", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp)) }
+            items(rdActive.size) { i -> RdDownloadCard(rdActive[i], onPlayUrl = { onPlayUrl(RdDownloads.playUri(ctx, rdActive[i].id) ?: rdActive[i].localUri ?: "") }, onRemove = { RdDownloads.remove(ctx, rdActive[i].id) }) }
+            items(torrentsActive.size) { i -> DownloadCard(torrentsActive[i], onPlay) }
         }
     }
 }
@@ -568,6 +645,7 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Uni
     var selSeason by remember { mutableStateOf<Int?>(null) }
     var episodes by remember { mutableStateOf<List<Tmdb.Episode>>(emptyList()) }
     var sourcesLabel by remember { mutableStateOf("") }
+    var linksExpanded by remember { mutableStateOf(true) }
 
     LaunchedEffect(title.tmdbId) {
         Tmdb.detail(title.type, title.tmdbId) { d, _ ->
@@ -664,10 +742,25 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Uni
             }
 
             if (loadingSources) Text("Buscando fuentes…", color = Muted, style = MaterialTheme.typography.bodySmall)
-            if (sources.isNotEmpty() && sourcesLabel.isNotBlank())
-                Text("Fuentes · $sourcesLabel", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            if (sources.isNotEmpty()) {
+                // Cabecera de la sección de enlaces: se puede plegar/desplegar
+                Row(
+                    Modifier.fillMaxWidth().clickable { linksExpanded = !linksExpanded },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Enlaces (${sources.size})" + if (sourcesLabel.isNotBlank()) " · $sourcesLabel" else "",
+                        style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Icon(
+                        if (linksExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                        contentDescription = if (linksExpanded) "Plegar" else "Desplegar"
+                    )
+                }
+            }
 
-            sources.forEach { r ->
+            if (linksExpanded) sources.forEach { r ->
                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(r.name, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
