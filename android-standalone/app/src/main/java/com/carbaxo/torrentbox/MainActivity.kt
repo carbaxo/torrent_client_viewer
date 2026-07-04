@@ -57,6 +57,7 @@ class MainActivity : ComponentActivity() {
         saveRoot = File(getExternalFilesDir(null) ?: filesDir, "torrents").apply { mkdirs() }
 
         Prefs.init(this)
+        WatchStore.init(this)
         TorrentEngine.start()
         DownloadService.start(this)
         StreamServer.ensureStarted()
@@ -78,16 +79,18 @@ class MainActivity : ComponentActivity() {
                     AppScreen(
                         saveRoot = saveRoot,
                         initialMagnet = magnetFromIntent(intent),
-                        onPlay = { infoHash ->
-                            startActivity(Intent(this, PlayerActivity::class.java).putExtra("infoHash", infoHash))
-                        },
-                        onPlayUrl = { url ->
-                            startActivity(Intent(this, PlayerActivity::class.java).putExtra("url", url))
-                        }
+                        onPlay = { infoHash, c -> startActivity(playerIntent(c).putExtra("infoHash", infoHash)) },
+                        onPlayUrl = { url, c -> startActivity(playerIntent(c).putExtra("url", url)) }
                     )
                 }
             }
         }
+    }
+
+    private fun playerIntent(c: PlayCtx) = Intent(this, PlayerActivity::class.java).apply {
+        putExtra("tmdbId", c.tmdbId); putExtra("type", c.type)
+        putExtra("season", c.season); putExtra("episode", c.episode)
+        putExtra("name", c.name); putExtra("poster", c.poster); putExtra("resumeMs", c.resumeMs)
     }
 
     private fun magnetFromIntent(i: Intent?): String? {
@@ -95,6 +98,13 @@ class MainActivity : ComponentActivity() {
         return if (data != null && data.startsWith("magnet:")) data else null
     }
 }
+
+/** Contexto del título que se está reproduciendo (para marcar visto / reanudar). */
+data class PlayCtx(
+    val tmdbId: Int = -1, val type: String = "movie",
+    val season: Int = -1, val episode: Int = -1,
+    val name: String = "", val poster: String? = null, val resumeMs: Long = 0L
+)
 
 private enum class Tab(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     DISCOVER("Descubrir", Icons.Filled.Explore),
@@ -105,13 +115,13 @@ private enum class Tab(val label: String, val icon: androidx.compose.ui.graphics
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String) -> Unit, onPlayUrl: (String) -> Unit) {
+fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) -> Unit, onPlayUrl: (String, PlayCtx) -> Unit) {
     var tab by remember { mutableStateOf(Tab.DISCOVER) }
     var detail by remember { mutableStateOf<Tmdb.Title?>(null) }
     var catalogType by remember { mutableStateOf("movie") }
     val downloads = remember { mutableStateListOf<TorrentEngine.Snapshot>() }
     val rdDownloads = remember { mutableStateListOf<RdDownloads.Snap>() }
-    var pendingPlay by remember { mutableStateOf<String?>(null) }
+    var pendingPlay by remember { mutableStateOf<Pair<String, PlayCtx>?>(null) }
     val ctx = LocalContext.current
 
     // Refresco de descargas (torrent + Real-Debrid) + auto-reproducción.
@@ -127,19 +137,19 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String) -> Unit, 
             rdDownloads.clear(); rdDownloads.addAll(rd)
             val p = pendingPlay
             if (p != null) {
-                val s = snaps.find { it.infoHash == p && it.hasVideo }
-                if (s != null) { pendingPlay = null; onPlay(p) }
+                val s = snaps.find { it.infoHash == p.first && it.hasVideo }
+                if (s != null) { pendingPlay = null; onPlay(p.first, p.second) }
             }
             kotlinx.coroutines.delay(1000)
         }
     }
 
     // buffer=true (Ver) descarga a la carpeta temporal; false (Descargar) a la permanente
-    fun addMagnet(m: String, autoplay: Boolean) {
+    fun addMagnet(m: String, autoplay: Boolean, playCtx: PlayCtx = PlayCtx()) {
         if (m.isBlank()) return
         val dir = if (autoplay) Prefs.bufferDirFile() else Prefs.downloadDirFile()
         TorrentEngine.addMagnet(m.trim(), dir) { d, _ ->
-            if (autoplay && d != null) onMain { pendingPlay = d.infoHash }
+            if (autoplay && d != null) onMain { pendingPlay = d.infoHash to playCtx }
         }
     }
 
@@ -151,9 +161,9 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String) -> Unit, 
         DetailScreen(
             title = d,
             onBack = { detail = null },
-            onWatch = { magnet -> addMagnet(magnet, true); tab = Tab.DOWNLOADS; detail = null },
+            onWatch = { magnet, c -> addMagnet(magnet, true, c); tab = Tab.DOWNLOADS; detail = null },
             onDownload = { magnet -> addMagnet(magnet, false) },
-            onPlayUrl = onPlayUrl
+            onPlayUrl = { url, c -> onPlayUrl(url, c) }
         )
         return
     }
@@ -180,7 +190,7 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String) -> Unit, 
             when (tab) {
                 Tab.DISCOVER -> DiscoverScreen(catalogType, { catalogType = it }, onOpen = { detail = it })
                 Tab.SEARCH -> SearchScreen(onOpen = { detail = it })
-                Tab.DOWNLOADS -> DownloadsScreen(downloads, rdDownloads, onPlay, onPlayUrl)
+                Tab.DOWNLOADS -> DownloadsScreen(downloads, rdDownloads, { h -> onPlay(h, PlayCtx()) }, { u -> onPlayUrl(u, PlayCtx()) })
                 Tab.SETTINGS -> SettingsScreen()
             }
         }
@@ -189,20 +199,44 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String) -> Unit, 
 
 @Composable
 fun PosterCard(t: Tmdb.Title, width: Int = 120, onClick: () -> Unit) {
+    val watched = WatchStore.isWatchedTitle(t.type, t.tmdbId)
     Column(Modifier.width(width.dp).clickable { onClick() }) {
-        AsyncImage(
-            model = t.poster,
-            contentDescription = t.title,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f)
-                .clip(RoundedCornerShape(10.dp))
-        )
+        Box {
+            AsyncImage(
+                model = t.poster,
+                contentDescription = t.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f)
+                    .clip(RoundedCornerShape(10.dp))
+            )
+            if (watched) Text(
+                "✓ Visto",
+                style = MaterialTheme.typography.labelSmall, color = Color.White,
+                modifier = Modifier.align(Alignment.TopEnd).padding(6.dp)
+                    .clip(RoundedCornerShape(6.dp)).background(Color(0xCC34D399)).padding(horizontal = 6.dp, vertical = 2.dp)
+            )
+        }
         Spacer(Modifier.height(6.dp))
         Text(t.title, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(
             t.year + (if (t.rating > 0) "  ⭐ ${t.rating}" else ""),
             style = MaterialTheme.typography.labelSmall, color = Muted, maxLines = 1
         )
+    }
+}
+
+@Composable
+fun ContinueCard(p: WatchStore.Prog, onClick: () -> Unit) {
+    val pct = if (p.duration > 0) (p.position / p.duration).coerceIn(0.0, 1.0).toFloat() else 0f
+    Column(Modifier.width(120.dp).clickable { onClick() }) {
+        AsyncImage(
+            model = p.poster, contentDescription = p.name, contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(10.dp))
+        )
+        LinearProgressIndicator(progress = { pct }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
+        Text(p.name, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        val ep = if (p.season != null && p.episode != null) "T${p.season} · E${p.episode}" else ""
+        if (ep.isNotBlank()) Text(ep, style = MaterialTheme.typography.labelSmall, color = Muted)
     }
 }
 
@@ -213,6 +247,14 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, onOpen: (Tmdb.Title) 
     var status by remember { mutableStateOf(if (Tmdb.hasKey) "Cargando catálogos…" else "") }
     // Explorar una plataforma en modo rejilla paginada ("Ver más")
     var browse by remember { mutableStateOf<Pair<String, String>?>(null) }
+    // Recomendados según lo visto + favoritos
+    val recs = remember { mutableStateListOf<Tmdb.Title>() }
+    LaunchedEffect(WatchStore.list.size, Sync.favorites.size) {
+        if (!Tmdb.hasKey) return@LaunchedEffect
+        val seeds = (WatchStore.seeds() + Sync.favorites.map { it.tmdbId to it.type }).distinctBy { it.first }.take(6)
+        if (seeds.isEmpty()) { recs.clear(); return@LaunchedEffect }
+        Tmdb.recommendations(seeds) { list -> onMain { recs.clear(); recs.addAll(list) } }
+    }
 
     LaunchedEffect(type) {
         if (!Tmdb.hasKey) { status = "" ; return@LaunchedEffect }
@@ -272,6 +314,30 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, onOpen: (Tmdb.Title) 
             }
             if (status.isNotBlank()) { Spacer(Modifier.height(12.dp)); Text(status, color = Muted, style = MaterialTheme.typography.bodySmall) }
             Spacer(Modifier.height(8.dp))
+        }
+        // Continuar viendo (series/películas a medias)
+        val cont = WatchStore.continueWatching()
+        if (cont.isNotEmpty()) item {
+            Column(Modifier.padding(vertical = 8.dp)) {
+                Text("Continuar viendo", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(cont.size) { i ->
+                        val p = cont[i]
+                        ContinueCard(p) { onOpen(Tmdb.Title(p.tmdbId, p.name, p.name, "", p.poster, 0.0, p.type)) }
+                    }
+                }
+            }
+        }
+        // Recomendado para ti
+        if (recs.isNotEmpty()) item {
+            Column(Modifier.padding(vertical = 8.dp)) {
+                Text("Recomendado para ti", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(recs.size) { i -> PosterCard(recs[i]) { onOpen(recs[i]) } }
+                }
+            }
         }
         items(rows.size) { idx ->
             val row = rows[idx]
@@ -638,7 +704,7 @@ fun DownloadCard(d: TorrentEngine.Snapshot, onPlay: (String) -> Unit) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Unit, onDownload: (String) -> Unit, onPlayUrl: (String) -> Unit) {
+fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String, PlayCtx) -> Unit, onDownload: (String) -> Unit, onPlayUrl: (String, PlayCtx) -> Unit) {
     val ctx = LocalContext.current
     var detail by remember { mutableStateOf<Tmdb.Detail?>(null) }
     var sources by remember { mutableStateOf<List<Search.Result>>(emptyList()) }
@@ -653,6 +719,9 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Uni
     var linksExpanded by remember { mutableStateOf(true) }
     var imdbId by remember { mutableStateOf<String?>(null) }
     var trailerKey by remember { mutableStateOf<String?>(null) }
+    // temporada/episodio a los que corresponden las fuentes mostradas
+    var ctxSeason by remember { mutableStateOf(-1) }
+    var ctxEpisode by remember { mutableStateOf(-1) }
 
     LaunchedEffect(title.tmdbId) {
         Tmdb.detail(title.type, title.tmdbId) { d, _ ->
@@ -683,6 +752,7 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Uni
     // idioma preferido. La combinación se hace en el hilo principal (onMain).
     fun runSearch(query: String, label: String, season: Int? = null, episode: Int? = null) {
         loadingSources = true; sources = emptyList(); sourcesLabel = label
+        ctxSeason = season ?: -1; ctxEpisode = episode ?: -1
         val id = imdbId
         val useTorrentio = id != null && (title.type == "movie" || episode != null)
         val acc = mutableListOf<Search.Result>()
@@ -705,6 +775,15 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Uni
         Search.search(query) { l, e -> part(l, e) }
     }
     fun loadSources(dt: Tmdb.Detail) = runSearch(dt.originalTitle, dt.title)
+
+    // Contexto para el reproductor (marcar visto + reanudar) según lo buscado
+    fun buildCtx(): PlayCtx {
+        val s = ctxSeason.takeIf { it > 0 }
+        val e = ctxEpisode.takeIf { it > 0 }
+        val key = if (title.type == "series" && s != null) "series:${title.tmdbId}:$s:${e ?: 1}" else "movie:${title.tmdbId}"
+        val resumeMs = WatchStore.progressFor(key)?.let { if (!it.watched) (it.position * 1000).toLong() else 0L } ?: 0L
+        return PlayCtx(title.tmdbId, title.type, s ?: -1, e ?: -1, title.title, title.poster, resumeMs)
+    }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         val dt = detail
@@ -766,7 +845,12 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Uni
                             colors = CardDefaults.cardColors(containerColor = Surface1)
                         ) {
                             Column(Modifier.padding(10.dp)) {
-                                Text("${ep.episode}. ${ep.name}", style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                val seen = WatchStore.isWatchedEpisode(title.tmdbId, sn, ep.episode)
+                                Text(
+                                    (if (seen) "✓ " else "") + "${ep.episode}. ${ep.name}",
+                                    style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    color = if (seen) Color(0xFF34D399) else MaterialTheme.colorScheme.onSurface
+                                )
                                 if (ep.overview.isNotBlank()) Text(ep.overview, style = MaterialTheme.typography.labelSmall, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
                         }
@@ -803,7 +887,7 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Uni
                         Text(r.name, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Text("${Lang.flag(r.lang)} ${Lang.label(r.lang)}  ·  ▲ ${r.seeders} seeders · ${Search.humanSize(r.sizeBytes)}", style = MaterialTheme.typography.labelSmall, color = Muted)
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { onWatch(r.magnet) }) { Text("▶ Ver") }
+                            Button(onClick = { onWatch(r.magnet, buildCtx()) }) { Text("▶ Ver") }
                             OutlinedButton(onClick = { onDownload(r.magnet) }) { Text("⬇ Descargar") }
                             if (RealDebrid.configured) {
                                 Button(
@@ -813,7 +897,7 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Uni
                                         RealDebrid.streamMagnet(r.magnet) { url, _, err, progress ->
                                             onMain {
                                                 when {
-                                                    url != null -> { rdStatus = ""; onPlayUrl(url) }
+                                                    url != null -> { rdStatus = ""; onPlayUrl(url, buildCtx()) }
                                                     progress != null -> rdStatus = "Real-Debrid preparando… ${progress}% (reintenta en un momento)"
                                                     else -> rdStatus = err ?: "Error de Real-Debrid"
                                                 }

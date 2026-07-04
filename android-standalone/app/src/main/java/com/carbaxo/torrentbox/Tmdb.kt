@@ -193,6 +193,26 @@ object Tmdb {
         }
     }
 
+    /** Recomendaciones a partir de semillas [(tmdbId, type)] (máx. 6). */
+    fun recommendations(seeds: List<Pair<Int, String>>, onResult: (List<Title>) -> Unit) {
+        io.submit {
+            val out = LinkedHashMap<Int, Title>()
+            val seedIds = seeds.map { it.first }.toSet()
+            for ((id, type) in seeds.take(6)) {
+                try {
+                    val tmdbType = if (type == "series") "tv" else "movie"
+                    val d = get("https://api.themoviedb.org/3/$tmdbType/$id/recommendations?api_key=${BuildConfig.TMDB_KEY}&language=${L()}&page=1")
+                    val arr = d.optJSONArray("results") ?: continue
+                    for (i in 0 until arr.length()) {
+                        val t = mapTitle(arr.getJSONObject(i), type) ?: continue
+                        if (t.tmdbId !in seedIds && !out.containsKey(t.tmdbId)) out[t.tmdbId] = t
+                    }
+                } catch (_: Throwable) { /* una semilla que falle no tumba el resto */ }
+            }
+            onResult(out.values.toList().take(30))
+        }
+    }
+
     /** Clave de YouTube del tráiler (o null). Prueba en el idioma preferido y
      *  luego en inglés, priorizando Trailer oficial > Trailer > Teaser. */
     fun trailer(type: String, tmdbId: Int, onResult: (String?) -> Unit) {

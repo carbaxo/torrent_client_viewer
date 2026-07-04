@@ -167,6 +167,10 @@ object Sync {
         }
         favorites.clear(); favorites.addAll(out)
 
+        // Progreso / vistos del perfil -> WatchStore
+        val prog = state?.get("progress") as? List<Map<String, Any?>> ?: emptyList()
+        runCatching { WatchStore.loadFromMaps(prog) }
+
         // Aplica el idioma del perfil (settings.language) al orden local
         val settings = state?.get("settings") as? Map<String, Any?>
         val cloudLang = Lang.fromTmdb(settings?.get("language")?.toString())
@@ -197,6 +201,14 @@ object Sync {
         )
         db().collection("users").document(u).set(docPatch, SetOptions.merge())
             .addOnCompleteListener { onDone(it.isSuccessful) }
+    }
+
+    /** Guarda el progreso/vistos del perfil activo en la nube (merge). */
+    fun saveProgressCloud(progress: List<Map<String, Any?>>) {
+        val u = uid() ?: return
+        val pid = activeProfile?.id ?: return
+        db().collection("users").document(u)
+            .set(mapOf("states" to mapOf(pid to mapOf("progress" to progress)), "updatedAt" to iso()), SetOptions.merge())
     }
 
     /** Guarda el token de Real-Debrid a nivel de cuenta para compartirlo entre dispositivos. */
