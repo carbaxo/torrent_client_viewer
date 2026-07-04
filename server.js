@@ -11,7 +11,8 @@ import { fileURLToPath } from 'url'
 
 import { createStore } from './lib/store.js'
 import { createSearch, SearchError, isValidMagnet, isValidInfoHash } from './lib/search.js'
-import { detectFfmpeg, transcodeToMp4 } from './lib/transcode.js'
+import { detectFfmpeg, transcodeToMp4, transcodeUrlToMp4 } from './lib/transcode.js'
+import { loadM3u, loadXtream, testXtream, isSafeStreamUrl } from './lib/iptv.js'
 import { isSubtitle, srtToVtt, extractEmbeddedVtt, probeSubtitleTracks } from './lib/subtitles.js'
 import { createAuth, AuthError } from './lib/auth.js'
 import { createCatalog } from './lib/catalog.js'
@@ -420,6 +421,43 @@ app.get('/api/genres', searchLimiter, async (req, res) => {
   } catch (err) {
     res.status(err.status || 500).json({ success: false, code: err.code, error: err.message })
   }
+})
+
+// --- IPTV (reproductor genérico: lista M3U o Xtream Codes) ---
+// El usuario aporta la fuente; el servidor la parsea (evita CORS) y el navegador
+// reproduce vía /iptv/play (remux con ffmpeg). No se incluye ningún canal.
+app.use('/api/iptv', auth.requireAuth)
+app.get('/api/iptv/m3u', searchLimiter, async (req, res) => {
+  try {
+    const url = String(req.query.url || '')
+    if (!isSafeStreamUrl(url)) return res.status(400).json({ success: false, error: 'URL no válida' })
+    const channels = await loadM3u(url)
+    res.json({ success: true, channels })
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message })
+  }
+})
+app.post('/api/iptv/xtream', searchLimiter, async (req, res) => {
+  try {
+    const { host, user, pass } = req.body || {}
+    if (!host || !user) return res.status(400).json({ success: false, error: 'Faltan datos' })
+    const ok = await testXtream({ host, user, pass })
+    if (!ok) return res.status(401).json({ success: false, error: 'Usuario o contraseña incorrectos' })
+    const channels = await loadXtream({ host, user, pass })
+    res.json({ success: true, channels })
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message })
+  }
+})
+
+// Reproducción de un canal IPTV: remux/transcode a MP4 fragmentado para el <video>.
+app.use('/iptv', auth.requireAuth)
+app.get('/iptv/play', async (req, res) => {
+  const url = String(req.query.url || '')
+  if (!isSafeStreamUrl(url)) return res.status(400).end('URL no válida')
+  if (!(await detectFfmpeg())) return res.status(503).end('ffmpeg no disponible en el servidor')
+  res.setHeader('Content-Type', 'video/mp4')
+  transcodeUrlToMp4(url, res)
 })
 
 // Explorar (paginado) por plataforma y/o género: ?type=&provider=&genre=&page=&lang=

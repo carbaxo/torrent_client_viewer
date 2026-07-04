@@ -169,7 +169,7 @@ function escapeHtml (str) {
 function $ (id) { return document.getElementById(id) }
 
 // ===================== Navegación (sidebar) =====================
-const VIEW_TITLES = { discover: 'Descubrir', search: 'Buscar', favorites: 'Favoritos', downloads: 'Descargas', library: 'Actividad de descargas', add: 'Añadir', settings: 'Ajustes', detail: 'Detalle', browse: 'Explorar' }
+const VIEW_TITLES = { discover: 'Descubrir', search: 'Buscar', iptv: 'TV en directo', favorites: 'Favoritos', downloads: 'Descargas', library: 'Actividad de descargas', add: 'Añadir', settings: 'Ajustes', detail: 'Detalle', browse: 'Explorar' }
 let CURRENT_VIEW = 'discover'
 
 function switchView (view) {
@@ -178,6 +178,7 @@ function switchView (view) {
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('hidden', v.id !== 'view-' + view))
   $('view-title').textContent = VIEW_TITLES[view] || ''
   if (view === 'favorites') renderFavoritesView()
+  if (view === 'iptv') initIptvOnce()
   window.scrollTo({ top: 0 })
 }
 document.querySelectorAll('.nav-item').forEach((b) => b.addEventListener('click', () => switchView(b.dataset.view)))
@@ -1407,15 +1408,142 @@ player.addEventListener('timeupdate', () => {
 player.addEventListener('pause', () => { if (PLAYING) saveProgress() })
 
 // Reproducción de una URL directa (p.ej. streaming de Real-Debrid)
-function openPlayerDirect (url, title) {
+function openPlayerDirect (url, title, note) {
   playerTitle.textContent = title || 'Vídeo'
   playerSubs.innerHTML = ''
   clearTracks()
   PLAYING = null // sin seguimiento de progreso: no hay torrent local
   player.src = url
   overlay.classList.remove('hidden')
-  playerNote.textContent = 'Streaming directo desde Real-Debrid.'
+  playerNote.textContent = note || 'Streaming directo desde Real-Debrid.'
   player.play().catch(() => {})
+}
+
+// ===================== TV en directo (IPTV) =====================
+let IPTV_INIT = false
+let IPTV_CHANNELS = []
+let IPTV_GROUP = null
+
+function initIptvOnce () {
+  if (IPTV_INIT) return
+  IPTV_INIT = true
+
+  const modeSeg = $('iptv-mode')
+  const formM3u = $('iptv-form-m3u')
+  const formXt = $('iptv-form-xtream')
+  modeSeg.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    modeSeg.querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b))
+    const m3u = b.dataset.imode === 'm3u'
+    formM3u.classList.toggle('hidden', !m3u)
+    formXt.classList.toggle('hidden', m3u)
+  }))
+
+  // Restaura la última fuente guardada (en el navegador)
+  try {
+    const saved = JSON.parse(localStorage.getItem('tcv_iptv') || 'null')
+    if (saved) {
+      if (saved.type === 'm3u') { $('iptv-m3u-url').value = saved.url || '' }
+      else if (saved.type === 'xtream') {
+        $('iptv-xt-host').value = saved.host || ''
+        $('iptv-xt-user').value = saved.user || ''
+        $('iptv-xt-pass').value = saved.pass || ''
+        modeSeg.querySelector('[data-imode="xtream"]').click()
+      }
+      loadIptvSaved(saved)
+    }
+  } catch { /* nada guardado */ }
+
+  $('iptv-m3u-load').addEventListener('click', loadIptvM3u)
+  $('iptv-xt-load').addEventListener('click', loadIptvXtream)
+  $('iptv-filter').addEventListener('input', renderIptvChannels)
+  $('iptv-clear').addEventListener('click', () => {
+    localStorage.removeItem('tcv_iptv')
+    IPTV_CHANNELS = []; IPTV_GROUP = null
+    $('iptv-status').textContent = 'Fuente borrada.'
+    renderIptvGroups(); renderIptvChannels()
+  })
+}
+
+function loadIptvSaved (saved) {
+  if (saved.type === 'm3u' && saved.url) loadIptvM3u(true)
+  else if (saved.type === 'xtream' && saved.host) loadIptvXtream(true)
+}
+
+async function loadIptvM3u (skipSave) {
+  const url = $('iptv-m3u-url').value.trim()
+  if (!url) { $('iptv-status').textContent = 'Pon la URL de tu lista M3U.'; return }
+  $('iptv-status').textContent = 'Cargando lista…'
+  try {
+    const res = await api('/api/iptv/m3u?url=' + encodeURIComponent(url))
+    const data = await res.json()
+    if (!res.ok || !data.success) throw new Error(data.error || 'Error')
+    IPTV_CHANNELS = data.channels || []; IPTV_GROUP = null
+    if (skipSave !== true) localStorage.setItem('tcv_iptv', JSON.stringify({ type: 'm3u', url }))
+    afterIptvLoad()
+  } catch (err) { $('iptv-status').textContent = 'Error: ' + err.message }
+}
+
+async function loadIptvXtream (skipSave) {
+  const host = $('iptv-xt-host').value.trim()
+  const user = $('iptv-xt-user').value.trim()
+  const pass = $('iptv-xt-pass').value.trim()
+  if (!host || !user) { $('iptv-status').textContent = 'Pon host, usuario y contraseña.'; return }
+  $('iptv-status').textContent = 'Conectando…'
+  try {
+    const res = await api('/api/iptv/xtream', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ host, user, pass })
+    })
+    const data = await res.json()
+    if (!res.ok || !data.success) throw new Error(data.error || 'Error')
+    IPTV_CHANNELS = data.channels || []; IPTV_GROUP = null
+    if (skipSave !== true) localStorage.setItem('tcv_iptv', JSON.stringify({ type: 'xtream', host, user, pass }))
+    afterIptvLoad()
+  } catch (err) { $('iptv-status').textContent = 'Error: ' + err.message }
+}
+
+function afterIptvLoad () {
+  $('iptv-status').textContent = IPTV_CHANNELS.length + ' canales'
+  renderIptvGroups()
+  renderIptvChannels()
+}
+
+function renderIptvGroups () {
+  const box = $('iptv-groups')
+  const groups = [...new Set(IPTV_CHANNELS.map((c) => c.group))]
+  if (groups.length <= 1) { box.innerHTML = ''; return }
+  box.innerHTML = ''
+  const mk = (label, val) => {
+    const b = document.createElement('button')
+    b.className = 'chip' + ((IPTV_GROUP === val) ? ' active' : '')
+    b.textContent = label
+    b.addEventListener('click', () => { IPTV_GROUP = val; renderIptvGroups(); renderIptvChannels() })
+    box.appendChild(b)
+  }
+  mk('Todos', null)
+  groups.forEach((g) => mk(g, g))
+}
+
+function renderIptvChannels () {
+  const box = $('iptv-channels')
+  const filter = ($('iptv-filter').value || '').toLowerCase()
+  const shown = IPTV_CHANNELS.filter((c) =>
+    (IPTV_GROUP == null || c.group === IPTV_GROUP) &&
+    (!filter || c.name.toLowerCase().includes(filter))
+  ).slice(0, 400)
+  box.innerHTML = ''
+  shown.forEach((c) => {
+    const row = document.createElement('div')
+    row.className = 'iptv-channel'
+    row.innerHTML =
+      (c.logo ? `<img src="${escapeHtml(c.logo)}" alt="" loading="lazy" onerror="this.style.display='none'"/>` : '<span class="iptv-noicon">📺</span>') +
+      `<span class="iptv-name">${escapeHtml(c.name)}</span><span class="iptv-play">▶</span>`
+    row.addEventListener('click', () => {
+      openPlayerDirect(API_BASE + '/iptv/play?url=' + encodeURIComponent(c.url), c.name, 'IPTV · ' + c.group)
+    })
+    box.appendChild(row)
+  })
+  if (!shown.length && IPTV_CHANNELS.length) box.innerHTML = '<p class="status">Ningún canal coincide con el filtro.</p>'
 }
 
 function closePlayer () {
