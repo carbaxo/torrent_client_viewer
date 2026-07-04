@@ -162,8 +162,9 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) 
             title = d,
             onBack = { detail = null },
             onWatch = { magnet, c -> addMagnet(magnet, true, c); tab = Tab.DOWNLOADS; detail = null },
-            onDownload = { magnet -> addMagnet(magnet, false) },
-            onPlayUrl = { url, c -> onPlayUrl(url, c) }
+            onDownload = { magnet -> addMagnet(magnet, false); tab = Tab.DOWNLOADS; detail = null },
+            onPlayUrl = { url, c -> onPlayUrl(url, c) },
+            onOpenDownloads = { tab = Tab.DOWNLOADS; detail = null }
         )
         return
     }
@@ -702,26 +703,105 @@ fun DownloadCard(d: TorrentEngine.Snapshot, onPlay: (String) -> Unit) {
     }
 }
 
+// Lista de enlaces (fuentes) reutilizable: se muestra bajo un episodio, bajo
+// el botón de temporada completa, o (en películas) bajo "Buscar fuentes".
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String, PlayCtx) -> Unit, onDownload: (String) -> Unit, onPlayUrl: (String, PlayCtx) -> Unit) {
+fun SourcesSection(
+    sources: List<Search.Result>,
+    loading: Boolean,
+    label: String,
+    title: Tmdb.Title,
+    ctx: android.content.Context,
+    buildCtx: () -> PlayCtx,
+    onWatch: (String, PlayCtx) -> Unit,
+    onDownload: (String) -> Unit,
+    onPlayUrl: (String, PlayCtx) -> Unit,
+    onOpenDownloads: () -> Unit
+) {
+    var linksExpanded by remember { mutableStateOf(true) }
+    var rdStatus by remember { mutableStateOf("") }
+
+    Column(Modifier.padding(top = 4.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (loading) Text("Buscando fuentes…", color = Muted, style = MaterialTheme.typography.bodySmall)
+        if (sources.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth().clickable { linksExpanded = !linksExpanded }, verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Enlaces (${sources.size})" + if (label.isNotBlank()) " · $label" else "",
+                    style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)
+                )
+                Icon(if (linksExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = if (linksExpanded) "Plegar" else "Desplegar")
+            }
+        }
+        if (linksExpanded) sources.forEach { r ->
+            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(r.name, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text("${Lang.flag(r.lang)} ${Lang.label(r.lang)}  ·  ▲ ${r.seeders} seeders · ${Search.humanSize(r.sizeBytes)}", style = MaterialTheme.typography.labelSmall, color = Muted)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { onWatch(r.magnet, buildCtx()) }) { Text("▶ Ver") }
+                        OutlinedButton(onClick = { onDownload(r.magnet) }) { Text("⬇ Descargar") }
+                        if (RealDebrid.configured) {
+                            Button(
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF34D399)),
+                                onClick = {
+                                    rdStatus = "⚡ Preparando en Real-Debrid…"
+                                    RealDebrid.streamMagnet(r.magnet) { url, _, err, progress ->
+                                        onMain {
+                                            when {
+                                                url != null -> { rdStatus = ""; onPlayUrl(url, buildCtx()) }
+                                                progress != null -> rdStatus = "Real-Debrid preparando… ${progress}% (reintenta en un momento)"
+                                                else -> rdStatus = err ?: "Error de Real-Debrid"
+                                            }
+                                        }
+                                    }
+                                }
+                            ) { Text("⚡ Ver RD") }
+                            OutlinedButton(onClick = {
+                                rdStatus = "⚡ Preparando descarga con Real-Debrid…"
+                                RealDebrid.streamMagnet(r.magnet) { url, fname, err, progress ->
+                                    onMain {
+                                        when {
+                                            url != null -> {
+                                                RdDownloads.enqueue(ctx, url, fname ?: title.title)
+                                                onOpenDownloads()
+                                            }
+                                            progress != null -> rdStatus = "Real-Debrid preparando… ${progress}% (reintenta en un momento)"
+                                            else -> rdStatus = err ?: "Error de Real-Debrid"
+                                        }
+                                    }
+                                }
+                            }) { Text("⚡ Descargar RD") }
+                        }
+                    }
+                }
+            }
+        }
+        if (rdStatus.isNotBlank()) Text(rdStatus, color = Muted, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String, PlayCtx) -> Unit, onDownload: (String) -> Unit, onPlayUrl: (String, PlayCtx) -> Unit, onOpenDownloads: () -> Unit) {
     val ctx = LocalContext.current
     var detail by remember { mutableStateOf<Tmdb.Detail?>(null) }
     var sources by remember { mutableStateOf<List<Search.Result>>(emptyList()) }
     var status by remember { mutableStateOf("Cargando…") }
     var loadingSources by remember { mutableStateOf(false) }
-    var rdStatus by remember { mutableStateOf("") }
 
     // Series: temporada/episodio seleccionados y lista de episodios
     var selSeason by remember { mutableStateOf<Int?>(null) }
     var episodes by remember { mutableStateOf<List<Tmdb.Episode>>(emptyList()) }
     var sourcesLabel by remember { mutableStateOf("") }
-    var linksExpanded by remember { mutableStateOf(true) }
     var imdbId by remember { mutableStateOf<String?>(null) }
     var trailerKey by remember { mutableStateOf<String?>(null) }
     // temporada/episodio a los que corresponden las fuentes mostradas
     var ctxSeason by remember { mutableStateOf(-1) }
     var ctxEpisode by remember { mutableStateOf(-1) }
+    // qué bloque muestra sus enlaces: -1 nada, 0 temporada completa, >0 ese episodio
+    var expandedEpisode by remember { mutableStateOf(-1) }
 
     LaunchedEffect(title.tmdbId) {
         Tmdb.detail(title.type, title.tmdbId) { d, _ ->
@@ -828,18 +908,25 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String, PlayCt
                 Text("Temporadas", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     dt.seasons.forEach { s ->
-                        FilterChip(selected = selSeason == s.season, onClick = { selSeason = s.season },
+                        FilterChip(selected = selSeason == s.season, onClick = { selSeason = s.season; expandedEpisode = -1 },
                             label = { Text("T${s.season} · ${s.episodes} ep.") })
                     }
                 }
                 selSeason?.let { sn ->
                     OutlinedButton(
-                        onClick = { runSearch("${dt.originalTitle} " + "S%02d".format(sn), "${dt.title} · Temporada $sn completa") },
+                        onClick = {
+                            expandedEpisode = 0
+                            runSearch("${dt.originalTitle} " + "S%02d".format(sn), "${dt.title} · Temporada $sn completa", sn, null)
+                        },
                         enabled = !loadingSources, modifier = Modifier.fillMaxWidth()
                     ) { Text("Buscar temporada $sn completa") }
+                    if (expandedEpisode == 0) {
+                        SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onWatch, onDownload, onPlayUrl, onOpenDownloads)
+                    }
                     episodes.forEach { ep ->
                         Card(
                             Modifier.fillMaxWidth().clickable {
+                                expandedEpisode = ep.episode
                                 runSearch(Search.episodeQuery(dt.originalTitle, sn, ep.episode), "${dt.title} · T${sn}E${ep.episode} · ${ep.name}", sn, ep.episode)
                             },
                             colors = CardDefaults.cardColors(containerColor = Surface1)
@@ -847,85 +934,25 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String, PlayCt
                             Column(Modifier.padding(10.dp)) {
                                 val seen = WatchStore.isWatchedEpisode(title.tmdbId, sn, ep.episode)
                                 Text(
-                                    (if (seen) "✓ " else "") + "${ep.episode}. ${ep.name}",
+                                    (if (seen) "✓ " else "") + "${ep.episode}. ${ep.name}" + (if (expandedEpisode == ep.episode) "  ▾" else ""),
                                     style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
                                     color = if (seen) Color(0xFF34D399) else MaterialTheme.colorScheme.onSurface
                                 )
                                 if (ep.overview.isNotBlank()) Text(ep.overview, style = MaterialTheme.typography.labelSmall, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
                         }
-                    }
-                }
-            } else {
-                Button(onClick = { dt?.let { loadSources(it) } }, enabled = dt != null && !loadingSources, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (loadingSources) "Buscando fuentes…" else "Buscar fuentes")
-                }
-            }
-
-            if (loadingSources) Text("Buscando fuentes…", color = Muted, style = MaterialTheme.typography.bodySmall)
-            if (sources.isNotEmpty()) {
-                // Cabecera de la sección de enlaces: se puede plegar/desplegar
-                Row(
-                    Modifier.fillMaxWidth().clickable { linksExpanded = !linksExpanded },
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "Enlaces (${sources.size})" + if (sourcesLabel.isNotBlank()) " · $sourcesLabel" else "",
-                        style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Icon(
-                        if (linksExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = if (linksExpanded) "Plegar" else "Desplegar"
-                    )
-                }
-            }
-
-            if (linksExpanded) sources.forEach { r ->
-                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(r.name, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text("${Lang.flag(r.lang)} ${Lang.label(r.lang)}  ·  ▲ ${r.seeders} seeders · ${Search.humanSize(r.sizeBytes)}", style = MaterialTheme.typography.labelSmall, color = Muted)
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { onWatch(r.magnet, buildCtx()) }) { Text("▶ Ver") }
-                            OutlinedButton(onClick = { onDownload(r.magnet) }) { Text("⬇ Descargar") }
-                            if (RealDebrid.configured) {
-                                Button(
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF34D399)),
-                                    onClick = {
-                                        rdStatus = "⚡ Preparando en Real-Debrid…"
-                                        RealDebrid.streamMagnet(r.magnet) { url, _, err, progress ->
-                                            onMain {
-                                                when {
-                                                    url != null -> { rdStatus = ""; onPlayUrl(url, buildCtx()) }
-                                                    progress != null -> rdStatus = "Real-Debrid preparando… ${progress}% (reintenta en un momento)"
-                                                    else -> rdStatus = err ?: "Error de Real-Debrid"
-                                                }
-                                            }
-                                        }
-                                    }
-                                ) { Text("⚡ Ver RD") }
-                                OutlinedButton(onClick = {
-                                    rdStatus = "⚡ Preparando descarga con Real-Debrid…"
-                                    RealDebrid.streamMagnet(r.magnet) { url, fname, err, progress ->
-                                        onMain {
-                                            when {
-                                                url != null -> {
-                                                    RdDownloads.enqueue(ctx, url, fname ?: title.title)
-                                                    rdStatus = "Descargando con Real-Debrid… (mira la pestaña Descargas)"
-                                                }
-                                                progress != null -> rdStatus = "Real-Debrid preparando… ${progress}% (reintenta en un momento)"
-                                                else -> rdStatus = err ?: "Error de Real-Debrid"
-                                            }
-                                        }
-                                    }
-                                }) { Text("⚡ Descargar RD") }
-                            }
+                        // Enlaces JUSTO debajo del episodio seleccionado
+                        if (expandedEpisode == ep.episode) {
+                            SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onWatch, onDownload, onPlayUrl, onOpenDownloads)
                         }
                     }
                 }
+            } else {
+                Button(onClick = { expandedEpisode = -1; dt?.let { loadSources(it) } }, enabled = dt != null && !loadingSources, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (loadingSources) "Buscando fuentes…" else "Buscar fuentes")
+                }
+                SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onWatch, onDownload, onPlayUrl, onOpenDownloads)
             }
-            if (rdStatus.isNotBlank()) Text(rdStatus, color = Muted, style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(24.dp))
         }
     }
