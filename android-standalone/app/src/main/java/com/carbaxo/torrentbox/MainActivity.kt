@@ -557,9 +557,10 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
     var status by remember { mutableStateOf("") }
     var expanded by remember { mutableStateOf(true) }
     var page by remember { mutableStateOf(1) }
-    // Playlist categorizada (search-ace.stream): canales con categoría + país
+    // Canales de search-ace.stream (API JSON) por categoría + búsqueda
     var channels by remember { mutableStateOf<List<AceStream.Channel>>(emptyList()) }
-    var selCategory by remember { mutableStateOf<String?>(null) }
+    var apiCat by remember { mutableStateOf("") }          // slug de categoría seleccionada
+    var aceQuery by remember { mutableStateOf("") }        // texto de búsqueda en search-ace.stream
     var selCountry by remember { mutableStateOf<String?>(null) }
     var chFilter by remember { mutableStateOf("") }
     var loadingCh by remember { mutableStateOf(false) }
@@ -587,6 +588,19 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
                         else status = (rerr ?: "Reproducción integrada no disponible (requiere Premium).") + " Usa «Abrir en AceStream» (gratis)."
                     }
                 }
+            }
+        }
+    }
+
+    // Búsqueda por la API de search-ace.stream (por categoría y/o texto)
+    fun aceApiSearch(cat: String) {
+        apiCat = cat; selCountry = null; loadingCh = true
+        status = "Buscando en search-ace.stream…"
+        AceStream.searchAceApi(aceQuery.trim(), cat, 1) { list, err ->
+            onMain {
+                loadingCh = false
+                if (list == null) status = err ?: "Error"
+                else { channels = list; status = if (list.isEmpty()) "Sin resultados" else "${list.size} canales" }
             }
         }
     }
@@ -632,36 +646,24 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
                     OutlinedButton(onClick = { AceStream.openEngineInstall(ctx) }) { Text("Instalar Ace Stream Media") }
                 }
 
-                // ---- Canales por categoría y país (search-ace.stream) ----
+                // ---- search-ace.stream: categorías + búsqueda (API JSON) ----
                 HorizontalDivider(color = Muted.copy(alpha = 0.2f))
-                Text("Canales por categoría y país", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                Button(
-                    enabled = !loadingCh,
-                    onClick = {
-                        loadingCh = true; status = "Cargando canales…"
-                        AceStream.loadPlaylist { list, err ->
-                            onMain {
-                                loadingCh = false
-                                if (list == null) status = err ?: "Error"
-                                else {
-                                    channels = list; selCategory = null; selCountry = null
-                                    status = "${list.size} canales cargados"
-                                }
-                            }
-                        }
+                Text("Categorías (search-ace.stream)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                OutlinedTextField(
+                    value = aceQuery, onValueChange = { aceQuery = it },
+                    label = { Text("Buscar en search-ace.stream (opcional)") }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    AceStream.SEARCH_CATEGORIES.forEach { (slug, label) ->
+                        FilterChip(selected = apiCat == slug && channels.isNotEmpty(), onClick = { aceApiSearch(slug) }, label = { Text(label) })
                     }
-                ) { Text(if (loadingCh) "Cargando…" else if (channels.isEmpty()) "Cargar canales (deportes, cine, países…)" else "Recargar canales") }
+                }
+                if (loadingCh) Text("Buscando…", color = Muted, style = MaterialTheme.typography.bodySmall)
 
                 if (channels.isNotEmpty()) {
-                    val categories = remember(channels) { channels.map { it.category }.distinct().sorted() }
                     val countries = remember(channels) { channels.map { it.country }.distinct().sorted() }
-                    Text("Categoría", style = MaterialTheme.typography.labelMedium, color = Muted)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        FilterChip(selected = selCategory == null, onClick = { selCategory = null }, label = { Text("Todas") })
-                        categories.forEach { c ->
-                            FilterChip(selected = selCategory == c, onClick = { selCategory = if (selCategory == c) null else c }, label = { Text(c) })
-                        }
-                    }
                     Text("País", style = MaterialTheme.typography.labelMedium, color = Muted)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         FilterChip(selected = selCountry == null, onClick = { selCountry = null }, label = { Text("Todos") })
@@ -672,8 +674,7 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
                     OutlinedTextField(value = chFilter, onValueChange = { chFilter = it },
                         label = { Text("Filtrar canal…") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     val shownCh = channels.filter {
-                        (selCategory == null || it.category == selCategory) &&
-                            (selCountry == null || it.country == selCountry) &&
+                        (selCountry == null || it.country == selCountry) &&
                             (chFilter.isBlank() || it.name.contains(chFilter, ignoreCase = true))
                     }
                     Text("${shownCh.size} canales", style = MaterialTheme.typography.labelSmall, color = Muted)
