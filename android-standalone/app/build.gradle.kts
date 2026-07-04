@@ -84,6 +84,11 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.4.1")
     implementation("androidx.media3:media3-ui:1.4.1")
 
+    // Chromecast (CastPlayer + botón de ruta) — el diálogo de Cast necesita AppCompat
+    implementation("androidx.media3:media3-cast:1.4.1")
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.mediarouter:mediarouter:1.7.0")
+
     // Motor BitTorrent en el dispositivo (natives incluidos por ABI)
     implementation("org.libtorrent4j:libtorrent4j-android-arm64:2.1.0-31")
     implementation("org.libtorrent4j:libtorrent4j-android-arm:2.1.0-31")
