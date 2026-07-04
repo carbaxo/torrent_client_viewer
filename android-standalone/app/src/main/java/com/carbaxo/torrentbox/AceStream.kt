@@ -67,36 +67,12 @@ object AceStream {
         return runCatching { pm.resolveActivity(probe, 0) != null }.getOrDefault(false)
     }
 
-    // Conexión viva con el servicio del engine (mantenerla evita que Android lo mate)
-    private var engineConn: android.content.ServiceConnection? = null
-
     /**
-     * Arranca el engine EN SEGUNDO PLANO enlazando con su servicio oficial
-     * (org.acestream.engine.service.v0.IAceStreamEngine), sin abrir la app de
-     * AceStream ni robar el foco. Es lo que usa el SDK oficial.
-     */
-    private fun startEngineSilently(ctx: Context): Boolean {
-        val app = ctx.applicationContext
-        engineConn?.let { runCatching { app.unbindService(it) }; engineConn = null }
-        for (pkg in ENGINE_PACKAGES) {
-            val intent = Intent("org.acestream.engine.service.v0.IAceStreamEngine").setPackage(pkg)
-            val conn = object : android.content.ServiceConnection {
-                override fun onServiceConnected(name: android.content.ComponentName?, binder: android.os.IBinder?) {}
-                override fun onServiceDisconnected(name: android.content.ComponentName?) {}
-            }
-            val ok = runCatching { app.bindService(intent, conn, Context.BIND_AUTO_CREATE) }.getOrDefault(false)
-            if (ok) { engineConn = conn; return true }
-            runCatching { app.unbindService(conn) }
-        }
-        return false
-    }
-
-    /**
-     * Intenta arrancar el engine: primero en silencio (servicio, sin UI); solo
-     * si eso no es posible abre la app de AceStream como último recurso.
+     * Arranca la app de AceStream para que levante el engine. (El arranque
+     * "silencioso" vía su servicio hace que AceStream pida cuenta Premium,
+     * así que se abre la app normal y la nuestra vuelve al frente al resolver.)
      */
     fun startEngine(ctx: Context): Boolean {
-        if (startEngineSilently(ctx)) return true
         val pm = ctx.packageManager
         for (pkg in ENGINE_PACKAGES) {
             val launch = runCatching { pm.getLaunchIntentForPackage(pkg) }.getOrNull() ?: continue
@@ -201,61 +177,78 @@ object AceStream {
      * varios patrones habituales (👍/👎, clases like/dislike, iconos thumbs).
      */
     fun parseHtml(html: String): List<Result> {
-        val seen = LinkedHashMap<String, Result>()
-        // 1) enlaces acestream://<hash> con posible texto de anclaje
-        val anchor = Regex(
-            "(?:href|data-href|data-id|data-content-id)\\s*=\\s*[\"']?(?:acestream://)?([0-9a-fA-F]{40})[\"']?[^>]*>([^<]{0,120})",
-            RegexOption.IGNORE_CASE
-        )
-        for (m in anchor.findAll(html)) {
-            val id = m.groupValues[1].lowercase()
-            val label = cleanText(m.groupValues[2])
-            if (label.isNotBlank()) {
-                val (lk, dk) = nearbyVotes(html, m.range.first)
-                seen.putIfAbsent(id, Result(label, id, "", pageUrl(id), lk, dk))
-            }
-        }
-        // 2) cualquier content-id suelto: título = título de la etiqueta cercana
+        // El sitio lista tarjetas: NOMBRE del canal, debajo el content-id y
+        // debajo los pulgares 👎/👍 con su contador. Un MISMO id puede salir en
+        // varias tarjetas con nombres distintos (p.ej. "Sky Sport" y
+        // "Sky Sports F1"), así que NO se deduplica solo por id: se agrupan
+        // las apariciones cercanas (misma tarjeta) y se conserva una entrada
+        // por tarjeta con su nombre.
+        val out = ArrayList<Result>()
+        val lastPos = HashMap<String, Int>() // id -> última posición vista
         for (m in CONTENT_ID.findAll(html)) {
             val id = m.value.lowercase()
-            if (seen.containsKey(id)) continue
-            val label = nearbyTitle(html, m.range.first).ifBlank { "AceStream ${id.take(8)}…" }
-            val (lk, dk) = nearbyVotes(html, m.range.first)
-            seen.putIfAbsent(id, Result(label, id, "", pageUrl(id), lk, dk))
+            val at = m.range.first
+            val prev = lastPos[id]
+            lastPos[id] = at
+            // misma tarjeta (el id sale en el href y como texto): salta repetidos próximos
+            if (prev != null && at - prev < 500) continue
+            val label = nearbyTitle(html, at).ifBlank { "AceStream ${id.take(8)}…" }
+            val (lk, dk) = nearbyVotes(html, at)
+            if (out.none { it.contentId == id && it.name.equals(label, ignoreCase = true) })
+                out.add(Result(label, id, "", pageUrl(id), lk, dk))
         }
-        return seen.values.take(60)
+        return out.take(60)
     }
 
-    /** Busca hacia atrás/adelante un texto legible (title="..." o texto de etiqueta). */
+    // Textos que no son nombres de canal (cabeceras, tiempos, etc.)
+    private val BAD_TITLES = setOf("contentid", "content id", "channel", "name", "hrs", "days")
+    private val TIME_TEXT = Regex("^\\d+\\s*(hrs?|hours?|min(utos?)?|days?|d|h|m)$", RegexOption.IGNORE_CASE)
+    private val ONLY_PUNCT = Regex("^[\\d\\s.,:;%·|/()\\[\\]{}<>+-]*$")
+
+    /**
+     * Nombre del canal: el texto legible más cercano POR ENCIMA del id
+     * (en acestreamid.com el nombre va justo antes del content-id).
+     */
     private fun nearbyTitle(html: String, at: Int): String {
-        val from = (at - 200).coerceAtLeast(0)
-        val window = html.substring(from, (at + 40).coerceAtMost(html.length))
-        Regex("title\\s*=\\s*[\"']([^\"']{3,120})[\"']", RegexOption.IGNORE_CASE).find(window)?.let {
-            return cleanText(it.groupValues[1])
+        val from = (at - 700).coerceAtLeast(0)
+        val before = html.substring(from, at)
+        val cands = ArrayList<Pair<Int, String>>()
+        for (m in Regex("title\\s*=\\s*[\"']([^\"']{2,120})[\"']", RegexOption.IGNORE_CASE).findAll(before))
+            cands.add(m.range.first to m.groupValues[1])
+        for (m in Regex(">([^<>]{2,120})<").findAll(before))
+            cands.add(m.range.first to m.groupValues[1])
+        val good = cands.sortedBy { it.first }.map { cleanText(it.second) }.filter { t ->
+            t.length in 2..80 &&
+                !ONLY_PUNCT.matches(t) &&
+                !TIME_TEXT.matches(t) &&
+                t.lowercase() !in BAD_TITLES &&
+                !CONTENT_ID.containsMatchIn(t)
         }
-        // texto entre >...< inmediatamente anterior
-        Regex(">([^<>]{3,120})<[^>]*$").find(window)?.let { return cleanText(it.groupValues[1]) }
-        return ""
+        return good.lastOrNull() ?: ""
     }
 
-    // Patrones de votos: 👍 12 / 👎 3, class="like">12<, fa-thumbs-up ... 12, data-likes="12"…
+    // Patrones de votos: el icono del pulgar (emoji, clase thumbs-up/down,
+    // like/dislike) seguido —puede haber etiquetas por medio— de su contador.
     private val DISLIKES = Regex(
-        "(?:👎|thumbs?[-_ ]?down|dislikes?)[^0-9<]{0,40}>?\\s*(\\d{1,6})|data-dislikes?\\s*=\\s*[\"'](\\d{1,6})",
+        "(?:👎|thumbs?[-_ ]?(?:o[-_ ])?down|dislikes?)(?:[^0-9]{0,120}?)(\\d{1,6})|data-dislikes?\\s*=\\s*[\"'](\\d{1,6})",
         RegexOption.IGNORE_CASE
     )
     private val LIKES = Regex(
-        "(?:👍|thumbs?[-_ ]?up|(?<![Dd][Ii][Ss])likes?)[^0-9<]{0,40}>?\\s*(\\d{1,6})|data-likes?\\s*=\\s*[\"'](\\d{1,6})",
+        "(?:👍|thumbs?[-_ ]?(?:o[-_ ])?up|(?<![Dd][Ii][Ss])likes?)(?:[^0-9]{0,120}?)(\\d{1,6})|data-likes?\\s*=\\s*[\"'](\\d{1,6})",
         RegexOption.IGNORE_CASE
     )
 
-    /** Votos (likes, dislikes) cerca de la posición dada; -1 si no se encuentran. */
+    /**
+     * Votos (likes, dislikes) de la tarjeta: en acestreamid.com los pulgares
+     * van DESPUÉS del content-id. -1 si no se encuentran.
+     */
     private fun nearbyVotes(html: String, at: Int): Pair<Int, Int> {
-        val from = (at - 400).coerceAtLeast(0)
-        val to = (at + 600).coerceAtMost(html.length)
+        val from = (at - 100).coerceAtLeast(0)
+        val to = (at + 900).coerceAtMost(html.length)
         val window = html.substring(from, to)
         val dk = DISLIKES.find(window)?.let { m -> (m.groupValues[1].ifBlank { m.groupValues[2] }).toIntOrNull() } ?: -1
-        // Quita los "dislike" de la ventana para que LIKES no los cuente
-        val cleaned = window.replace(Regex("dislikes?", RegexOption.IGNORE_CASE), "")
+        // Quita los "dislike"/"down" de la ventana para que LIKES no los cuente
+        val cleaned = window.replace(Regex("dislikes?|thumbs?[-_ ]?(?:o[-_ ])?down|👎", RegexOption.IGNORE_CASE), "·")
         val lk = LIKES.find(cleaned)?.let { m -> (m.groupValues[1].ifBlank { m.groupValues[2] }).toIntOrNull() } ?: -1
         return lk to dk
     }
