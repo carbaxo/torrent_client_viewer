@@ -32,11 +32,14 @@ object AceStream {
         val pageUrl: String          // página en acestreamid.com (fallback)
     )
 
-    // Paquetes conocidos del AceStream Engine en Android
+    // Paquetes conocidos de AceStream en Android. "Ace Stream Media" de la
+    // tienda (org.acestream.media) YA incluye el engine — no hace falta otra app.
     private val ENGINE_PACKAGES = listOf(
         "org.acestream.media",
         "org.acestream.core",
-        "org.acestream.media.atv"
+        "org.acestream.node",
+        "org.acestream.media.atv",
+        "org.acestream.core.atv"
     )
     private const val ENGINE_HOST = "127.0.0.1"
     private const val ENGINE_PORT = 6878
@@ -48,15 +51,40 @@ object AceStream {
 
     private val CONTENT_ID = Regex("[0-9a-fA-F]{40}")
 
-    /** ¿Está instalado el AceStream Engine? (necesario para reproducir) */
+    /**
+     * ¿Hay alguna app de AceStream instalada? Comprueba paquetes conocidos
+     * (declarados en <queries> del manifest, obligatorio en Android 11+) y,
+     * por si es otra variante, si algo responde al esquema acestream://.
+     * Es solo orientativo: la reproducción intenta el engine igualmente.
+     */
     fun engineInstalled(ctx: Context): Boolean {
         val pm = ctx.packageManager
-        return ENGINE_PACKAGES.any { pkg ->
-            runCatching { pm.getPackageInfo(pkg, 0); true }.getOrDefault(false)
-        }
+        if (ENGINE_PACKAGES.any { pkg -> runCatching { pm.getPackageInfo(pkg, 0); true }.getOrDefault(false) })
+            return true
+        val probe = Intent(Intent.ACTION_VIEW, Uri.parse("acestream://0000000000000000000000000000000000000000"))
+        return runCatching { pm.resolveActivity(probe, 0) != null }.getOrDefault(false)
     }
 
-    /** Abre Google Play para instalar el engine (o la web si no hay Play). */
+    /** Intenta arrancar la app de AceStream instalada para que levante el engine local. */
+    fun startEngine(ctx: Context): Boolean {
+        val pm = ctx.packageManager
+        for (pkg in ENGINE_PACKAGES) {
+            val launch = runCatching { pm.getLaunchIntentForPackage(pkg) }.getOrNull() ?: continue
+            runCatching {
+                ctx.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return true
+            }
+        }
+        return false
+    }
+
+    /** Abre el contenido en la app AceStream instalada (acestream://) como alternativa. */
+    fun openExternal(ctx: Context, contentId: String): Boolean = runCatching {
+        ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("acestream://$contentId")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        true
+    }.getOrDefault(false)
+
+    /** Abre Google Play para instalar Ace Stream Media (o la web si no hay Play). */
     fun openEngineInstall(ctx: Context) {
         val pkg = ENGINE_PACKAGES.first()
         runCatching {
@@ -154,6 +182,56 @@ object AceStream {
 
     private fun cleanText(s: String): String =
         s.replace(Regex("&[a-zA-Z#0-9]+;"), " ").replace(Regex("\\s+"), " ").trim()
+
+    /**
+     * Comprueba si el engine local está corriendo con el comando oficial:
+     *   GET /webui/api/service?method=get_version  ->  { result: { version } }
+     * onResult(running, version).
+     */
+    fun engineRunning(onResult: (Boolean, String?) -> Unit) {
+        io.submit {
+            try {
+                val req = Request.Builder()
+                    .url("http://$ENGINE_HOST:$ENGINE_PORT/webui/api/service?method=get_version")
+                    .header("User-Agent", "TorrentBox").build()
+                client.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@submit onResult(false, null)
+                    val json = JSONObject(resp.body?.string() ?: "{}")
+                    val version = json.optJSONObject("result")?.optString("version")?.takeIf { it.isNotBlank() }
+                    onResult(version != null, version)
+                }
+            } catch (_: Throwable) {
+                onResult(false, null)
+            }
+        }
+    }
+
+    /**
+     * Se asegura de que el engine esté corriendo: lo comprueba (get_version),
+     * si no responde arranca la app de AceStream y reintenta hasta ~20 s.
+     * onStatus recibe mensajes de progreso; onResult(ok, error).
+     */
+    fun ensureEngine(ctx: Context, onStatus: (String) -> Unit, onResult: (Boolean, String?) -> Unit) {
+        engineRunning { ok, _ ->
+            if (ok) return@engineRunning onResult(true, null)
+            if (!engineInstalled(ctx)) {
+                return@engineRunning onResult(false, "No se encontró AceStream. Instala «Ace Stream Media» de la tienda.")
+            }
+            onStatus("Arrancando AceStream Engine…")
+            startEngine(ctx)
+            // Reintenta get_version hasta ~20 s mientras el engine arranca
+            fun retry(attempt: Int) {
+                if (attempt >= 10) return onResult(false, "El engine no respondió en el puerto 6878. Abre la app AceStream y vuelve a intentarlo.")
+                io.submit {
+                    Thread.sleep(2000)
+                    engineRunning { up, _ ->
+                        if (up) onResult(true, null) else retry(attempt + 1)
+                    }
+                }
+            }
+            retry(0)
+        }
+    }
 
     /**
      * Resuelve el content-id contra el engine local y devuelve el playback_url
