@@ -2,6 +2,7 @@ package com.carbaxo.torrentbox
 
 import android.Manifest
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -651,6 +652,7 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Uni
     var sourcesLabel by remember { mutableStateOf("") }
     var linksExpanded by remember { mutableStateOf(true) }
     var imdbId by remember { mutableStateOf<String?>(null) }
+    var trailerKey by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(title.tmdbId) {
         Tmdb.detail(title.type, title.tmdbId) { d, _ ->
@@ -660,6 +662,13 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Uni
             }
         }
         Tmdb.imdbId(title.type, title.tmdbId) { id -> onMain { imdbId = id } }
+        Tmdb.trailer(title.type, title.tmdbId) { k -> onMain { trailerKey = k } }
+    }
+
+    fun openTrailer(key: String) {
+        // Abre la app de YouTube; si no está, el navegador
+        runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("vnd.youtube:$key"))) }
+            .onFailure { runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=$key"))) } }
     }
 
     // Al cambiar de temporada, carga sus episodios
@@ -721,11 +730,17 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Uni
             if (dt != null && dt.overview.isNotBlank()) Text(dt.overview, style = MaterialTheme.typography.bodyMedium)
             if (status.isNotBlank()) Text(status, color = Muted, style = MaterialTheme.typography.bodySmall)
 
-            // Favorito (sincroniza con la cuenta)
-            if (Sync.enabled && Sync.email != null) {
-                val fid = "tmdb:${title.tmdbId}"
-                OutlinedButton(onClick = { Sync.toggleFavorite(title) }) {
-                    Text(if (Sync.isFav(fid)) "❤ En Mi lista" else "🤍 Añadir a Mi lista")
+            // Tráiler + favorito
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                trailerKey?.let { k ->
+                    Button(colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF87171)),
+                        onClick = { openTrailer(k) }) { Text("🎬 Tráiler") }
+                }
+                if (Sync.enabled && Sync.email != null) {
+                    val fid = "tmdb:${title.tmdbId}"
+                    OutlinedButton(onClick = { Sync.toggleFavorite(title) }) {
+                        Text(if (Sync.isFav(fid)) "❤ En Mi lista" else "🤍 Añadir a Mi lista")
+                    }
                 }
             }
 

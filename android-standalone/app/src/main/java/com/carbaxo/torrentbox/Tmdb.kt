@@ -193,6 +193,33 @@ object Tmdb {
         }
     }
 
+    /** Clave de YouTube del tráiler (o null). Prueba en el idioma preferido y
+     *  luego en inglés, priorizando Trailer oficial > Trailer > Teaser. */
+    fun trailer(type: String, tmdbId: Int, onResult: (String?) -> Unit) {
+        io.submit {
+            val tmdbType = if (type == "series") "tv" else "movie"
+            fun pick(d: JSONObject): String? {
+                val arr = d.optJSONArray("results") ?: return null
+                data class V(val key: String, val type: String, val official: Boolean)
+                val yt = ArrayList<V>()
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    if (o.optString("site") == "YouTube" && o.optString("key").isNotBlank())
+                        yt.add(V(o.optString("key"), o.optString("type"), o.optBoolean("official")))
+                }
+                return (yt.firstOrNull { it.type == "Trailer" && it.official }
+                    ?: yt.firstOrNull { it.type == "Trailer" }
+                    ?: yt.firstOrNull { it.type == "Teaser" }
+                    ?: yt.firstOrNull())?.key
+            }
+            try {
+                var key = pick(get("https://api.themoviedb.org/3/$tmdbType/$tmdbId/videos?api_key=${BuildConfig.TMDB_KEY}&language=${L()}"))
+                if (key == null) key = pick(get("https://api.themoviedb.org/3/$tmdbType/$tmdbId/videos?api_key=${BuildConfig.TMDB_KEY}"))
+                onResult(key)
+            } catch (_: Throwable) { onResult(null) }
+        }
+    }
+
     /** IMDb id (ttXXXXXXX) de un título, necesario para Torrentio. */
     fun imdbId(type: String, tmdbId: Int, onResult: (String?) -> Unit) {
         io.submit {
