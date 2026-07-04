@@ -590,13 +590,18 @@ fun RdDownloadCard(d: RdDownloads.Snap, onPlayUrl: () -> Unit, onRemove: () -> U
     Card(Modifier.fillMaxWidth().padding(vertical = 6.dp), colors = CardDefaults.cardColors(containerColor = Surface1)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(d.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            val prog = if (d.total > 0) d.bytes.toFloat() / d.total else 0f
-            LinearProgressIndicator(progress = { prog }, modifier = Modifier.fillMaxWidth())
+            val known = d.total > 0
+            val prog = if (known) (d.bytes.toFloat() / d.total).coerceIn(0f, 1f) else 0f
+            // Barra indeterminada mientras no se conoce el tamaño (arrancando)
+            if (d.done || known) LinearProgressIndicator(progress = { if (d.done) 1f else prog }, modifier = Modifier.fillMaxWidth())
+            else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             Text(
                 when {
                     d.failed -> "Error en la descarga"
-                    d.done -> "✓ Disponible sin conexión · ${Search.humanSize(d.total)}"
-                    else -> "${(prog * 100).toInt()}% · ${Search.humanSize(d.bytes)} / ${Search.humanSize(d.total)}"
+                    d.done -> "✓ Disponible sin conexión · ${Search.humanSize(if (known) d.total else d.bytes)}"
+                    known -> "${(prog * 100).toInt()}% · ${Search.humanSize(d.bytes)} / ${Search.humanSize(d.total)}"
+                    d.bytes > 0 -> "Descargando… ${Search.humanSize(d.bytes)}"
+                    else -> "En cola…"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = if (d.done) Color(0xFF34D399) else Muted
@@ -645,6 +650,7 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Uni
     var episodes by remember { mutableStateOf<List<Tmdb.Episode>>(emptyList()) }
     var sourcesLabel by remember { mutableStateOf("") }
     var linksExpanded by remember { mutableStateOf(true) }
+    var imdbId by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(title.tmdbId) {
         Tmdb.detail(title.type, title.tmdbId) { d, _ ->
@@ -653,6 +659,7 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Uni
                 if (d != null && d.type == "series" && d.seasons.isNotEmpty()) selSeason = d.seasons.first().season
             }
         }
+        Tmdb.imdbId(title.type, title.tmdbId) { id -> onMain { imdbId = id } }
     }
 
     // Al cambiar de temporada, carga sus episodios
@@ -662,15 +669,31 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Uni
         Tmdb.episodes(title.tmdbId, s) { list, _ -> onMain { episodes = list ?: emptyList() } }
     }
 
-    fun runSearch(query: String, label: String) {
+    // Busca fuentes en Torrentio (banderas de idioma) + Peerflix (apibay) a la
+    // vez, combina, deduplica por infoHash (gana más seeders) y ordena por el
+    // idioma preferido. La combinación se hace en el hilo principal (onMain).
+    fun runSearch(query: String, label: String, season: Int? = null, episode: Int? = null) {
         loadingSources = true; sources = emptyList(); sourcesLabel = label
-        Search.search(query) { list, err ->
-            onMain {
+        val id = imdbId
+        val useTorrentio = id != null && (title.type == "movie" || episode != null)
+        val acc = mutableListOf<Search.Result>()
+        var remaining = (if (useTorrentio) 1 else 0) + 1 // +1 = Peerflix (apibay)
+        var lastErr: String? = null
+        fun part(list: List<Search.Result>?, err: String?) = onMain {
+            if (list != null) acc.addAll(list) else lastErr = err
+            if (--remaining <= 0) {
+                val byHash = LinkedHashMap<String, Search.Result>()
+                for (r in acc) {
+                    val prev = byHash[r.infoHash]
+                    if (prev == null || r.seeders > prev.seeders) byHash[r.infoHash] = r
+                }
                 loadingSources = false
-                sources = Search.sortByLang(list ?: emptyList(), Prefs.languageOrder)
-                if (list == null) status = err ?: "Sin fuentes"
+                sources = Search.sortByLang(byHash.values.toList(), Prefs.languageOrder)
+                if (sources.isEmpty()) status = lastErr ?: "Sin fuentes"
             }
         }
+        if (useTorrentio) Torrentio.streams(title.type, id!!, season, episode) { l, e -> part(l, e) }
+        Search.search(query) { l, e -> part(l, e) }
     }
     fun loadSources(dt: Tmdb.Detail) = runSearch(dt.originalTitle, dt.title)
 
@@ -723,7 +746,7 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Uni
                     episodes.forEach { ep ->
                         Card(
                             Modifier.fillMaxWidth().clickable {
-                                runSearch(Search.episodeQuery(dt.originalTitle, sn, ep.episode), "${dt.title} · T${sn}E${ep.episode} · ${ep.name}")
+                                runSearch(Search.episodeQuery(dt.originalTitle, sn, ep.episode), "${dt.title} · T${sn}E${ep.episode} · ${ep.name}", sn, ep.episode)
                             },
                             colors = CardDefaults.cardColors(containerColor = Surface1)
                         ) {

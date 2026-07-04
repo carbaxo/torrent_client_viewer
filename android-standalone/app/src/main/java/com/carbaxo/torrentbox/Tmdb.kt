@@ -193,6 +193,18 @@ object Tmdb {
         }
     }
 
+    /** IMDb id (ttXXXXXXX) de un título, necesario para Torrentio. */
+    fun imdbId(type: String, tmdbId: Int, onResult: (String?) -> Unit) {
+        io.submit {
+            try {
+                val tmdbType = if (type == "series") "tv" else "movie"
+                val d = get("https://api.themoviedb.org/3/$tmdbType/$tmdbId/external_ids?api_key=${BuildConfig.TMDB_KEY}")
+                val id = d.optString("imdb_id", "")
+                onResult(if (id.startsWith("tt")) id else null)
+            } catch (_: Throwable) { onResult(null) }
+        }
+    }
+
     /** Episodios de una temporada de una serie. */
     fun episodes(tmdbId: Int, season: Int, onResult: (List<Episode>?, String?) -> Unit) {
         io.submit {

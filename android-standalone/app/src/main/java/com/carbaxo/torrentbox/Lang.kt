@@ -27,6 +27,28 @@ object Lang {
 
     fun byCode(code: String): Info? = ALL.firstOrNull { it.code == code }
 
+    // Banderas emoji (Torrentio las incluye en el título de cada fuente) -> código
+    private val FLAGS = mapOf(
+        "🇪🇸" to "es-ES",
+        "🇲🇽" to "es-LA", "🇦🇷" to "es-LA", "🇨🇴" to "es-LA", "🇨🇱" to "es-LA",
+        "🇵🇪" to "es-LA", "🇻🇪" to "es-LA", "🇺🇾" to "es-LA",
+        "🇺🇸" to "en", "🇬🇧" to "en"
+    )
+
+    /**
+     * Detecta idioma priorizando las BANDERAS del título (Torrentio) y, si no
+     * hay, cae a la detección por palabras clave. Si hay varias banderas
+     * distintas, es "multi".
+     */
+    fun detectFromTitle(title: String): String? {
+        val found = FLAGS.entries.filter { title.contains(it.key) }.map { it.value }.distinct()
+        return when {
+            found.size >= 2 -> "multi"
+            found.size == 1 -> found[0]
+            else -> detect(title)
+        }
+    }
+
     /** Mapea un idioma en formato TMDB (es-ES, en-US, es-MX) a nuestro código. */
     fun fromTmdb(tmdb: String?): String? = when (tmdb) {
         "es-ES" -> "es-ES"
