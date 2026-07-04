@@ -131,6 +131,7 @@ data class PlayCtx(
 private enum class Tab(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     DISCOVER("Descubrir", Icons.Filled.Explore),
     SEARCH("Buscar", Icons.Filled.Search),
+    TV("TV", Icons.Filled.LiveTv),
     DOWNLOADS("Descargas", Icons.Filled.Download),
     SETTINGS("Ajustes", Icons.Filled.Settings)
 }
@@ -215,7 +216,8 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) 
         Box(Modifier.padding(pad)) {
             when (tab) {
                 Tab.DISCOVER -> DiscoverScreen(catalogType, { catalogType = it }, onOpen = { detail = it })
-                Tab.SEARCH -> SearchScreen(onOpen = { detail = it }, onPlayUrl = onPlayUrl)
+                Tab.SEARCH -> SearchScreen(onOpen = { detail = it })
+                Tab.TV -> AceScreen(onPlayUrl)
                 Tab.DOWNLOADS -> DownloadsScreen(downloads, rdDownloads, { h -> onPlay(h, PlayCtx()) }, { u -> onPlayUrl(u, PlayCtx()) })
                 Tab.SETTINGS -> SettingsScreen()
             }
@@ -329,19 +331,6 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, onOpen: (Tmdb.Title) 
             if (Sync.enabled && Sync.email != null) {
                 Text("Sincronizado: ${Sync.email}", style = MaterialTheme.typography.labelSmall, color = Muted)
             }
-            // Mi lista (favoritos sincronizados con la cuenta)
-            if (Sync.favorites.isNotEmpty()) {
-                Spacer(Modifier.height(12.dp))
-                Text("Mi lista", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(8.dp))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(Sync.favorites.size) { i ->
-                        val f = Sync.favorites[i]
-                        val t = Tmdb.Title(f.tmdbId, f.title, f.title, f.year, f.poster, f.rating, f.type)
-                        PosterCard(t) { onOpen(t) }
-                    }
-                }
-            }
             Spacer(Modifier.height(12.dp))
             SingleChoiceSegmentedButtonRow {
                 SegmentedButton(selected = type == "movie", onClick = { onType("movie") },
@@ -352,6 +341,8 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, onOpen: (Tmdb.Title) 
             // Explorar por género
             if (Tmdb.hasKey) {
                 Spacer(Modifier.height(10.dp))
+                Text("Géneros", style = MaterialTheme.typography.labelMedium, color = Muted)
+                Spacer(Modifier.height(6.dp))
                 val genres = if (type == "movie") listOf(
                     28 to "Acción", 35 to "Comedia", 18 to "Drama", 27 to "Terror",
                     878 to "Ciencia ficción", 16 to "Animación", 53 to "Thriller",
@@ -385,6 +376,20 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, onOpen: (Tmdb.Title) 
                     items(cont.size) { i ->
                         val p = cont[i]
                         ContinueCard(p) { onOpen(Tmdb.Title(p.tmdbId, p.name, p.name, "", p.poster, 0.0, p.type)) }
+                    }
+                }
+            }
+        }
+        // Mi lista (favoritos sincronizados con la cuenta)
+        if (Sync.favorites.isNotEmpty()) item {
+            Column(Modifier.padding(vertical = 8.dp)) {
+                Text("Mi lista", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(Sync.favorites.size) { i ->
+                        val f = Sync.favorites[i]
+                        val t = Tmdb.Title(f.tmdbId, f.title, f.title, f.year, f.poster, f.rating, f.type)
+                        PosterCard(t) { onOpen(t) }
                     }
                 }
             }
@@ -469,7 +474,7 @@ fun BrowseScreen(provider: String, name: String, type: String, onOpen: (Tmdb.Tit
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SearchScreen(onOpen: (Tmdb.Title) -> Unit, onPlayUrl: (String, PlayCtx) -> Unit) {
+fun SearchScreen(onOpen: (Tmdb.Title) -> Unit) {
     var query by remember { mutableStateOf("") }
     var type by remember { mutableStateOf("movie") }
     var results by remember { mutableStateOf<List<Tmdb.Title>>(emptyList()) }
@@ -518,7 +523,21 @@ fun SearchScreen(onOpen: (Tmdb.Title) -> Unit, onPlayUrl: (String, PlayCtx) -> U
                 }
             }
         }
-        item { Spacer(Modifier.height(16.dp)); AceStreamPanel(onPlayUrl) }
+    }
+}
+
+/**
+ * Pestaña TV: AceStream a pantalla completa (canales en directo y eventos).
+ */
+@Composable
+fun AceScreen(onPlayUrl: (String, PlayCtx) -> Unit) {
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
+        item {
+            Text("TV en directo", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text("Canales y eventos vía AceStream (P2P)", style = MaterialTheme.typography.labelSmall, color = Muted)
+            Spacer(Modifier.height(10.dp))
+            AceStreamPanel(onPlayUrl)
+        }
     }
 }
 
@@ -535,7 +554,7 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
     var manual by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<AceStream.Result>>(emptyList()) }
     var status by remember { mutableStateOf("") }
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by remember { mutableStateOf(true) }
     var page by remember { mutableStateOf(1) }
 
     fun play(name: String, contentId: String) {
