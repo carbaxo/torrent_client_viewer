@@ -79,11 +79,22 @@ class MainActivity : ComponentActivity() {
                     AppScreen(
                         saveRoot = saveRoot,
                         initialMagnet = magnetFromIntent(intent),
-                        onPlay = { infoHash, c -> startActivity(playerIntent(c).putExtra("infoHash", infoHash)) },
-                        onPlayUrl = { url, c -> startActivity(playerIntent(c).putExtra("url", url)) }
+                        onPlay = { infoHash, c -> bringToFront(); startActivity(playerIntent(c).putExtra("infoHash", infoHash)) },
+                        onPlayUrl = { url, c -> bringToFront(); startActivity(playerIntent(c).putExtra("url", url)) }
                     )
                 }
             }
+        }
+    }
+
+    /**
+     * Vuelve a traer NUESTRA app al frente si otra (p.ej. AceStream, que se
+     * abre para arrancar su engine) se quedó por delante al llegar el stream.
+     */
+    private fun bringToFront() {
+        runCatching {
+            val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
+            am.appTasks.firstOrNull()?.moveToFront()
         }
     }
 
