@@ -190,7 +190,7 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) 
         Box(Modifier.padding(pad)) {
             when (tab) {
                 Tab.DISCOVER -> DiscoverScreen(catalogType, { catalogType = it }, onOpen = { detail = it })
-                Tab.SEARCH -> SearchScreen(onOpen = { detail = it })
+                Tab.SEARCH -> SearchScreen(onOpen = { detail = it }, onPlayUrl = onPlayUrl)
                 Tab.DOWNLOADS -> DownloadsScreen(downloads, rdDownloads, { h -> onPlay(h, PlayCtx()) }, { u -> onPlayUrl(u, PlayCtx()) })
                 Tab.SETTINGS -> SettingsScreen()
             }
@@ -407,7 +407,7 @@ fun BrowseScreen(provider: String, name: String, type: String, onOpen: (Tmdb.Tit
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SearchScreen(onOpen: (Tmdb.Title) -> Unit) {
+fun SearchScreen(onOpen: (Tmdb.Title) -> Unit, onPlayUrl: (String, PlayCtx) -> Unit) {
     var query by remember { mutableStateOf("") }
     var type by remember { mutableStateOf("movie") }
     var results by remember { mutableStateOf<List<Tmdb.Title>>(emptyList()) }
@@ -453,6 +453,106 @@ fun SearchScreen(onOpen: (Tmdb.Title) -> Unit) {
                     Text(results[i].title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(results[i].year + (if (results[i].rating > 0) "  ⭐ ${results[i].rating}" else ""),
                         style = MaterialTheme.typography.labelSmall, color = Muted)
+                }
+            }
+        }
+        item { Spacer(Modifier.height(16.dp)); AceStreamPanel(onPlayUrl) }
+    }
+}
+
+/**
+ * Panel de AceStream: busca en acestreamid.com (scraping), reproduce vía el
+ * AceStream Engine sin salir de la app, permite pegar un enlace a mano y abre
+ * la página del contenido como alternativa si el engine no resuelve.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
+    val ctx = LocalContext.current
+    var query by remember { mutableStateOf("") }
+    var manual by remember { mutableStateOf("") }
+    var results by remember { mutableStateOf<List<AceStream.Result>>(emptyList()) }
+    var status by remember { mutableStateOf("") }
+    var expanded by remember { mutableStateOf(false) }
+
+    fun play(name: String, contentId: String) {
+        if (!AceStream.engineInstalled(ctx)) {
+            status = "Necesitas el AceStream Engine instalado y abierto."
+            return
+        }
+        status = "⚡ Resolviendo en el engine…"
+        AceStream.resolve(contentId) { url, err ->
+            onMain {
+                if (url != null) { status = ""; onPlayUrl(url, PlayCtx(name = name)) }
+                else status = err ?: "No se pudo reproducir."
+            }
+        }
+    }
+
+    fun search() {
+        if (query.isBlank()) return
+        status = "Buscando en AceStream…"; results = emptyList()
+        AceStream.search(query.trim()) { list, err ->
+            onMain {
+                results = list ?: emptyList()
+                status = if (list == null) (err ?: "Error") else if (list.isEmpty()) (err ?: "Sin resultados") else "${list.size} canales/eventos"
+            }
+        }
+    }
+
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth().clickable { expanded = !expanded }, verticalAlignment = Alignment.CenterVertically) {
+                Text("📡 AceStream (canales y eventos)", style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, contentDescription = null)
+            }
+            if (expanded) {
+                if (!AceStream.engineInstalled(ctx)) {
+                    Text("Requiere la app AceStream Engine (gratis). La reproducción es P2P dentro de tu app.",
+                        style = MaterialTheme.typography.labelSmall, color = Muted)
+                    OutlinedButton(onClick = { AceStream.openEngineInstall(ctx) }) { Text("Instalar AceStream Engine") }
+                }
+                OutlinedTextField(
+                    value = query, onValueChange = { query = it },
+                    label = { Text("Buscar canal / evento…") }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Button(onClick = { search() }, enabled = query.isNotBlank()) { Text("Buscar en AceStream") }
+
+                // Enlace / content-id manual
+                OutlinedTextField(
+                    value = manual, onValueChange = { manual = it },
+                    label = { Text("O pega un enlace acestream:// o content-id") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        enabled = AceStream.extractContentId(manual) != null,
+                        onClick = {
+                            val id = AceStream.extractContentId(manual)
+                            if (id != null) play("AceStream", id) else status = "Enlace no válido."
+                        }
+                    ) { Text("▶ Reproducir enlace") }
+                    AceStream.extractContentId(manual)?.let { id ->
+                        OutlinedButton(onClick = { AceStream.openPage(ctx, id) }) { Text("Abrir página") }
+                    }
+                }
+
+                if (status.isNotBlank()) Text(status, color = Muted, style = MaterialTheme.typography.bodySmall)
+
+                results.forEach { r ->
+                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Bg)) {
+                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(r.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text(r.contentId.take(12) + "…", style = MaterialTheme.typography.labelSmall, color = Muted)
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = { play(r.name, r.contentId) }) { Text("▶ Reproducir") }
+                                OutlinedButton(onClick = { AceStream.openPage(ctx, r.pageUrl) }) { Text("Abrir página") }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -541,24 +641,50 @@ fun SettingsScreen() {
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Carpetas", fontWeight = FontWeight.Bold)
-                Text("En Android solo se puede descargar sin permisos en carpetas propias de la app (memoria interna o tarjeta SD).", color = Muted, style = MaterialTheme.typography.bodySmall)
+                var folderStatus by remember { mutableStateOf("") }
+                // Selector de carpeta del sistema (SAF). Convertimos el árbol elegido
+                // a una ruta real; si Android no deja escribir ahí sin permisos, avisamos.
+                val pickDownload = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+                    if (uri == null) return@rememberLauncherForActivityResult
+                    runCatching { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
+                    val path = Prefs.resolveTreeUri(uri)
+                    if (path != null) { Prefs.setDownloadDir(path); folderStatus = "Descargas → ${Prefs.shortLabel(path)}" }
+                    else folderStatus = "Android no permite escribir en esa carpeta sin permisos especiales. Elige otra o usa las de la app."
+                }
+                val pickBuffer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+                    if (uri == null) return@rememberLauncherForActivityResult
+                    runCatching { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
+                    val path = Prefs.resolveTreeUri(uri)
+                    if (path != null) { Prefs.setBufferDir(path); folderStatus = "Buffer → ${Prefs.shortLabel(path)}" }
+                    else folderStatus = "Android no permite escribir en esa carpeta sin permisos especiales. Elige otra o usa las de la app."
+                }
+
                 val vols = remember { Prefs.availableVolumes() }
-                fun volLabel(i: Int) = if (i == 0) "Memoria interna" else "Tarjeta SD / externa"
+                fun volLabel(i: Int) = if (i == 0) "Memoria interna (app)" else "Tarjeta SD / externa (app)"
+
                 Text("Descargas (permanente):", style = MaterialTheme.typography.labelMedium)
+                Text("Actual: ${Prefs.shortLabel(Prefs.downloadDir.value)}", style = MaterialTheme.typography.labelSmall, color = Muted)
                 vols.forEachIndexed { i, f ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = Prefs.downloadDir.value == f.absolutePath, onClick = { Prefs.setDownloadDir(f.absolutePath) })
+                        RadioButton(selected = Prefs.downloadDir.value == f.absolutePath, onClick = { Prefs.setDownloadDir(f.absolutePath); folderStatus = "" })
                         Text(volLabel(i), style = MaterialTheme.typography.bodySmall)
                     }
                 }
+                OutlinedButton(onClick = { pickDownload.launch(null) }) { Text("Elegir otra carpeta…") }
+
+                Spacer(Modifier.height(4.dp))
                 Text("Buffer (al pulsar “Ver”):", style = MaterialTheme.typography.labelMedium)
+                Text("Actual: ${Prefs.shortLabel(Prefs.bufferDir.value)}", style = MaterialTheme.typography.labelSmall, color = Muted)
                 vols.forEachIndexed { i, f ->
                     val bf = File(f.parentFile, "buffer")
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = Prefs.bufferDir.value == bf.absolutePath, onClick = { Prefs.setBufferDir(bf.absolutePath) })
+                        RadioButton(selected = Prefs.bufferDir.value == bf.absolutePath, onClick = { Prefs.setBufferDir(bf.absolutePath); folderStatus = "" })
                         Text(volLabel(i), style = MaterialTheme.typography.bodySmall)
                     }
                 }
+                OutlinedButton(onClick = { pickBuffer.launch(null) }) { Text("Elegir otra carpeta…") }
+
+                if (folderStatus.isNotBlank()) Text(folderStatus, color = Muted, style = MaterialTheme.typography.bodySmall)
             }
         }
 
