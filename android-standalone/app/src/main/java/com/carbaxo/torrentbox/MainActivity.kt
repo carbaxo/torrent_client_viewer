@@ -557,21 +557,27 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
     var expanded by remember { mutableStateOf(true) }
     var page by remember { mutableStateOf(1) }
 
-    fun play(name: String, contentId: String) {
-        // No bloqueamos por la comprobación de paquete: comprobamos el engine
-        // de verdad (get_version en el puerto 6878) y lo arrancamos si hace falta.
+    // Reproducir GRATIS: se lo pasamos a la app de AceStream (su propio reproductor).
+    fun openInAce(contentId: String) {
+        if (!AceStream.openExternal(ctx, contentId))
+            status = "No hay ninguna app que abra enlaces acestream://. Instala «Ace Stream Media»."
+    }
+
+    // Reproducir DENTRO de TorrentBox: requiere AceStream Premium (el motor gratis
+    // bloquea la reproducción en reproductores externos como el nuestro).
+    fun playInApp(name: String, contentId: String) {
         status = "Comprobando AceStream Engine…"
         AceStream.ensureEngine(ctx, onStatus = { s -> onMain { status = s } }) { ok, err ->
             onMain {
                 if (!ok) {
-                    status = (err ?: "Engine no disponible") + " También puedes usar «Abrir en AceStream»."
+                    status = (err ?: "Engine no disponible") + " Usa «Abrir en AceStream» (gratis)."
                     return@onMain
                 }
                 status = "⚡ Resolviendo en el engine…"
                 AceStream.resolve(contentId) { url, rerr ->
                     onMain {
                         if (url != null) { status = ""; onPlayUrl(url, PlayCtx(name = name)) }
-                        else status = (rerr ?: "No se pudo reproducir.") + " Prueba «Abrir en AceStream»."
+                        else status = (rerr ?: "Reproducción integrada no disponible (requiere Premium).") + " Usa «Abrir en AceStream» (gratis)."
                     }
                 }
             }
@@ -607,10 +613,12 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
                         items(Prefs.aceFavs.size) { i ->
                             val parts = Prefs.aceFavs[i].split("|", limit = 2)
                             val fid = parts[0]; val fname = parts.getOrElse(1) { "Canal" }
-                            AssistChip(onClick = { play(fname, fid) }, label = { Text("▶ $fname") })
+                            AssistChip(onClick = { openInAce(fid) }, label = { Text("▶ $fname") })
                         }
                     }
                 }
+                Text("Al pulsar ▶ se abre en la app de AceStream (gratis). La reproducción dentro de TorrentBox requiere AceStream Premium.",
+                    style = MaterialTheme.typography.labelSmall, color = Muted)
                 if (!AceStream.engineInstalled(ctx)) {
                     Text("Requiere la app «Ace Stream Media» (gratis) — esa app YA incluye el engine. La reproducción es P2P dentro de tu app.",
                         style = MaterialTheme.typography.labelSmall, color = Muted)
@@ -637,13 +645,11 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
                         enabled = AceStream.extractContentId(manual) != null,
                         onClick = {
                             val id = AceStream.extractContentId(manual)
-                            if (id != null) play("AceStream", id) else status = "Enlace no válido."
+                            if (id != null) openInAce(id) else status = "Enlace no válido."
                         }
                     ) { Text("▶ Reproducir enlace") }
                     AceStream.extractContentId(manual)?.let { id ->
-                        OutlinedButton(onClick = {
-                            if (!AceStream.openExternal(ctx, id)) status = "No hay app que abra acestream://"
-                        }) { Text("Abrir en AceStream") }
+                        OutlinedButton(onClick = { playInApp("AceStream", id) }) { Text("Aquí (Premium)") }
                         OutlinedButton(onClick = { AceStream.openPage(ctx, id) }) { Text("Abrir página") }
                     }
                 }
@@ -668,11 +674,9 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
                                 "👍 ${r.likes.coerceAtLeast(0)} · 👎 ${r.dislikes.coerceAtLeast(0)} · " else ""
                             Text(votes + r.contentId.take(12) + "…", style = MaterialTheme.typography.labelSmall, color = Muted)
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = { play(r.name, r.contentId) }) { Text("▶ Reproducir") }
-                                OutlinedButton(onClick = {
-                                    if (!AceStream.openExternal(ctx, r.contentId)) status = "No hay app que abra acestream://"
-                                }) { Text("Abrir en AceStream") }
-                                OutlinedButton(onClick = { AceStream.openPage(ctx, r.pageUrl) }) { Text("Abrir página") }
+                                Button(onClick = { openInAce(r.contentId) }) { Text("▶ Reproducir") }
+                                OutlinedButton(onClick = { playInApp(r.name, r.contentId) }) { Text("Aquí (Premium)") }
+                                OutlinedButton(onClick = { AceStream.openPage(ctx, r.pageUrl) }) { Text("Página") }
                             }
                         }
                     }
