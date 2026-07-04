@@ -474,6 +474,7 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
     var results by remember { mutableStateOf<List<AceStream.Result>>(emptyList()) }
     var status by remember { mutableStateOf("") }
     var expanded by remember { mutableStateOf(false) }
+    var page by remember { mutableStateOf(1) }
 
     fun play(name: String, contentId: String) {
         // No bloqueamos por la comprobación de paquete: comprobamos el engine
@@ -496,13 +497,16 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
         }
     }
 
-    fun search() {
-        if (query.isBlank()) return
-        status = "Buscando en AceStream…"; results = emptyList()
-        AceStream.search(query.trim()) { list, err ->
+    // Con query vacía lista TODO el directorio; p es la "hoja" (página) pedida
+    fun load(p: Int) {
+        status = if (query.isBlank()) "Cargando directorio (página $p)…" else "Buscando en AceStream…"
+        AceStream.search(query.trim(), p) { list, err ->
             onMain {
-                results = list ?: emptyList()
-                status = if (list == null) (err ?: "Error") else if (list.isEmpty()) (err ?: "Sin resultados") else "${list.size} canales/eventos"
+                when {
+                    list == null -> status = err ?: "Error"
+                    list.isEmpty() -> status = err ?: "Sin resultados"
+                    else -> { results = list; page = p; status = "${list.size} canales/eventos · página $p" }
+                }
             }
         }
     }
@@ -522,11 +526,13 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
                 }
                 OutlinedTextField(
                     value = query, onValueChange = { query = it },
-                    label = { Text("Buscar canal / evento…") }, singleLine = true,
+                    label = { Text("Buscar canal / evento… (vacío = ver todos)") }, singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     modifier = Modifier.fillMaxWidth()
                 )
-                Button(onClick = { search() }, enabled = query.isNotBlank()) { Text("Buscar en AceStream") }
+                Button(onClick = { results = emptyList(); load(1) }) {
+                    Text(if (query.isBlank()) "Ver todos los enlaces" else "Buscar en AceStream")
+                }
 
                 // Enlace / content-id manual
                 OutlinedTextField(
@@ -556,7 +562,9 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
                     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Bg)) {
                         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(r.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Text(r.contentId.take(12) + "…", style = MaterialTheme.typography.labelSmall, color = Muted)
+                            val votes = if (r.likes >= 0 || r.dislikes >= 0)
+                                "👍 ${r.likes.coerceAtLeast(0)} · 👎 ${r.dislikes.coerceAtLeast(0)} · " else ""
+                            Text(votes + r.contentId.take(12) + "…", style = MaterialTheme.typography.labelSmall, color = Muted)
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Button(onClick = { play(r.name, r.contentId) }) { Text("▶ Reproducir") }
                                 OutlinedButton(onClick = {
@@ -565,6 +573,14 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
                                 OutlinedButton(onClick = { AceStream.openPage(ctx, r.pageUrl) }) { Text("Abrir página") }
                             }
                         }
+                    }
+                }
+                // Hojas (paginación) del directorio / búsqueda
+                if (results.isNotEmpty() || page > 1) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedButton(onClick = { load(page - 1) }, enabled = page > 1) { Text("◀ Anterior") }
+                        Text("Página $page", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = Muted)
+                        OutlinedButton(onClick = { load(page + 1) }, enabled = results.isNotEmpty()) { Text("Siguiente ▶") }
                     }
                 }
             }
