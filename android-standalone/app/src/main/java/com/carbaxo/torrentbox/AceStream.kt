@@ -37,9 +37,11 @@ object AceStream {
     /** Canal de la playlist categorizado por categoría (deportes, cine…) y país. */
     data class Channel(
         val name: String,
-        val contentId: String,
+        val contentId: String,   // hash de 40 hex (content_id o infohash)
         val category: String,
-        val country: String
+        val country: String,
+        val rawUrl: String = "", // URL original de la playlist (tal cual)
+        val isInfohash: Boolean = false
     )
 
     // Playlist pública con muchos canales AceStream (search-ace.stream)
@@ -135,7 +137,8 @@ object AceStream {
                 val id = extractContentId(line)
                 if (id != null) {
                     if (name.isBlank()) name = "AceStream ${id.take(8)}…"
-                    out.add(Channel(name, id, categoryLabel(category), detectCountry(name)))
+                    val infohash = line.contains("infohash", ignoreCase = true)
+                    out.add(Channel(name, id, categoryLabel(category), detectCountry(name), line, infohash))
                 }
                 name = ""; category = "General"
             }
@@ -191,6 +194,24 @@ object AceStream {
             }
         }
         return false
+    }
+
+    /**
+     * Abre un canal de la playlist en la app AceStream. Respeta el tipo del
+     * enlace original: content_id -> acestream://<id>; infohash -> se pasa el
+     * infohash a la app (que sabe resolverlo); si la playlist ya trae un
+     * acestream:// lo usamos verbatim (evita reconstrucciones erróneas).
+     */
+    fun openChannel(ctx: Context, ch: Channel): Boolean {
+        val uri = when {
+            ch.rawUrl.startsWith("acestream://", true) -> ch.rawUrl.trim()
+            ch.isInfohash -> "acestream://infohash/${ch.contentId}"
+            else -> "acestream://${ch.contentId}"
+        }
+        return runCatching {
+            ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            true
+        }.getOrDefault(false)
     }
 
     /** Abre el contenido en la app AceStream instalada (acestream://) como alternativa. */
