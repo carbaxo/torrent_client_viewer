@@ -21,6 +21,11 @@ object Prefs {
     val languageOrder = mutableStateListOf<String>()
     var downloadDir = mutableStateOf<String?>(null)
     var bufferDir = mutableStateOf<String?>(null)
+    var downLimitKB = mutableStateOf(0)      // 0 = sin límite
+    var upLimitKB = mutableStateOf(0)
+    var autoCleanBuffer = mutableStateOf(true)
+    // Canales AceStream favoritos, "contentId|nombre"
+    val aceFavs = mutableStateListOf<String>()
 
     fun init(ctx: Context) {
         appCtx = ctx.applicationContext
@@ -31,6 +36,11 @@ object Prefs {
         languageOrder.clear(); languageOrder.addAll(order)
         downloadDir.value = sp.getString("downloadDir", null) ?: defaultDownloadDir().absolutePath
         bufferDir.value = sp.getString("bufferDir", null) ?: defaultBufferDir().absolutePath
+        downLimitKB.value = sp.getInt("downLimitKB", 0)
+        upLimitKB.value = sp.getInt("upLimitKB", 0)
+        autoCleanBuffer.value = sp.getBoolean("autoCleanBuffer", true)
+        aceFavs.clear()
+        sp.getString("aceFavs", null)?.split("\n")?.filter { it.contains("|") }?.let { aceFavs.addAll(it) }
     }
 
     private fun sp() = appCtx.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -66,6 +76,27 @@ object Prefs {
         File(path).mkdirs()
         bufferDir.value = path
         sp().edit().putString("bufferDir", path).apply()
+    }
+
+    fun setLimits(downKB: Int, upKB: Int) {
+        downLimitKB.value = downKB.coerceAtLeast(0)
+        upLimitKB.value = upKB.coerceAtLeast(0)
+        sp().edit().putInt("downLimitKB", downLimitKB.value).putInt("upLimitKB", upLimitKB.value).apply()
+        TorrentEngine.setLimits(downLimitKB.value, upLimitKB.value)
+    }
+
+    fun setAutoCleanBuffer(v: Boolean) {
+        autoCleanBuffer.value = v
+        sp().edit().putBoolean("autoCleanBuffer", v).apply()
+    }
+
+    // --- Favoritos de AceStream ---
+    fun aceFavKey(id: String, name: String) = "$id|$name"
+    fun isAceFav(id: String) = aceFavs.any { it.startsWith("$id|") }
+    fun toggleAceFav(id: String, name: String) {
+        if (isAceFav(id)) aceFavs.removeAll { it.startsWith("$id|") }
+        else aceFavs.add(0, aceFavKey(id, name))
+        sp().edit().putString("aceFavs", aceFavs.joinToString("\n")).apply()
     }
 
     fun downloadDirFile(): File = File(downloadDir.value ?: defaultDownloadDir().absolutePath).apply { mkdirs() }

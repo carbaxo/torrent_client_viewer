@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Volver al frente tras abrir AceStream para arrancar su engine -->
     <uses-permission android:name="android.permission.REORDER_TASKS" />
+    <!-- Auto-actualización: instalar el APK nuevo descargado de GitHub -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Android 11+: sin esto la app no puede "ver" si AceStream está instalado -->
     <queries>
@@ -62,6 +64,17 @@
             android:name=".DownloadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- Servir el APK descargado al instalador del sistema (auto-actualización) -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
     </application>
 </manifest>

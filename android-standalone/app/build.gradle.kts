@@ -5,6 +5,9 @@ plugins {
     id("com.google.gms.google-services")
 }
 
+// Número de build de CI (GitHub Actions) para versionar y auto-actualizar
+val ciBuild: Int = (System.getenv("GITHUB_RUN_NUMBER") ?: "").toIntOrNull() ?: 0
+
 android {
     namespace = "com.carbaxo.torrentbox"
     compileSdk = 34
@@ -13,8 +16,10 @@ android {
         applicationId = "com.carbaxo.torrentbox"
         minSdk = 24
         targetSdk = 34
-        versionCode = 2
-        versionName = "2.0"
+        versionCode = if (ciBuild > 0) 1000 + ciBuild else 2
+        versionName = if (ciBuild > 0) "2.$ciBuild" else "2.0-dev"
+        // Con qué build de CI se compiló (0 = local); la app lo compara con la Release
+        buildConfigField("int", "CI_BUILD", "$ciBuild")
         // Clave TMDB inyectada desde un secreto de CI (-PTMDB_KEY=...)
         buildConfigField("String", "TMDB_KEY", "\"${project.findProperty("TMDB_KEY") ?: ""}\"")
         // ID de cliente web de Google (para el login con Google, milestone sync)
