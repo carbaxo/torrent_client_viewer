@@ -51,11 +51,14 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         saveRoot = File(getExternalFilesDir(null) ?: filesDir, "torrents").apply { mkdirs() }
 
+        Prefs.init(this)
         TorrentEngine.start()
         DownloadService.start(this)
         StreamServer.ensureStarted()
-        Sync.init(this)
         RealDebrid.init(this)
+        // El token de Real-Debrid guardado en la nube (cuenta) se adopta aquí
+        Sync.onRdToken = { t -> RealDebrid.adoptToken(t) }
+        Sync.init(this)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
@@ -106,27 +109,31 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String) -> Unit, 
     var pendingPlay by remember { mutableStateOf<String?>(null) }
     val ctx = LocalContext.current
 
-    // Refresco de descargas (torrent + Real-Debrid) + auto-reproducción
+    // Refresco de descargas (torrent + Real-Debrid) + auto-reproducción.
+    // El trabajo bloqueante (JNI/DownloadManager) va en IO; el estado se
+    // actualiza al volver al hilo principal (fin de withContext).
     LaunchedEffect(Unit) {
         while (true) {
-            val snaps = TorrentEngine.snapshots()
-            val rd = try { RdDownloads.snapshots(ctx) } catch (_: Throwable) { emptyList() }
-            onMain {
-                downloads.clear(); downloads.addAll(snaps)
-                rdDownloads.clear(); rdDownloads.addAll(rd)
-                val p = pendingPlay
-                if (p != null) {
-                    val s = snaps.find { it.infoHash == p && it.hasVideo }
-                    if (s != null) { pendingPlay = null; onPlay(p) }
-                }
+            val snaps = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { TorrentEngine.snapshots() }
+            val rd = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try { RdDownloads.snapshots(ctx) } catch (_: Throwable) { emptyList() }
+            }
+            downloads.clear(); downloads.addAll(snaps)
+            rdDownloads.clear(); rdDownloads.addAll(rd)
+            val p = pendingPlay
+            if (p != null) {
+                val s = snaps.find { it.infoHash == p && it.hasVideo }
+                if (s != null) { pendingPlay = null; onPlay(p) }
             }
             kotlinx.coroutines.delay(1000)
         }
     }
 
+    // buffer=true (Ver) descarga a la carpeta temporal; false (Descargar) a la permanente
     fun addMagnet(m: String, autoplay: Boolean) {
         if (m.isBlank()) return
-        TorrentEngine.addMagnet(m.trim(), saveRoot) { d, _ ->
+        val dir = if (autoplay) Prefs.bufferDirFile() else Prefs.downloadDirFile()
+        TorrentEngine.addMagnet(m.trim(), dir) { d, _ ->
             if (autoplay && d != null) onMain { pendingPlay = d.infoHash }
         }
     }
@@ -323,6 +330,7 @@ fun SearchScreen(onOpen: (Tmdb.Title) -> Unit) {
 
 @Composable
 fun SettingsScreen() {
+    val ctx = LocalContext.current
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
         Sync.onSignInResult(res.data) { _, _ -> }
     }
@@ -332,18 +340,93 @@ fun SettingsScreen() {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("Ajustes", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
 
-        // --- Cuenta (Google / sincronización) ---
+        // --- Cuenta (Google / sincronización) + selección de perfil ---
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Cuenta", fontWeight = FontWeight.Bold)
                 if (!Sync.enabled) {
                     Text("El login con Google no está disponible en esta compilación.", color = Muted, style = MaterialTheme.typography.bodySmall)
                 } else if (Sync.email == null) {
-                    Text("Inicia sesión para sincronizar tu lista con la app del PC.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("Inicia sesión con tu cuenta de Google para ver tus perfiles, favoritos y ajustes de la app del PC.", color = Muted, style = MaterialTheme.typography.bodySmall)
                     Button(onClick = { Sync.signInIntent()?.let { launcher.launch(it) } }) { Text("Entrar con Google") }
                 } else {
                     Text("👤 ${Sync.email}", style = MaterialTheme.typography.bodyMedium)
+                    if (Sync.loading) Text("Sincronizando…", color = Muted, style = MaterialTheme.typography.labelSmall)
+                    if (Sync.profiles.isNotEmpty()) {
+                        Text("Perfil", style = MaterialTheme.typography.labelMedium, color = Muted)
+                        FlowRowSimple {
+                            Sync.profiles.forEach { p ->
+                                val active = Sync.activeProfile?.id == p.id
+                                FilterChip(
+                                    selected = active,
+                                    onClick = { Sync.selectProfile(p.id) },
+                                    label = { Text("${p.avatar} ${p.name}${if (p.kids) " 🧒" else ""}") }
+                                )
+                            }
+                        }
+                    } else if (!Sync.loading) {
+                        Text("No hay perfiles en la nube todavía. Crea uno en la app del PC.", color = Muted, style = MaterialTheme.typography.labelSmall)
+                    }
                     OutlinedButton(onClick = { Sync.signOut() }) { Text("Cerrar sesión") }
+                }
+            }
+        }
+
+        // --- Idiomas (filtro y orden de preferencia) ---
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Idiomas", fontWeight = FontWeight.Bold)
+                Text("Orden de preferencia: al buscar, las fuentes salen primero en el idioma de arriba.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                val order = Prefs.languageOrder
+                order.forEachIndexed { i, code ->
+                    val info = Lang.byCode(code)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("${i + 1}. ${info?.flag ?: "🏳️"}  ${info?.label ?: code}", modifier = Modifier.weight(1f))
+                        IconButton(onClick = {
+                            if (i > 0) { val l = order.toMutableList(); l.add(i - 1, l.removeAt(i)); Prefs.setLanguageOrder(l) }
+                        }, enabled = i > 0) { Icon(Icons.Filled.KeyboardArrowUp, "Subir") }
+                        IconButton(onClick = {
+                            if (i < order.size - 1) { val l = order.toMutableList(); l.add(i + 1, l.removeAt(i)); Prefs.setLanguageOrder(l) }
+                        }, enabled = i < order.size - 1) { Icon(Icons.Filled.KeyboardArrowDown, "Bajar") }
+                        IconButton(onClick = {
+                            if (order.size > 1) Prefs.setLanguageOrder(order.filter { it != code })
+                        }, enabled = order.size > 1) { Icon(Icons.Filled.Close, "Quitar") }
+                    }
+                }
+                val notAdded = Lang.ALL.filter { it.code !in order }
+                if (notAdded.isNotEmpty()) {
+                    Text("Añadir:", style = MaterialTheme.typography.labelMedium, color = Muted)
+                    FlowRowSimple {
+                        notAdded.forEach { info ->
+                            AssistChip(onClick = { Prefs.setLanguageOrder(order + info.code) },
+                                label = { Text("${info.flag} ${info.label}") })
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Carpetas de descarga ---
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Carpetas", fontWeight = FontWeight.Bold)
+                Text("En Android solo se puede descargar sin permisos en carpetas propias de la app (memoria interna o tarjeta SD).", color = Muted, style = MaterialTheme.typography.bodySmall)
+                val vols = remember { Prefs.availableVolumes() }
+                fun volLabel(i: Int) = if (i == 0) "Memoria interna" else "Tarjeta SD / externa"
+                Text("Descargas (permanente):", style = MaterialTheme.typography.labelMedium)
+                vols.forEachIndexed { i, f ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = Prefs.downloadDir.value == f.absolutePath, onClick = { Prefs.setDownloadDir(f.absolutePath) })
+                        Text(volLabel(i), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Text("Buffer (al pulsar “Ver”):", style = MaterialTheme.typography.labelMedium)
+                vols.forEachIndexed { i, f ->
+                    val bf = File(f.parentFile, "buffer")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = Prefs.bufferDir.value == bf.absolutePath, onClick = { Prefs.setBufferDir(bf.absolutePath) })
+                        Text(volLabel(i), style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
         }
@@ -356,19 +439,49 @@ fun SettingsScreen() {
                     Text("⚡ Conectado${RealDebrid.account?.let { " · $it" } ?: ""}", color = Color(0xFF34D399), style = MaterialTheme.typography.bodyMedium)
                     OutlinedButton(onClick = { RealDebrid.disconnect() }) { Text("Desconectar") }
                 } else {
-                    Text("Pega tu token para reproducir por streaming directo (sin descargar en el móvil).", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("Pega tu token para reproducir por streaming directo (sin descargar en el móvil). Se comparte con tu cuenta si has entrado con Google.", color = Muted, style = MaterialTheme.typography.bodySmall)
                     OutlinedTextField(value = rdInput, onValueChange = { rdInput = it }, label = { Text("Token de Real-Debrid") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Button(onClick = {
                         rdStatus = "Validando…"
-                        RealDebrid.connect(rdInput) { ok, msg -> onMain { rdStatus = if (ok) "Conectado como $msg" else (msg ?: "Error") } }
+                        val tk = rdInput.trim()
+                        RealDebrid.connect(tk) { ok, msg ->
+                            onMain {
+                                rdStatus = if (ok) "Conectado como $msg" else (msg ?: "Error")
+                                if (ok && Sync.email != null) Sync.saveAccountRdToken(tk)
+                            }
+                        }
                     }, enabled = rdInput.isNotBlank()) { Text("Conectar") }
                     Text("Consíguelo en real-debrid.com/apitoken", color = Muted, style = MaterialTheme.typography.labelSmall)
                 }
                 if (rdStatus.isNotBlank()) Text(rdStatus, color = Muted, style = MaterialTheme.typography.bodySmall)
             }
         }
+
+        // --- Salir ---
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Aplicación", fontWeight = FontWeight.Bold)
+                Button(
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF87171)),
+                    onClick = {
+                        runCatching { TorrentEngine.stop() }
+                        runCatching { StreamServer.stop() }
+                        runCatching { ctx.stopService(Intent(ctx, DownloadService::class.java)) }
+                        (ctx as? android.app.Activity)?.finishAffinity()
+                        kotlin.system.exitProcess(0)
+                    }
+                ) { Text("Salir y cerrar la app") }
+            }
+        }
         Spacer(Modifier.height(24.dp))
     }
+}
+
+// FlowRow simple (evita depender de la API experimental en algunos sitios)
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun FlowRowSimple(content: @Composable () -> Unit) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { content() }
 }
 
 @Composable
@@ -451,16 +564,38 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Uni
     var loadingSources by remember { mutableStateOf(false) }
     var rdStatus by remember { mutableStateOf("") }
 
-    LaunchedEffect(title.tmdbId) {
-        Tmdb.detail(title.type, title.tmdbId) { d, _ -> onMain { detail = d; status = "" } }
-    }
+    // Series: temporada/episodio seleccionados y lista de episodios
+    var selSeason by remember { mutableStateOf<Int?>(null) }
+    var episodes by remember { mutableStateOf<List<Tmdb.Episode>>(emptyList()) }
+    var sourcesLabel by remember { mutableStateOf("") }
 
-    fun loadSources(dt: Tmdb.Detail) {
-        loadingSources = true; sources = emptyList()
-        Search.search(dt.originalTitle) { list, err ->
-            onMain { loadingSources = false; sources = list ?: emptyList(); if (list == null) status = err ?: "Sin fuentes" }
+    LaunchedEffect(title.tmdbId) {
+        Tmdb.detail(title.type, title.tmdbId) { d, _ ->
+            onMain {
+                detail = d; status = ""
+                if (d != null && d.type == "series" && d.seasons.isNotEmpty()) selSeason = d.seasons.first().season
+            }
         }
     }
+
+    // Al cambiar de temporada, carga sus episodios
+    LaunchedEffect(selSeason) {
+        val s = selSeason ?: return@LaunchedEffect
+        episodes = emptyList()
+        Tmdb.episodes(title.tmdbId, s) { list, _ -> onMain { episodes = list ?: emptyList() } }
+    }
+
+    fun runSearch(query: String, label: String) {
+        loadingSources = true; sources = emptyList(); sourcesLabel = label
+        Search.search(query) { list, err ->
+            onMain {
+                loadingSources = false
+                sources = Search.sortByLang(list ?: emptyList(), Prefs.languageOrder)
+                if (list == null) status = err ?: "Sin fuentes"
+            }
+        }
+    }
+    fun loadSources(dt: Tmdb.Detail) = runSearch(dt.originalTitle, dt.title)
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         val dt = detail
@@ -494,15 +629,49 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String) -> Uni
                 }
             }
 
-            Button(onClick = { dt?.let { loadSources(it) } }, enabled = dt != null && !loadingSources, modifier = Modifier.fillMaxWidth()) {
-                Text(if (loadingSources) "Buscando fuentes…" else "Buscar fuentes")
+            // --- Fuentes: película, o serie organizada por temporadas/episodios ---
+            if (dt != null && dt.type == "series" && dt.seasons.isNotEmpty()) {
+                Text("Temporadas", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    dt.seasons.forEach { s ->
+                        FilterChip(selected = selSeason == s.season, onClick = { selSeason = s.season },
+                            label = { Text("T${s.season} · ${s.episodes} ep.") })
+                    }
+                }
+                selSeason?.let { sn ->
+                    OutlinedButton(
+                        onClick = { runSearch("${dt.originalTitle} " + "S%02d".format(sn), "${dt.title} · Temporada $sn completa") },
+                        enabled = !loadingSources, modifier = Modifier.fillMaxWidth()
+                    ) { Text("Buscar temporada $sn completa") }
+                    episodes.forEach { ep ->
+                        Card(
+                            Modifier.fillMaxWidth().clickable {
+                                runSearch(Search.episodeQuery(dt.originalTitle, sn, ep.episode), "${dt.title} · T${sn}E${ep.episode} · ${ep.name}")
+                            },
+                            colors = CardDefaults.cardColors(containerColor = Surface1)
+                        ) {
+                            Column(Modifier.padding(10.dp)) {
+                                Text("${ep.episode}. ${ep.name}", style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (ep.overview.isNotBlank()) Text(ep.overview, style = MaterialTheme.typography.labelSmall, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+            } else {
+                Button(onClick = { dt?.let { loadSources(it) } }, enabled = dt != null && !loadingSources, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (loadingSources) "Buscando fuentes…" else "Buscar fuentes")
+                }
             }
+
+            if (loadingSources) Text("Buscando fuentes…", color = Muted, style = MaterialTheme.typography.bodySmall)
+            if (sources.isNotEmpty() && sourcesLabel.isNotBlank())
+                Text("Fuentes · $sourcesLabel", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
 
             sources.forEach { r ->
                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(r.name, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text("▲ ${r.seeders} seeders · ${Search.humanSize(r.sizeBytes)}", style = MaterialTheme.typography.labelSmall, color = Muted)
+                        Text("${Lang.flag(r.lang)} ${Lang.label(r.lang)}  ·  ▲ ${r.seeders} seeders · ${Search.humanSize(r.sizeBytes)}", style = MaterialTheme.typography.labelSmall, color = Muted)
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = { onWatch(r.magnet) }) { Text("▶ Ver") }
                             OutlinedButton(onClick = { onDownload(r.magnet) }) { Text("⬇ Descargar") }

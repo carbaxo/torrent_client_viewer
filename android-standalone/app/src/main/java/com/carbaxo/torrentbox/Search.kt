@@ -13,8 +13,17 @@ object Search {
         val infoHash: String,
         val seeders: Int,
         val sizeBytes: Long,
-        val magnet: String
+        val magnet: String,
+        val lang: String? = null   // código de idioma detectado (Lang), o null
     )
+
+    /** Ordena por prioridad de idioma del usuario y, a igualdad, por seeders. */
+    fun sortByLang(list: List<Result>, order: List<String>): List<Result> =
+        list.sortedWith(compareBy<Result> { Lang.rank(it.lang, order) }.thenByDescending { it.seeders })
+
+    /** Construye la query para un episodio concreto: "Título S01E02". */
+    fun episodeQuery(title: String, season: Int, episode: Int): String =
+        "$title S%02dE%02d".format(season, episode)
 
     private val TRACKERS = listOf(
         "udp://tracker.opentrackr.org:1337/announce",
@@ -59,7 +68,8 @@ object Search {
                                 infoHash = hash.lowercase(),
                                 seeders = seeders,
                                 sizeBytes = o.optString("size", "0").toLongOrNull() ?: 0,
-                                magnet = buildMagnet(hash.lowercase(), name)
+                                magnet = buildMagnet(hash.lowercase(), name),
+                                lang = Lang.detect(name)
                             )
                         )
                     }

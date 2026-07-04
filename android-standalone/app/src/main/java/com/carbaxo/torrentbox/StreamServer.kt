@@ -96,7 +96,8 @@ object StreamServer {
 
         private var pos = startOffset
         private var raf: RandomAccessFile? = null
-        private val pieceLen = TorrentEngine.pieceLength(d).toLong()
+        // ~3 min sin conseguir la pieza (pocos peers) -> corta la conexión
+        private val MAX_WAIT_TICKS = 900
 
         private fun openFile(): RandomAccessFile? {
             if (raf == null) {
@@ -112,36 +113,37 @@ object StreamServer {
             return if (n <= 0) -1 else b[0].toInt() and 0xff
         }
 
+        // NUNCA devuelve 0 para len>0: o lee >=1 byte, o -1 (EOF/interrupción).
+        // Devolver 0 haría que NanoHTTPD cortara la respuesta a media descarga.
         override fun read(b: ByteArray, off: Int, len: Int): Int {
             if (remaining <= 0) return -1
+            if (len <= 0) return 0
 
-            // Espera hasta que el byte en 'pos' esté descargado
             var waited = 0
-            while (!TorrentEngine.hasByte(d, pos) || openFile() == null) {
+            while (true) {
                 if (Thread.currentThread().isInterrupted) return -1
-                if (waited % 10 == 0) TorrentEngine.prioritizeFrom(d, pos) // reafirma prioridad
-                Thread.sleep(200)
-                waited++
-                // Tope de espera muy alto: streaming puede tardar si hay pocos peers
-                if (waited > 5 * 60 * 5) return -1 // ~5 min sin pieza -> corta
-            }
 
-            val file = raf ?: return -1
-            // No leas más allá del final de la pieza actual (la siguiente puede no estar)
-            val pieceEnd = ((pos / pieceLen) + 1) * pieceLen
-            val maxThisRead = minOf(len.toLong(), remaining, pieceEnd - pos).toInt()
-
-            synchronized(file) {
-                file.seek(pos)
-                val n = file.read(b, off, maxThisRead)
-                if (n <= 0) {
-                    // Aún no escrito en disco: espera un poco y reintenta
-                    Thread.sleep(200)
-                    return 0
+                // 1) Espera a que la pieza ABSOLUTA que contiene 'pos' esté lista
+                if (!TorrentEngine.hasByte(d, pos) || openFile() == null) {
+                    if (waited % 10 == 0) TorrentEngine.prioritizeFrom(d, pos)
+                    Thread.sleep(200); waited++
+                    if (waited > MAX_WAIT_TICKS) return -1 // sin progreso: corta limpio
+                    continue
                 }
-                pos += n
-                remaining -= n
-                return n
+
+                val file = raf ?: continue
+                // No leer más allá del final de la pieza absoluta actual
+                val maxThisRead = minOf(
+                    len.toLong(), remaining, TorrentEngine.bytesToPieceBoundary(d, pos)
+                ).toInt().coerceAtLeast(1)
+
+                val n = synchronized(file) { file.seek(pos); file.read(b, off, maxThisRead) }
+                if (n > 0) {
+                    pos += n; remaining -= n; return n
+                }
+                // Pieza marcada como disponible pero aún no volcada a disco: espera
+                Thread.sleep(120); waited++
+                if (waited > MAX_WAIT_TICKS) return -1
             }
         }
 

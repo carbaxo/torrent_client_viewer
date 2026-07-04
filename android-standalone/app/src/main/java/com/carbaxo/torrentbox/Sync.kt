@@ -22,46 +22,53 @@ import java.util.Locale
 import java.util.TimeZone
 
 /**
- * Sincronización con la MISMA cuenta que la app del PC: login con Google
- * (Firebase Auth) y favoritos guardados en Firestore en el mismo documento
- * (users/{uid}), esquema { states: { default: { favorites: [...] } } }.
+ * Sincronización con la MISMA cuenta que la app del PC (Firebase Auth + Google)
+ * y el MISMO documento de Firestore que usa la web:
+ *   users/{uid} = {
+ *     profiles: [{ id, name, kids, avatar }],
+ *     states:   { [profileId]: { favorites: [...], progress: [...], settings: {} } },
+ *     account:  { rdToken }        // extensión: token de Real-Debrid compartido
+ *   }
  *
- * Requiere que la app Android esté registrada en Firebase con su SHA-1 y el
- * google-services.json en app/. El ID de cliente web va en BuildConfig.
+ * Así los perfiles, favoritos y ajustes creados en la web aparecen aquí.
  */
 object Sync {
     data class Fav(
-        val id: String,           // "tmdb:<id>"
-        val tmdbId: Int,
-        val title: String,
-        val year: String,
-        val poster: String?,
-        val type: String,         // "movie" | "series"
-        val rating: Double
+        val id: String, val tmdbId: Int, val title: String, val year: String,
+        val poster: String?, val type: String, val rating: Double
     )
+    data class Profile(val id: String, val name: String, val avatar: String, val kids: Boolean)
 
     private val main = Handler(Looper.getMainLooper())
     private fun onMain(b: () -> Unit) = main.post(b)
 
     private var gsc: GoogleSignInClient? = null
+    private var appCtx: Context? = null
 
-    /** Disponible solo si la compilación trae el ID de cliente web. */
     val enabled: Boolean get() = BuildConfig.GOOGLE_WEB_CLIENT_ID.isNotBlank()
 
     var email by mutableStateOf<String?>(null)
+    val profiles = mutableStateListOf<Profile>()
+    var activeProfile by mutableStateOf<Profile?>(null)
     val favorites = mutableStateListOf<Fav>()
+    var loading by mutableStateOf(false)
+
+    // Copia en memoria del documento para poder hacer merges por perfil
+    private var doc: Map<String, Any?> = emptyMap()
+    // callback opcional cuando llega el token RD desde la nube
+    var onRdToken: ((String) -> Unit)? = null
 
     fun init(ctx: Context) {
+        appCtx = ctx.applicationContext
         if (!enabled) return
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
             .requestIdToken(BuildConfig.GOOGLE_WEB_CLIENT_ID)
             .requestEmail()
             .build()
         gsc = GoogleSignIn.getClient(ctx.applicationContext, gso)
-        // Restaurar sesión previa
         FirebaseAuth.getInstance().currentUser?.let {
             email = it.email
-            loadFavorites()
+            loadDoc()
         }
     }
 
@@ -74,13 +81,12 @@ object Sync {
             FirebaseAuth.getInstance().signInWithCredential(cred).addOnCompleteListener { t ->
                 if (t.isSuccessful) {
                     email = FirebaseAuth.getInstance().currentUser?.email
-                    loadFavorites()
+                    loadDoc()
                     onDone(true, null)
                 } else onDone(false, t.exception?.message ?: "Error de Firebase")
             }
         } catch (e: ApiException) {
-            // status 10 = DEVELOPER_ERROR (falta registrar la SHA-1 en Firebase)
-            onDone(false, "Google (código ${e.statusCode})")
+            onDone(false, "Google (código ${e.statusCode})") // 10 = falta SHA-1 en Firebase
         } catch (e: Throwable) {
             onDone(false, e.message ?: "Error")
         }
@@ -90,60 +96,113 @@ object Sync {
         FirebaseAuth.getInstance().signOut()
         gsc?.signOut()
         email = null
-        favorites.clear()
+        profiles.clear(); favorites.clear(); activeProfile = null; doc = emptyMap()
     }
 
     private fun db() = FirebaseFirestore.getInstance()
     private fun uid() = FirebaseAuth.getInstance().currentUser?.uid
+    private fun iso() = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
+        .apply { timeZone = TimeZone.getTimeZone("UTC") }.format(Date())
 
+    private fun lastProfilePref(): String? =
+        appCtx?.getSharedPreferences("tcv_prefs", Context.MODE_PRIVATE)?.getString("lastProfile", null)
+    private fun rememberProfile(id: String) {
+        appCtx?.getSharedPreferences("tcv_prefs", Context.MODE_PRIVATE)?.edit()?.putString("lastProfile", id)?.apply()
+    }
+
+    /** Lee el documento completo del usuario (perfiles + estados + cuenta). */
     @Suppress("UNCHECKED_CAST")
-    private fun loadFavorites() {
+    fun loadDoc() {
         val u = uid() ?: return
+        loading = true
         db().collection("users").document(u).get().addOnSuccessListener { snap ->
-            val out = ArrayList<Fav>()
-            try {
-                val states = snap.get("states") as? Map<String, Any?>
-                val def = states?.get("default") as? Map<String, Any?>
-                val favs = def?.get("favorites") as? List<Map<String, Any?>>
-                favs?.forEach { f ->
-                    val id = f["id"]?.toString() ?: return@forEach
-                    val tmdbId = Regex("(\\d+)").find(id)?.value?.toIntOrNull() ?: 0
-                    out.add(
-                        Fav(
-                            id = id,
-                            tmdbId = tmdbId,
-                            title = f["title"]?.toString() ?: "",
-                            year = f["year"]?.toString() ?: "",
-                            poster = f["poster"]?.toString()?.takeIf { it.isNotBlank() && it != "null" },
-                            type = if (f["type"]?.toString() == "series") "series" else "movie",
-                            rating = (f["rating"] as? Number)?.toDouble() ?: 0.0
-                        )
-                    )
+            val data = (snap.data ?: emptyMap<String, Any?>()) as Map<String, Any?>
+            val profs = (data["profiles"] as? List<Map<String, Any?>>)?.mapNotNull { p ->
+                val id = p["id"]?.toString() ?: return@mapNotNull null
+                Profile(
+                    id = id,
+                    name = p["name"]?.toString() ?: "Perfil",
+                    avatar = p["avatar"]?.toString()?.takeIf { it.isNotBlank() } ?: "🍿",
+                    kids = p["kids"] == true
+                )
+            } ?: emptyList()
+
+            // Token de Real-Debrid a nivel de cuenta (extensión de la app móvil)
+            val account = data["account"] as? Map<String, Any?>
+            val rdToken = account?.get("rdToken")?.toString()?.takeIf { it.isNotBlank() }
+
+            onMain {
+                doc = data
+                profiles.clear(); profiles.addAll(profs)
+                loading = false
+                if (profs.isNotEmpty()) {
+                    val pick = profs.firstOrNull { it.id == lastProfilePref() } ?: profs.first()
+                    selectProfile(pick.id)
                 }
-            } catch (_: Throwable) {}
-            onMain { favorites.clear(); favorites.addAll(out) }
+                if (rdToken != null) onRdToken?.invoke(rdToken)
+            }
+        }.addOnFailureListener { onMain { loading = false } }
+    }
+
+    /** Adopta el estado (favoritos + ajustes) de un perfil concreto. */
+    @Suppress("UNCHECKED_CAST")
+    fun selectProfile(id: String) {
+        val p = profiles.firstOrNull { it.id == id } ?: return
+        activeProfile = p
+        rememberProfile(id)
+        val states = doc["states"] as? Map<String, Any?>
+        val state = states?.get(id) as? Map<String, Any?>
+        val favs = state?.get("favorites") as? List<Map<String, Any?>> ?: emptyList()
+        val out = favs.mapNotNull { f ->
+            val fid = f["id"]?.toString() ?: return@mapNotNull null
+            Fav(
+                id = fid,
+                tmdbId = Regex("(\\d+)").find(fid)?.value?.toIntOrNull() ?: 0,
+                title = f["title"]?.toString() ?: "",
+                year = f["year"]?.toString() ?: "",
+                poster = f["poster"]?.toString()?.takeIf { it.isNotBlank() && it != "null" },
+                type = if (f["type"]?.toString() == "series") "series" else "movie",
+                rating = (f["rating"] as? Number)?.toDouble() ?: 0.0
+            )
+        }
+        favorites.clear(); favorites.addAll(out)
+
+        // Aplica el idioma del perfil (settings.language) al orden local
+        val settings = state?.get("settings") as? Map<String, Any?>
+        val cloudLang = Lang.fromTmdb(settings?.get("language")?.toString())
+        if (cloudLang != null) {
+            val rest = Prefs.languageOrder.filter { it != cloudLang }
+            Prefs.setLanguageOrder(listOf(cloudLang) + rest)
         }
     }
 
     fun isFav(id: String) = favorites.any { it.id == id }
 
-    /** Añade o quita de favoritos y sincroniza el documento (merge). */
+    /** Añade/quita favorito en el perfil activo y lo guarda (merge por perfil). */
     fun toggleFavorite(t: Tmdb.Title, onDone: (Boolean) -> Unit = {}) {
         val u = uid() ?: return onDone(false)
+        val pid = activeProfile?.id ?: return onDone(false)
         val id = "tmdb:${t.tmdbId}"
         if (isFav(id)) favorites.removeAll { it.id == id }
         else favorites.add(0, Fav(id, t.tmdbId, t.title, t.year, t.poster, t.type, t.rating))
-        val iso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
-            timeZone = TimeZone.getTimeZone("UTC")
-        }.format(Date())
         val arr = favorites.map {
             mapOf(
                 "id" to it.id, "title" to it.title, "year" to it.year,
-                "poster" to it.poster, "type" to it.type, "rating" to it.rating, "addedAt" to iso
+                "poster" to it.poster, "type" to it.type, "rating" to it.rating, "addedAt" to iso()
             )
         }
-        val doc = mapOf("states" to mapOf("default" to mapOf("favorites" to arr)), "updatedAt" to iso)
-        db().collection("users").document(u).set(doc, SetOptions.merge())
+        val docPatch = mapOf(
+            "states" to mapOf(pid to mapOf("favorites" to arr)),
+            "updatedAt" to iso()
+        )
+        db().collection("users").document(u).set(docPatch, SetOptions.merge())
             .addOnCompleteListener { onDone(it.isSuccessful) }
+    }
+
+    /** Guarda el token de Real-Debrid a nivel de cuenta para compartirlo entre dispositivos. */
+    fun saveAccountRdToken(token: String) {
+        val u = uid() ?: return
+        db().collection("users").document(u)
+            .set(mapOf("account" to mapOf("rdToken" to token), "updatedAt" to iso()), SetOptions.merge())
     }
 }

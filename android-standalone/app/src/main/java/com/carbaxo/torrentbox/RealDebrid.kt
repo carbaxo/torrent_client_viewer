@@ -31,14 +31,32 @@ object RealDebrid {
     val configured: Boolean get() = token.isNotBlank()
 
     fun init(ctx: Context) {
-        prefs = ctx.applicationContext.getSharedPreferences("torrentbox", Context.MODE_PRIVATE)
+        val app = ctx.applicationContext
+        // Almacén cifrado; si falla (algún fabricante rompe el Keystore), reserva a normal
+        prefs = try {
+            val master = androidx.security.crypto.MasterKey.Builder(app)
+                .setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM).build()
+            androidx.security.crypto.EncryptedSharedPreferences.create(
+                app, "torrentbox_secure", master,
+                androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+        } catch (_: Throwable) {
+            app.getSharedPreferences("torrentbox", Context.MODE_PRIVATE)
+        }
         token = prefs?.getString("rd_token", "") ?: ""
     }
 
     private fun save() { prefs?.edit()?.putString("rd_token", token)?.apply() }
 
-    private fun rd(method: String, path: String, form: Map<String, String>? = null): JSONObject {
-        val b = Request.Builder().url(API + path).header("Authorization", "Bearer $token")
+    /** Adopta un token recibido de la nube (ya validado en la web); no re-sube. */
+    fun adoptToken(t: String) {
+        if (configured || t.isBlank()) return
+        connect(t) { _, _ -> }
+    }
+
+    private fun rd(method: String, path: String, form: Map<String, String>? = null, tok: String = token): JSONObject {
+        val b = Request.Builder().url(API + path).header("Authorization", "Bearer $tok")
         if (form != null) {
             val fb = FormBody.Builder(); form.forEach { (k, v) -> fb.add(k, v) }
             if (method == "POST") b.post(fb.build())
@@ -52,20 +70,20 @@ object RealDebrid {
         }
     }
 
-    /** Valida y guarda el token; devuelve el nombre de usuario o un error. */
+    /** Valida y guarda el token; devuelve el nombre de usuario o un error.
+     *  Valida con el token CANDIDATO y solo lo compromete si es válido, para
+     *  no dejar el token compartido a medias ni romper llamadas concurrentes. */
     fun connect(newToken: String, onDone: (Boolean, String?) -> Unit) {
         io.submit {
+            val cand = newToken.trim()
             try {
-                token = newToken.trim()
-                val u = rd("GET", "/user")
+                val u = rd("GET", "/user", tok = cand)
                 val name = u.optString("username", "")
                 val premium = u.optString("type", "") == "premium"
-                account = name
-                save()
+                token = cand; account = name; save()
                 onDone(true, if (premium) name else "$name (SIN premium)")
             } catch (e: Throwable) {
-                token = ""; account = null
-                onDone(false, e.message ?: "Error")
+                onDone(false, e.message ?: "Error") // no tocar el token actual si falla
             }
         }
     }
@@ -85,21 +103,26 @@ object RealDebrid {
                 if (id.isBlank()) return@submit onDone(null, null, "RD no aceptó el magnet.", null)
 
                 var info = rd("GET", "/torrents/info/$id")
-                if (info.optString("status") == "waiting_files_selection") {
-                    val files = info.optJSONArray("files")
+                var selected = false
+                fun selectVideos(inf: JSONObject) {
+                    val files = inf.optJSONArray("files")
                     val vids = ArrayList<String>()
                     if (files != null) for (i in 0 until files.length()) {
                         val f = files.getJSONObject(i)
                         if (Regex(VIDEO).containsMatchIn(f.optString("path"))) vids.add(f.optInt("id").toString())
                     }
                     rd("POST", "/torrents/selectFiles/$id", mapOf("files" to if (vids.isNotEmpty()) vids.joinToString(",") else "all"))
+                    selected = true
                 }
+                if (info.optString("status") == "waiting_files_selection") selectVideos(info)
 
                 var tries = 0
-                while (tries++ < 10) {
+                while (tries++ < 12) {
                     info = rd("GET", "/torrents/info/$id")
                     val st = info.optString("status")
                     if (st == "downloaded") break
+                    // Puede llegar aquí en magnet_conversion/queued antes de pedir selección
+                    if (st == "waiting_files_selection" && !selected) selectVideos(info)
                     if (st in listOf("magnet_error", "error", "virus", "dead")) return@submit onDone(null, null, "RD no pudo procesar el torrent ($st).", null)
                     Thread.sleep(1500)
                 }

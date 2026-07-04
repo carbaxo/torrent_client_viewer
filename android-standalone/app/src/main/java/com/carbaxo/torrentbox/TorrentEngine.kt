@@ -172,6 +172,18 @@ object TorrentEngine {
         return piece in 0 until d.ti.numPieces() && d.handle.havePiece(piece)
     }
 
+    /**
+     * Bytes desde `offsetInFile` hasta el final de la pieza ABSOLUTA que lo
+     * contiene (las piezas están alineadas al offset absoluto en el torrent,
+     * no al inicio del archivo). Nunca menor que 1.
+     */
+    fun bytesToPieceBoundary(d: Download, offsetInFile: Long): Long {
+        val abs = absOffset(d, offsetInFile)
+        val len = d.ti.pieceLength().toLong()
+        val end = (abs / len + 1) * len
+        return maxOf(1L, end - abs)
+    }
+
     /** Sube la prioridad de las próximas piezas a partir de un offset del archivo. */
     fun prioritizeFileStart(ti: TorrentInfo, handle: TorrentHandle, fileIndex: Int, offsetInFile: Long) {
         val abs = ti.files().fileOffset(fileIndex) + offsetInFile
