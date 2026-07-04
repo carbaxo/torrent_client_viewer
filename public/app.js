@@ -1456,6 +1456,25 @@ function initIptvOnce () {
   $('iptv-m3u-load').addEventListener('click', () => loadIptvM3u())
   $('iptv-m3u-ace').addEventListener('click', () => { $('iptv-m3u-url').value = 'https://search-ace.stream/playlist'; loadIptvM3u() })
   $('iptv-xt-load').addEventListener('click', () => loadIptvXtream())
+
+  // Botones de países (listas gratis de iptv-org)
+  const COUNTRIES = [
+    ['🇪🇸', 'España', 'es'], ['🇲🇽', 'México', 'mx'], ['🇦🇷', 'Argentina', 'ar'], ['🇨🇴', 'Colombia', 'co'],
+    ['🇨🇱', 'Chile', 'cl'], ['🇵🇪', 'Perú', 'pe'], ['🇻🇪', 'Venezuela', 've'], ['🇺🇸', 'EE. UU.', 'us'],
+    ['🇬🇧', 'Reino Unido', 'uk'], ['🇵🇹', 'Portugal', 'pt'], ['🇧🇷', 'Brasil', 'br'], ['🇫🇷', 'Francia', 'fr'],
+    ['🇮🇹', 'Italia', 'it'], ['🇩🇪', 'Alemania', 'de'], ['🇹🇷', 'Turquía', 'tr'], ['🇨🇦', 'Canadá', 'ca']
+  ]
+  const cbox = $('iptv-countries')
+  COUNTRIES.forEach(([flag, name, code]) => {
+    const b = document.createElement('button')
+    b.className = 'chip'
+    b.textContent = flag + ' ' + name
+    b.addEventListener('click', () => {
+      $('iptv-m3u-url').value = 'https://iptv-org.github.io/iptv/countries/' + code + '.m3u'
+      loadIptvM3u()
+    })
+    cbox.appendChild(b)
+  })
   $('iptv-filter').addEventListener('input', renderIptvChannels)
   $('iptv-clear').addEventListener('click', () => {
     localStorage.removeItem('tcv_iptv')

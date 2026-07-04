@@ -37,6 +37,28 @@ object Iptv {
     // Playlist mixta muy conocida (canales AceStream de search-ace.stream)
     const val ACE_PLAYLIST = "https://search-ace.stream/playlist"
 
+    /**
+     * Listas de canales GRATIS y legales (FTA) ya organizadas por país, del
+     * proyecto iptv-org. Se reproducen directas (HLS), sin AceStream ni Premium.
+     */
+    data class Country(val flag: String, val name: String, val code: String) {
+        val url get() = "https://iptv-org.github.io/iptv/countries/$code.m3u"
+    }
+    val COUNTRIES = listOf(
+        Country("🇪🇸", "España", "es"), Country("🇲🇽", "México", "mx"),
+        Country("🇦🇷", "Argentina", "ar"), Country("🇨🇴", "Colombia", "co"),
+        Country("🇨🇱", "Chile", "cl"), Country("🇵🇪", "Perú", "pe"),
+        Country("🇻🇪", "Venezuela", "ve"), Country("🇪🇨", "Ecuador", "ec"),
+        Country("🇺🇾", "Uruguay", "uy"), Country("🇺🇸", "EE. UU.", "us"),
+        Country("🇬🇧", "Reino Unido", "uk"), Country("🇵🇹", "Portugal", "pt"),
+        Country("🇧🇷", "Brasil", "br"), Country("🇫🇷", "Francia", "fr"),
+        Country("🇮🇹", "Italia", "it"), Country("🇩🇪", "Alemania", "de"),
+        Country("🇳🇱", "Países Bajos", "nl"), Country("🇹🇷", "Turquía", "tr"),
+        Country("🇬🇷", "Grecia", "gr"), Country("🇵🇱", "Polonia", "pl"),
+        Country("🇷🇺", "Rusia", "ru"), Country("🇷🇴", "Rumanía", "ro"),
+        Country("🇲🇦", "Marruecos", "ma"), Country("🇨🇦", "Canadá", "ca")
+    )
+
     // --- País: se deduce de la bandera emoji o de palabras clave del nombre ---
     private val ISO_NAME = mapOf(
         "ES" to "🇪🇸 España", "MX" to "🇲🇽 México", "AR" to "🇦🇷 Argentina", "CO" to "🇨🇴 Colombia",

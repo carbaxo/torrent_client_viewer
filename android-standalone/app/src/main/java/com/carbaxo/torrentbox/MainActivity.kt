@@ -612,13 +612,20 @@ fun IptvPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
                     SegmentedButton(selected = mode == 1, onClick = { mode = 1 }, shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Xtream Codes") }
                 }
                 if (mode == 0) {
+                    // Canales gratis por país (iptv-org), se reproducen directos
+                    Text("Canales gratis por país:", style = MaterialTheme.typography.labelMedium, color = Muted)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Iptv.COUNTRIES.forEach { c ->
+                            AssistChip(onClick = { m3u = c.url; loadM3u() }, label = { Text("${c.flag} ${c.name}") })
+                        }
+                    }
                     OutlinedTextField(value = m3u, onValueChange = { m3u = it },
-                        label = { Text("URL de la lista (.m3u / .m3u8)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        label = { Text("…o pega la URL de tu lista (.m3u / .m3u8)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = { loadM3u() }, enabled = m3u.isNotBlank()) { Text("Cargar lista") }
-                        OutlinedButton(onClick = { m3u = Iptv.ACE_PLAYLIST; loadM3u() }) { Text("Canales AceStream (search-ace.stream)") }
+                        OutlinedButton(onClick = { m3u = Iptv.ACE_PLAYLIST; loadM3u() }) { Text("Canales AceStream") }
                     }
-                    Text("Consejo: la lista de search-ace.stream son canales AceStream; al pulsar un canal se abre en la app de AceStream (gratis).",
+                    Text("Los canales por país son gratuitos (iptv-org) y se ven directos. La lista de search-ace.stream son canales AceStream (se abren en su app).",
                         style = MaterialTheme.typography.labelSmall, color = Muted)
                 } else {
                     OutlinedTextField(value = host, onValueChange = { host = it },
