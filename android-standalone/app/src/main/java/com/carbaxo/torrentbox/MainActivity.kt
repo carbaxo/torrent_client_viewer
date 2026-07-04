@@ -557,6 +557,12 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
     var status by remember { mutableStateOf("") }
     var expanded by remember { mutableStateOf(true) }
     var page by remember { mutableStateOf(1) }
+    // Playlist categorizada (search-ace.stream): canales con categoría + país
+    var channels by remember { mutableStateOf<List<AceStream.Channel>>(emptyList()) }
+    var selCategory by remember { mutableStateOf<String?>(null) }
+    var selCountry by remember { mutableStateOf<String?>(null) }
+    var chFilter by remember { mutableStateOf("") }
+    var loadingCh by remember { mutableStateOf(false) }
 
     // Reproducir GRATIS: se lo pasamos a la app de AceStream (su propio reproductor).
     fun openInAce(contentId: String) {
@@ -625,6 +631,77 @@ fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
                         style = MaterialTheme.typography.labelSmall, color = Muted)
                     OutlinedButton(onClick = { AceStream.openEngineInstall(ctx) }) { Text("Instalar Ace Stream Media") }
                 }
+
+                // ---- Canales por categoría y país (search-ace.stream) ----
+                HorizontalDivider(color = Muted.copy(alpha = 0.2f))
+                Text("Canales por categoría y país", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Button(
+                    enabled = !loadingCh,
+                    onClick = {
+                        loadingCh = true; status = "Cargando canales…"
+                        AceStream.loadPlaylist { list, err ->
+                            onMain {
+                                loadingCh = false
+                                if (list == null) status = err ?: "Error"
+                                else {
+                                    channels = list; selCategory = null; selCountry = null
+                                    status = "${list.size} canales cargados"
+                                }
+                            }
+                        }
+                    }
+                ) { Text(if (loadingCh) "Cargando…" else if (channels.isEmpty()) "Cargar canales (deportes, cine, países…)" else "Recargar canales") }
+
+                if (channels.isNotEmpty()) {
+                    val categories = remember(channels) { channels.map { it.category }.distinct().sorted() }
+                    val countries = remember(channels) { channels.map { it.country }.distinct().sorted() }
+                    Text("Categoría", style = MaterialTheme.typography.labelMedium, color = Muted)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        FilterChip(selected = selCategory == null, onClick = { selCategory = null }, label = { Text("Todas") })
+                        categories.forEach { c ->
+                            FilterChip(selected = selCategory == c, onClick = { selCategory = if (selCategory == c) null else c }, label = { Text(c) })
+                        }
+                    }
+                    Text("País", style = MaterialTheme.typography.labelMedium, color = Muted)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        FilterChip(selected = selCountry == null, onClick = { selCountry = null }, label = { Text("Todos") })
+                        countries.forEach { c ->
+                            FilterChip(selected = selCountry == c, onClick = { selCountry = if (selCountry == c) null else c }, label = { Text(c) })
+                        }
+                    }
+                    OutlinedTextField(value = chFilter, onValueChange = { chFilter = it },
+                        label = { Text("Filtrar canal…") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    val shownCh = channels.filter {
+                        (selCategory == null || it.category == selCategory) &&
+                            (selCountry == null || it.country == selCountry) &&
+                            (chFilter.isBlank() || it.name.contains(chFilter, ignoreCase = true))
+                    }
+                    Text("${shownCh.size} canales", style = MaterialTheme.typography.labelSmall, color = Muted)
+                    shownCh.take(300).forEach { ch ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable { openInAce(ch.contentId) }.padding(vertical = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(ch.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${ch.category}  ·  ${ch.country}", style = MaterialTheme.typography.labelSmall, color = Muted)
+                            }
+                            IconButton(onClick = { Prefs.toggleAceFav(ch.contentId, ch.name) }) {
+                                Icon(
+                                    if (Prefs.isAceFav(ch.contentId)) Icons.Filled.Star else Icons.Filled.StarBorder,
+                                    contentDescription = "Favorito",
+                                    tint = if (Prefs.isAceFav(ch.contentId)) Color(0xFFFBBF24) else Muted
+                                )
+                            }
+                            Text("📡", color = Accent)
+                        }
+                    }
+                    if (shownCh.size > 300) Text("Mostrando 300 de ${shownCh.size}. Usa los filtros.", style = MaterialTheme.typography.labelSmall, color = Muted)
+                }
+
+                // ---- Búsqueda en acestreamid.com ----
+                HorizontalDivider(color = Muted.copy(alpha = 0.2f))
+                Text("Buscar en acestreamid.com", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 OutlinedTextField(
                     value = query, onValueChange = { query = it },
                     label = { Text("Buscar canal / evento… (vacío = ver todos)") }, singleLine = true,
