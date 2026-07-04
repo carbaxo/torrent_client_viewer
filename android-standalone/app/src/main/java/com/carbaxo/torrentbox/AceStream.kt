@@ -34,6 +34,115 @@ object AceStream {
         val dislikes: Int = -1
     )
 
+    /** Canal de la playlist categorizado por categoría (deportes, cine…) y país. */
+    data class Channel(
+        val name: String,
+        val contentId: String,
+        val category: String,
+        val country: String
+    )
+
+    // Playlist pública con muchos canales AceStream (search-ace.stream)
+    const val PLAYLIST_URL = "https://search-ace.stream/playlist"
+
+    // Categoría (slug de la API AceStream / group-title) -> etiqueta en español
+    private val CATEGORY_ES = mapOf(
+        "sport" to "⚽ Deportes", "sports" to "⚽ Deportes", "movies" to "🎬 Películas",
+        "movie" to "🎬 Películas", "series" to "📺 Series", "music" to "🎵 Música",
+        "kids" to "🧒 Infantil", "children" to "🧒 Infantil", "documentaries" to "📚 Documentales",
+        "documentary" to "📚 Documentales", "news" to "📰 Noticias", "informational" to "📰 Información",
+        "entertaining" to "😂 Entretenimiento", "entertainment" to "😂 Entretenimiento",
+        "comedy" to "😂 Comedia", "educational" to "🎓 Educación", "regional" to "📍 Regional",
+        "ethnic" to "🌍 Étnico", "religion" to "⛪ Religión", "fashion" to "👗 Moda",
+        "adult" to "🔞 Adultos", "cyber_games" to "🎮 Videojuegos", "webcam" to "📷 Webcam",
+        "general" to "📺 General"
+    )
+
+    private fun categoryLabel(raw: String): String {
+        val key = raw.trim().lowercase()
+        return CATEGORY_ES[key] ?: raw.trim().ifBlank { "📺 Otros" }
+    }
+
+    // --- País: bandera emoji o palabra clave del nombre ---
+    private val ISO_NAME = mapOf(
+        "ES" to "🇪🇸 España", "MX" to "🇲🇽 México", "AR" to "🇦🇷 Argentina", "CO" to "🇨🇴 Colombia",
+        "CL" to "🇨🇱 Chile", "PE" to "🇵🇪 Perú", "VE" to "🇻🇪 Venezuela", "EC" to "🇪🇨 Ecuador",
+        "UY" to "🇺🇾 Uruguay", "US" to "🇺🇸 EE. UU.", "GB" to "🇬🇧 Reino Unido", "UK" to "🇬🇧 Reino Unido",
+        "PT" to "🇵🇹 Portugal", "FR" to "🇫🇷 Francia", "IT" to "🇮🇹 Italia", "DE" to "🇩🇪 Alemania",
+        "BR" to "🇧🇷 Brasil", "NL" to "🇳🇱 Países Bajos", "TR" to "🇹🇷 Turquía", "GR" to "🇬🇷 Grecia",
+        "PL" to "🇵🇱 Polonia", "RU" to "🇷🇺 Rusia", "RO" to "🇷🇴 Rumanía", "MA" to "🇲🇦 Marruecos"
+    )
+    private val KEYWORDS = listOf(
+        "España" to "ES", "Spain" to "ES", "Latino" to "MX", "México" to "MX", "Mexico" to "MX",
+        "Argentina" to "AR", "Colombia" to "CO", "Chile" to "CL", "Portugal" to "PT",
+        "Brasil" to "BR", "Brazil" to "BR", "Italia" to "IT", "France" to "FR", "Deutsch" to "DE"
+    )
+
+    private fun flagIso(s: String): String? {
+        val cps = s.codePoints().toArray()
+        for (i in 0 until cps.size - 1) {
+            val a = cps[i]; val b = cps[i + 1]
+            if (a in 0x1F1E6..0x1F1FF && b in 0x1F1E6..0x1F1FF)
+                return "${'A' + (a - 0x1F1E6)}${'A' + (b - 0x1F1E6)}"
+        }
+        return null
+    }
+
+    private fun detectCountry(name: String): String {
+        flagIso(name)?.let { iso -> ISO_NAME[iso]?.let { return it } }
+        Regex("^\\s*[\\[(]?([A-Z]{2})[\\]):| ]").find(name)?.groupValues?.get(1)?.let { iso ->
+            ISO_NAME[iso]?.let { return it }
+        }
+        for ((kw, iso) in KEYWORDS) if (name.contains(kw, ignoreCase = true)) return ISO_NAME[iso] ?: continue
+        return "🌐 Otros"
+    }
+
+    private fun m3uAttr(line: String, key: String): String? =
+        Regex("$key=\"([^\"]*)\"", RegexOption.IGNORE_CASE).find(line)?.groupValues?.get(1)
+
+    /**
+     * Descarga y parsea la playlist de search-ace.stream en canales con
+     * categoría (deportes, cine…) y país. onResult(list, error).
+     */
+    fun loadPlaylist(onResult: (List<Channel>?, String?) -> Unit) {
+        io.submit {
+            try {
+                val req = Request.Builder().url(PLAYLIST_URL)
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 13) TorrentBox")
+                    .build()
+                client.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@submit onResult(null, "search-ace.stream respondió ${resp.code}")
+                    val out = parsePlaylist(resp.body?.string() ?: "")
+                    if (out.isEmpty()) onResult(emptyList(), "Sin canales (o cambió el formato).")
+                    else onResult(out, null)
+                }
+            } catch (e: Throwable) {
+                onResult(null, e.message ?: "Error de red (playlist).")
+            }
+        }
+    }
+
+    fun parsePlaylist(text: String): List<Channel> {
+        val out = ArrayList<Channel>()
+        val lines = text.lines()
+        var name = ""; var category = "General"
+        for (raw in lines) {
+            val line = raw.trim()
+            if (line.startsWith("#EXTINF", ignoreCase = true)) {
+                category = m3uAttr(line, "group-title") ?: "General"
+                name = m3uAttr(line, "tvg-name") ?: line.substringAfterLast(',', "").trim()
+            } else if (line.isNotBlank() && !line.startsWith("#")) {
+                val id = extractContentId(line)
+                if (id != null) {
+                    if (name.isBlank()) name = "AceStream ${id.take(8)}…"
+                    out.add(Channel(name, id, categoryLabel(category), detectCountry(name)))
+                }
+                name = ""; category = "General"
+            }
+        }
+        return out
+    }
+
     // Paquetes conocidos de AceStream en Android. "Ace Stream Media" de la
     // tienda (org.acestream.media) YA incluye el engine — no hace falta otra app.
     private val ENGINE_PACKAGES = listOf(
