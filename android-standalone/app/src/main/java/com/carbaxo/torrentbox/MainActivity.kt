@@ -18,7 +18,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -326,7 +325,7 @@ fun BrowseScreen(provider: String, name: String, type: String, onOpen: (Tmdb.Tit
             verticalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(bottom = 24.dp)
         ) {
-            gridItems(items.size) { i -> PosterCard(items[i], width = 110) { onOpen(items[i]) } }
+            items.forEach { t -> item { PosterCard(t, width = 110) { onOpen(t) } } }
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
                     if (!end) Button(onClick = { loadNext() }, enabled = !loading) {
