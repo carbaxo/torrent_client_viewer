@@ -20,6 +20,9 @@ android {
         versionName = if (ciBuild > 0) "2.$ciBuild" else "2.0-dev"
         // Con qué build de CI se compiló (0 = local); la app lo compara con la Release
         buildConfigField("int", "CI_BUILD", "$ciBuild")
+        // Momento de compilación (epoch ms): se compara con la fecha del APK de la
+        // Release para detectar actualizaciones aunque el tag/fecha de GitHub no cambie.
+        buildConfigField("long", "BUILD_EPOCH", "${System.currentTimeMillis()}L")
         // Clave TMDB inyectada desde un secreto de CI (-PTMDB_KEY=...)
         buildConfigField("String", "TMDB_KEY", "\"${project.findProperty("TMDB_KEY") ?: ""}\"")
         // ID de cliente web de Google (para el login con Google, milestone sync)

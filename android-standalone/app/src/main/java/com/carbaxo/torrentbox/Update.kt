@@ -34,7 +34,12 @@ object Update {
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
     private fun onMain(b: () -> Unit) { main.post(b) }
 
-    /** Comprueba si hay build más nuevo en la Release. */
+    /**
+     * Comprueba si hay una versión más nueva. Fiable aunque GitHub reutilice el
+     * tag `android-latest` (fecha congelada): compara la fecha REAL del APK
+     * subido (`updated_at` del asset, que cambia en cada publicación) con la
+     * hora de compilación de esta app (BuildConfig.BUILD_EPOCH).
+     */
     fun check() {
         io.submit {
             try {
@@ -44,23 +49,42 @@ object Update {
                 client.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@submit onMain { checked = true; status = "" }
                     val d = JSONObject(resp.body?.string() ?: "{}")
-                    val remote = Regex("Build (\\d+)").find(d.optString("body"))?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                    val remoteBuild = Regex("Build (\\d+)").find(d.optString("body"))?.groupValues?.get(1)?.toIntOrNull() ?: 0
                     var url: String? = null
+                    var apkEpoch = 0L
                     d.optJSONArray("assets")?.let { arr ->
                         for (i in 0 until arr.length()) {
                             val a = arr.getJSONObject(i)
-                            if (a.optString("name") == "TorrentBox.apk") url = a.optString("browser_download_url")
+                            if (a.optString("name") == "TorrentBox.apk") {
+                                url = a.optString("browser_download_url")
+                                apkEpoch = parseIso(a.optString("updated_at"))
+                            }
                         }
                     }
+                    // Nuevo si el APK de la Release se subió claramente DESPUÉS de
+                    // compilar esta app (margen de 2 min), o si el nº de build es mayor.
+                    val newerByDate = apkEpoch > 0 && apkEpoch > BuildConfig.BUILD_EPOCH + 120_000L
+                    val newerByBuild = remoteBuild > 0 && remoteBuild > BuildConfig.CI_BUILD
                     onMain {
                         checked = true
-                        available = if (remote > BuildConfig.CI_BUILD && url != null) Info(remote, url!!) else null
+                        available = if ((newerByDate || newerByBuild) && url != null)
+                            Info(if (remoteBuild > 0) remoteBuild else BuildConfig.CI_BUILD + 1, url!!) else null
                     }
                 }
             } catch (_: Throwable) {
                 onMain { checked = true }
             }
         }
+    }
+
+    /** ISO-8601 de GitHub ("2026-07-04T19:16:25Z") a epoch ms; 0 si falla. */
+    private fun parseIso(s: String?): Long {
+        if (s.isNullOrBlank()) return 0L
+        return runCatching {
+            val fmt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US)
+            fmt.timeZone = java.util.TimeZone.getTimeZone("UTC")
+            fmt.parse(s)?.time ?: 0L
+        }.getOrDefault(0L)
     }
 
     /** Descarga el APK de la Release y abre el instalador del sistema. */
