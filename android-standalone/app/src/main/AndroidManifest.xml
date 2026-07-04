@@ -12,6 +12,10 @@
     <!-- Auto-actualización: instalar el APK nuevo descargado de GitHub -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- Android TV: instalable en teles (no exige pantalla táctil ni leanback) -->
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
     <!-- Android 11+: sin esto la app no puede "ver" si AceStream está instalado -->
     <queries>
         <package android:name="org.acestream.media" />
@@ -30,6 +34,7 @@
 
     <application
         android:allowBackup="true"
+        android:banner="@drawable/ic_launcher"
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
@@ -43,6 +48,8 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+                <!-- Aparece también en el launcher de Android TV -->
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
             <!-- Permite abrir enlaces magnet desde otras apps -->
             <intent-filter>

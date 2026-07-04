@@ -177,6 +177,9 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) 
 
     LaunchedEffect(initialMagnet) { if (!initialMagnet.isNullOrBlank()) addMagnet(initialMagnet, false) }
 
+    // Avisos de episodios nuevos cuando llegan los favoritos de la nube
+    LaunchedEffect(Sync.favorites.size) { if (Sync.favorites.isNotEmpty()) EpisodeAlerts.check(ctx) }
+
     // Ficha de detalle a pantalla completa
     val d = detail
     if (d != null) {

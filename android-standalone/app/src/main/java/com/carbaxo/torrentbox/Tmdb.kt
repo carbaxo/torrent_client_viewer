@@ -240,6 +240,17 @@ object Tmdb {
         }
     }
 
+    /** Último episodio emitido de una serie (para avisos): (temporada, episodio, nombre). */
+    fun lastEpisode(tmdbId: Int, onResult: (Triple<Int, Int, String>?) -> Unit) {
+        io.submit {
+            try {
+                val d = get("https://api.themoviedb.org/3/tv/$tmdbId?api_key=${BuildConfig.TMDB_KEY}&language=${L()}")
+                val le = d.optJSONObject("last_episode_to_air") ?: return@submit onResult(null)
+                onResult(Triple(le.optInt("season_number"), le.optInt("episode_number"), le.optString("name", "")))
+            } catch (_: Throwable) { onResult(null) }
+        }
+    }
+
     /** IMDb id (ttXXXXXXX) de un título, necesario para Torrentio. */
     fun imdbId(type: String, tmdbId: Int, onResult: (String?) -> Unit) {
         io.submit {
