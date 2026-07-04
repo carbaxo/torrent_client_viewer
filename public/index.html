@@ -71,6 +71,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
           <span class="nav-label">Favoritos</span>
         </button>
+        <button class="nav-item" data-view="iptv" title="TV en directo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="15" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
+          <span class="nav-label">TV</span>
+        </button>
         <button class="nav-item" data-view="downloads" title="Descargas">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
           <span class="nav-label">Descargas</span>
@@ -133,6 +137,34 @@
             <div id="catalog-loader" class="loader hidden"><span></span><span></span><span></span></div>
             <div id="catalogs"></div>
           </div>
+        </section>
+
+        <!-- TV EN DIRECTO (IPTV: M3U / Xtream) -->
+        <section class="view hidden" id="view-iptv">
+          <p class="status">Reproduce tu propia fuente IPTV (un proveedor que pagues, una lista pública…). No se incluye ningún canal: TorrentBox solo hace de reproductor.</p>
+          <div class="seg" id="iptv-mode">
+            <button data-imode="m3u" class="active">Lista M3U</button>
+            <button data-imode="xtream">Xtream Codes</button>
+          </div>
+          <div id="iptv-form-m3u" class="iptv-form">
+            <input type="text" id="iptv-m3u-url" placeholder="URL de la lista (.m3u / .m3u8)" autocomplete="off" />
+            <button id="iptv-m3u-load" class="btn-primary">Cargar lista</button>
+          </div>
+          <div id="iptv-form-xtream" class="iptv-form hidden">
+            <input type="text" id="iptv-xt-host" placeholder="Host (http://servidor:puerto)" autocomplete="off" />
+            <div class="iptv-row">
+              <input type="text" id="iptv-xt-user" placeholder="Usuario" autocomplete="off" />
+              <input type="password" id="iptv-xt-pass" placeholder="Contraseña" autocomplete="off" />
+            </div>
+            <button id="iptv-xt-load" class="btn-primary">Conectar</button>
+          </div>
+          <div class="iptv-tools">
+            <input type="text" id="iptv-filter" placeholder="Filtrar canal…" autocomplete="off" />
+            <button id="iptv-clear" class="btn-ghost">Borrar fuente</button>
+          </div>
+          <p id="iptv-status" class="status"></p>
+          <div id="iptv-groups" class="genre-filters"></div>
+          <div id="iptv-channels" class="iptv-channels"></div>
         </section>
 
         <!-- BUSCAR -->
