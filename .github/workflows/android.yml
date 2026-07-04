@@ -48,12 +48,22 @@ jobs:
           name: TorrentBox-apk
           path: android-standalone/TorrentBox.apk
 
+      # Borra el release/tag anterior para que la FECHA en GitHub se refresque
+      # (al reutilizar el mismo tag, GitHub congela la fecha de publicación).
+      - name: Delete previous release so the date refreshes
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete android-latest --yes --cleanup-tag -R "$GITHUB_REPOSITORY" || true
+
       - name: Publish APK to Release
         if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: android-latest
           name: TorrentBox (Android APK)
+          make_latest: true
           body: |
             APK autónomo de TorrentBox: descarga y reproduce torrents en el propio móvil.
             Descarga `TorrentBox.apk`, actívalo en Ajustes → "Instalar apps desconocidas" e instálalo.
