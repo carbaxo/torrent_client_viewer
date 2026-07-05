@@ -247,11 +247,11 @@ object AceStream {
      * acestream:// lo usamos verbatim (evita reconstrucciones erróneas).
      */
     fun openChannel(ctx: Context, ch: Channel): Boolean {
-        val uri = when {
-            ch.rawUrl.startsWith("acestream://", true) -> ch.rawUrl.trim()
-            ch.isInfohash -> "acestream://infohash/${ch.contentId}"
-            else -> "acestream://${ch.contentId}"
-        }
+        // acestream:// solo admite el hash de 40 dígitos (no una ruta tipo
+        // acestream://infohash/…, que daría "fail to parse uri"). Si la playlist
+        // ya trae un acestream:// lo usamos verbatim; si no, lo construimos.
+        val raw = ch.rawUrl.trim()
+        val uri = if (raw.startsWith("acestream://", true)) raw else "acestream://${ch.contentId}"
         return runCatching {
             ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             true
