@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -65,52 +66,40 @@ object AceStream {
         return CATEGORY_ES[key] ?: raw.trim().ifBlank { "📺 Otros" }
     }
 
-    // Categorías de la API de search-ace.stream (slug -> etiqueta ES) para el selector
-    val SEARCH_CATEGORIES: List<Pair<String, String>> = listOf(
-        "" to "Todas", "sport" to "⚽ Deportes", "movies" to "🎬 Películas", "series" to "📺 Series",
-        "documentaries" to "📚 Documentales", "music" to "🎵 Música", "kids" to "🧒 Infantil",
-        "entertaining" to "😂 Entretenimiento", "informational" to "📰 Noticias", "educational" to "🎓 Educación",
-        "regional" to "📍 Regional", "ethnic" to "🌍 Étnico", "religion" to "⛪ Religión", "fashion" to "👗 Moda"
-    )
-
     /**
-     * Búsqueda por la API JSON de search-ace.stream (Ace Search API):
-     *   GET /search?query=&category=&page=&page_size=&api_version=4
-     * Respuesta: { result: { total, results: [ { name, items:[{infohash|url}], categories } ] } }
-     * Devuelve Channel (respeta infohash/url para reproducir con el tipo correcto).
+     * Búsqueda por texto en search-ace.stream. La respuesta es un ARRAY JSON:
+     *   [ { "content_id": "...40hex...", "name": "...", "translated_name": "..." }, ... ]
+     * (a veces con "infohash" en vez de "content_id"). Devuelve Channel con
+     * content_id directo, reproducible con acestream://<content_id>.
      */
-    fun searchAceApi(query: String, category: String, page: Int, onResult: (List<Channel>?, String?) -> Unit) {
+    fun searchAceApi(query: String, onResult: (List<Channel>?, String?) -> Unit) {
         io.submit {
             try {
-                val sb = StringBuilder("https://search-ace.stream/search?api_version=4&page_size=50&page=$page")
-                if (query.isNotBlank()) sb.append("&query=").append(java.net.URLEncoder.encode(query.trim(), "UTF-8"))
-                if (category.isNotBlank()) sb.append("&category=").append(category)
-                val req = Request.Builder().url(sb.toString())
-                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 13) TorrentBox")
+                val url = "https://search-ace.stream/search?query=" +
+                    java.net.URLEncoder.encode(query.trim(), "UTF-8")
+                val req = Request.Builder().url(url)
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36")
                     .header("Accept", "application/json").build()
                 client.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@submit onResult(null, "search-ace.stream respondió ${resp.code}")
-                    val body = resp.body?.string() ?: "{}"
-                    val result = JSONObject(body).optJSONObject("result")
-                    val arr = result?.optJSONArray("results")
+                    val body = resp.body?.string()?.trim() ?: ""
+                    // Tolera array directo o { result: { results: [...] } }
+                    val arr = when {
+                        body.startsWith("[") -> JSONArray(body)
+                        body.startsWith("{") -> JSONObject(body).optJSONObject("result")?.optJSONArray("results")
+                            ?: JSONObject(body).optJSONArray("results") ?: JSONArray()
+                        else -> JSONArray()
+                    }
                     val out = ArrayList<Channel>()
-                    if (arr != null) for (i in 0 until arr.length()) {
+                    for (i in 0 until arr.length()) {
                         val o = arr.optJSONObject(i) ?: continue
-                        val name = o.optString("name", "Canal")
-                        val items = o.optJSONArray("items") ?: continue
-                        if (items.length() == 0) continue
-                        val it0 = items.optJSONObject(0) ?: continue
-                        val infohash = it0.optString("infohash", "")
-                        val url = it0.optString("url", "")
-                        var cid = ""; var raw = ""; var isIh = false
-                        when {
-                            infohash.isNotBlank() -> { cid = infohash.lowercase(); isIh = true }
-                            url.isNotBlank() -> { raw = url; cid = extractContentId(url) ?: ""; isIh = url.contains("infohash", true) }
-                        }
-                        if (cid.isBlank() && raw.isBlank()) continue
-                        // categoría del propio resultado si viene, si no la del filtro
-                        val cat = o.optJSONArray("categories")?.optString(0)?.takeIf { it.isNotBlank() } ?: category
-                        out.add(Channel(name, cid, categoryLabel(cat), detectCountry(name), raw, isIh))
+                        val infohash = o.optString("infohash", "")
+                        val contentId = o.optString("content_id", "")
+                        val cid = contentId.ifBlank { infohash }
+                        if (cid.isBlank() || !Regex("[0-9a-fA-F]{40}").matches(cid)) continue
+                        val name = o.optString("name", "").ifBlank { o.optString("translated_name", "Canal") }
+                        val isIh = contentId.isBlank() && infohash.isNotBlank()
+                        out.add(Channel(name, cid.lowercase(), "🔎 Búsqueda", detectCountry(name), "", isIh))
                     }
                     onResult(out, null)
                 }
