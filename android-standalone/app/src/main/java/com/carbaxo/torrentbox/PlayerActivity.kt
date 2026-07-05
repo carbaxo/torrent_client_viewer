@@ -16,6 +16,9 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.cast.CastPlayer
 import androidx.media3.cast.SessionAvailabilityListener
 import androidx.media3.common.C
@@ -66,6 +69,7 @@ class PlayerActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        enableImmersive()
 
         val directUrl = intent.getStringExtra("url")
         val infoHash = intent.getStringExtra("infoHash")
@@ -228,6 +232,19 @@ class PlayerActivity : AppCompatActivity() {
         if (pos > 0) local.seekTo(pos)
         local.playWhenReady = true
         showToast("De vuelta al móvil")
+    }
+
+    /** Pantalla completa inmersiva: oculta barra de estado y de navegación. */
+    private fun enableImmersive() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val c = WindowInsetsControllerCompat(window, window.decorView)
+        c.hide(WindowInsetsCompat.Type.systemBars())
+        c.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) enableImmersive()
     }
 
     // ------------------- Gestos -------------------
