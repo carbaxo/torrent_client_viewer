@@ -34,6 +34,14 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      # Sello de build para que la app instalada sepa su versión y pueda
+      # ofrecer la auto-actualización comparando con el "Build N" del release
+      - name: Stamp build number
+        shell: bash
+        run: |
+          echo "{ \"build\": ${{ github.run_number }}, \"commit\": \"${{ github.sha }}\" }" > electron/build-info.json
+          cat electron/build-info.json
+
       - name: Build MSI installer
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
