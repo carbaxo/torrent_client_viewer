@@ -71,6 +71,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
           <span class="nav-label">Favoritos</span>
         </button>
+        <button class="nav-item" data-view="tv" title="TV (AceStream)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="13" rx="2"/><polyline points="8 3 12 7 16 3"/></svg>
+          <span class="nav-label">TV</span>
+        </button>
         <button class="nav-item" data-view="downloads" title="Descargas">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
           <span class="nav-label">Descargas</span>
@@ -192,6 +196,22 @@
         <!-- FAVORITOS -->
         <section class="view hidden" id="view-favorites">
           <div id="favorites-grid" class="poster-grid"></div>
+        </section>
+
+        <!-- TV (AceStream) -->
+        <section class="view hidden" id="view-tv">
+          <div class="panel">
+            <p id="tv-engine" class="status"></p>
+            <form id="tv-search-form" class="add-form">
+              <input type="text" id="tv-search-input" placeholder="Buscar canal o evento (fútbol, DAZN, La Liga…)" autocomplete="off" />
+              <button type="submit" class="btn-primary">Buscar</button>
+              <button type="button" id="tv-all-btn" class="btn-ghost">Ver todos</button>
+            </form>
+            <div id="tv-filters" class="quality-filters"></div>
+            <p id="tv-status" class="status"></p>
+          </div>
+          <div id="tv-list" class="downloads-list"></div>
+          <p class="hint">La reproducción abre la app <b>AceStream</b> (instálala en el PC desde <span class="mono">acestream.org</span>). Contenido P2P de terceros: úsalo bajo tu responsabilidad.</p>
         </section>
 
         <!-- DESCARGAS (biblioteca offline) -->

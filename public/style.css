@@ -581,9 +581,17 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 
 /* ---------- Modo infantil ---------- */
 .kids-mode .nav-item[data-view="search"],
+.kids-mode .nav-item[data-view="tv"],
 .kids-mode .nav-item[data-view="add"],
 .kids-mode .nav-item[data-view="settings"],
 .kids-mode #catalog-reload { display: none !important; }
+
+/* ---------- TV / AceStream ---------- */
+.tv-channel { display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
+.tv-channel .tv-meta { flex: 1 1 auto; min-width: 0; }
+.tv-channel .tv-name { font-weight: 600; }
+.tv-channel .tv-sub { font-size: .8rem; color: var(--muted); }
+#tv-filters { margin: 10px 0; }
 
 /* ---------- Toasts ---------- */
 .toasts {

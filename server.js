@@ -19,6 +19,7 @@ import { createUserData, DEFAULT_AVATARS } from './lib/userdata.js'
 import { createFirebaseVerifier, FirebaseAuthError } from './lib/firebaseAuth.js'
 import { createRealDebrid, RdError } from './lib/realdebrid.js'
 import { createRdDownloads } from './lib/rddownloads.js'
+import { createAceStream } from './lib/acestream.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -84,6 +85,9 @@ const auth = createAuth({
 const firebaseVerifier = createFirebaseVerifier({ projectId: FIREBASE_PROJECT_ID })
 const realDebrid = createRealDebrid({})
 const rdDownloads = createRdDownloads({ file: path.join(DATA_DIR, 'rd-downloads.json') })
+const aceStream = createAceStream({})
+// Caché en memoria de la playlist (cambia poco; TTL 30 min)
+let acePlaylistCache = { at: 0, data: null }
 
 let ffmpegAvailable = false
 detectFfmpeg().then((ok) => {
@@ -593,6 +597,50 @@ app.get('/rd-file/:id', auth.requireAuth, (req, res) => {
   stream.on('error', (err) => { console.error('[rd-file]', err.message); if (!res.headersSent) res.status(500); res.end() })
   req.on('close', () => stream.destroy())
   stream.pipe(res)
+})
+
+// ========================================================================
+// ACESTREAM (TV P2P) — paridad con la pestaña TV de la app Android
+// ========================================================================
+
+app.use('/api/tv', auth.requireAuth)
+
+// Estado del engine local (127.0.0.1:6878)
+app.get('/api/tv/engine', async (req, res) => {
+  res.json(await aceStream.engineStatus())
+})
+
+// Lista de canales de la playlist pública (con caché de 30 min)
+app.get('/api/tv/channels', async (req, res) => {
+  try {
+    if (!acePlaylistCache.data || Date.now() - acePlaylistCache.at > 30 * 60 * 1000) {
+      acePlaylistCache = { at: Date.now(), data: await aceStream.loadPlaylist() }
+    }
+    res.json({ channels: acePlaylistCache.data })
+  } catch (err) {
+    res.status(502).json({ error: 'No se pudo cargar la lista de canales: ' + err.message })
+  }
+})
+
+// Búsqueda de canales por texto
+app.get('/api/tv/search', searchLimiter, async (req, res) => {
+  const q = String(req.query.q || '').trim()
+  if (!q) return res.status(400).json({ error: 'Escribe algo para buscar.' })
+  try {
+    res.json({ channels: await aceStream.searchApi(q) })
+  } catch (err) {
+    res.status(502).json({ error: 'Error al buscar canales: ' + err.message })
+  }
+})
+
+// Resuelve un content-id contra el engine local -> URL reproducible
+app.get('/api/tv/resolve', async (req, res) => {
+  try {
+    const out = await aceStream.resolve(String(req.query.id || ''))
+    res.json({ success: true, ...out })
+  } catch (err) {
+    res.status(err.status || 502).json({ error: err.message })
+  }
 })
 
 // ========================================================================
