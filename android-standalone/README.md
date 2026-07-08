@@ -4,20 +4,27 @@ App Android **nativa e independiente**: descarga torrents **en el propio móvil*
 y reproduce el vídeo **mientras se descarga**, sin depender de ningún PC ni
 servidor.
 
-- **Interfaz al estilo de la web**: pestañas Descubrir / Buscar / Descargas,
-  catálogos con carátulas (Netflix, Prime, HBO Max, Disney+ vía TMDB) y ficha
-  de detalle con sinopsis y fuentes (Ver / Descargar).
-- Motor BitTorrent en el dispositivo: **libtorrent4j** (natives incluidos).
+- **Interfaz al estilo de la web**: pestañas Descubrir / Buscar / TV / Descargas /
+  Ajustes, catálogos con carátulas (Netflix, Prime, HBO Max, Disney+ vía TMDB) y
+  ficha de detalle con sinopsis, tráiler y fuentes (Ver / Descargar).
+- Motor BitTorrent en el dispositivo: **libtorrent4j** (natives incluidos), con
+  **persistencia**: las descargas permanentes se reanudan al reabrir la app.
 - Descarga **secuencial** con priorización de piezas → reproducción mientras baja.
-- Reproductor **ExoPlayer (Media3)** vía servidor HTTP local con soporte de Range.
-- Buscador de fuentes (apibay / The Pirate Bay), sin API key.
-- Descarga en segundo plano con servicio en primer plano.
+- Reproductor **ExoPlayer (Media3)**: subtítulos, pistas de audio, velocidad,
+  siguiente episodio, Chromecast y continuar viendo.
+- Buscador con **dos motores**: Torrentio (banderas de idioma) y apibay/TPB, con
+  **filtros de calidad** (4K/1080p/720p/SD) y orden por idioma preferido.
+- **Real-Debrid**: ver por streaming y descargar a disco.
+- **TV (AceStream)**: canales/eventos P2P vía search-ace.stream.
+- **Perfiles** (crear/editar/borrar) con **modo infantil** (solo catálogos
+  familiares), sincronizados con la app del PC.
+- Descarga en segundo plano con servicio en primer plano y **auto-actualización**.
 
-## Sincronización con tu cuenta de Google (opcional, en preparación)
+## Sincronización con tu cuenta de Google
 
-Para que la app use **la misma cuenta** que la app del PC y sincronice
-favoritos/historial vía Firebase, Google exige registrar la **huella SHA-1** de
-la app en tu proyecto de Firebase:
+La app usa **la misma cuenta** que la app del PC y sincroniza perfiles,
+favoritos, historial y el token de Real-Debrid vía Firebase (Auth + Firestore).
+Google exige registrar la **huella SHA-1** de la app en tu proyecto de Firebase:
 
 1. Firebase Console → tu proyecto → **Configuración → Tus apps → Añadir app →
    Android**. Nombre de paquete: `com.carbaxo.torrentbox`.
