@@ -1,0 +1,74 @@
+name: Build Windows Installer
+
+# Empaqueta la app de escritorio (Electron) y genera el instalador .msi,
+# publicándolo como artefacto y como Release descargable.
+
+on:
+  push:
+    branches: [main, master, claude/torrent-downloader-streaming-cqjddi]
+    paths:
+      - 'electron/**'
+      - 'server.js'
+      - 'lib/**'
+      - 'public/**'
+      - 'build/**'
+      - 'package.json'
+      - '.github/workflows/windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build MSI installer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run dist:msi
+
+      - name: Collect installer
+        shell: bash
+        run: |
+          mkdir -p out
+          cp dist-app/*.msi "out/TorrentViewer-Setup.msi"
+          ls -la out
+
+      - name: Upload MSI as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TorrentViewer-msi
+          path: out/TorrentViewer-Setup.msi
+
+      # Refresca el release para que la fecha en GitHub no quede congelada
+      - name: Delete previous release so the date refreshes
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete windows-latest --yes --cleanup-tag -R "$env:GITHUB_REPOSITORY"
+
+      - name: Publish MSI to Release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: windows-latest
+          name: Torrent Viewer (Windows)
+          make_latest: false
+          body: |
+            Instalador de escritorio de Torrent Viewer para Windows.
+            Descarga `TorrentViewer-Setup.msi` y ejecútalo para instalar.
+            Build ${{ github.run_number }} — commit ${{ github.sha }}
+          files: out/TorrentViewer-Setup.msi
