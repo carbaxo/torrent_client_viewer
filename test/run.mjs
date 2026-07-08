@@ -16,6 +16,8 @@ import { createAuth, parseCookies } from '../lib/auth.js'
 import { createUserData, MAX_PROGRESS } from '../lib/userdata.js'
 import { createFirebaseVerifier } from '../lib/firebaseAuth.js'
 import { createRealDebrid } from '../lib/realdebrid.js'
+import { createRdDownloads, sanitizeFilename } from '../lib/rddownloads.js'
+import { Readable } from 'node:stream'
 
 let passed = 0
 const pending = []
@@ -395,6 +397,69 @@ t('token manipulado se rechaza', () => {
   const { token } = a.login('dave', 'password1')
   const tampered = token.slice(0, -3) + 'xyz'
   assert.equal(a.userFromRequest({ headers: { cookie: `${a.COOKIE}=${tampered}` } }), null)
+})
+
+console.log('rd-downloads (descargas a disco)')
+t('sanitizeFilename quita caracteres prohibidos', () => {
+  assert.equal(sanitizeFilename('a<b>:c|d?.mkv'), 'a_b__c_d_.mkv')
+  assert.equal(sanitizeFilename('Mi Peli 1080p.mp4'), 'Mi Peli 1080p.mp4')
+  assert.equal(sanitizeFilename(''), 'video')
+})
+// fetch simulado que soporta Range sobre un contenido fijo
+function fakeRdFetch (content, ranges) {
+  return async (url, opts = {}) => {
+    const range = (opts.headers || {}).Range || null
+    if (ranges) ranges.push(range)
+    const start = range ? parseInt(/bytes=(\d+)-/.exec(range)[1], 10) : 0
+    const body = Buffer.from(content.slice(start))
+    return {
+      ok: true,
+      status: range ? 206 : 200,
+      headers: { get: (h) => (/content-length/i.test(h) ? String(body.length) : null) },
+      body: Readable.toWeb(Readable.from([body]))
+    }
+  }
+}
+const rdWait = async (rdd, id, user) => {
+  for (let i = 0; i < 200 && rdd.get(id, user).status !== 'done'; i++) await new Promise((r) => setTimeout(r, 10))
+}
+t('descarga a disco, vista pública sin url y borrado', async () => {
+  const dir = tmp()
+  const content = '0123456789'
+  const rdd = createRdDownloads({ file: path.join(dir, 'rd.json'), fetchImpl: fakeRdFetch(content) })
+  const e = rdd.add({ userId: 'u1', url: 'http://x/v.mp4', filename: 'Mi: Peli?.mp4', magnet: null, dir })
+  await rdWait(rdd, e.id, 'u1')
+  const done = rdd.get(e.id, 'u1')
+  assert.equal(done.status, 'done')
+  assert.equal(fs.readFileSync(done.path, 'utf8'), content)
+  const pub = rdd.listFor('u1')[0]
+  assert.ok(!('url' in pub) && !('magnet' in pub) && !('path' in pub))
+  assert.equal(rdd.listFor('otro-usuario').length, 0)
+  rdd.remove(e.id, 'u1', true)
+  await new Promise((r) => setTimeout(r, 50))
+  assert.ok(!fs.existsSync(done.path))
+  assert.equal(rdd.listFor('u1').length, 0)
+})
+t('reanuda una descarga interrumpida con Range', async () => {
+  const dir = tmp()
+  const file = path.join(dir, 'rd.json')
+  const dest = path.join(dir, 'v.mp4')
+  const ranges = []
+  const content = '0123456789'
+  fs.writeFileSync(dest, content.slice(0, 4))
+  fs.writeFileSync(file, JSON.stringify([{
+    id: 'r1', userId: 'u1', name: 'v.mp4', magnet: null, url: 'http://x/v.mp4',
+    path: dest, size: 10, downloaded: 4, status: 'downloading', error: null, addedAt: 'x'
+  }]))
+  const rdd = createRdDownloads({ file, fetchImpl: fakeRdFetch(content, ranges) })
+  const before = rdd.listFor('u1')[0]
+  assert.equal(before.status, 'interrupted') // marcada al arrancar
+  assert.ok(before.canRetry)
+  rdd.resume('r1', 'u1')
+  await rdWait(rdd, 'r1', 'u1')
+  assert.equal(rdd.get('r1', 'u1').status, 'done')
+  assert.equal(fs.readFileSync(dest, 'utf8'), content)
+  assert.ok(ranges.includes('bytes=4-'))
 })
 
 Promise.allSettled(pending).then(() => {

@@ -6,6 +6,12 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["server.js"],
       "port": 3000
+    },
+    {
+      "name": "tracker-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "D:/00_Code_Projects/29_tracker", "run", "dev", "--", "-p", "3001"],
+      "port": 3001
     }
   ]
 }
