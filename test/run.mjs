@@ -135,6 +135,29 @@ t('NO_KEY (torrentio sin key y no es id)', async () => {
   const { search } = createSearch({ fetchImpl: async () => ({}) })
   await assert.rejects(() => search('Inception', 'movie', 'torrentio'), (e) => e.code === 'NO_KEY')
 })
+t('OMDb caído -> TMDB external_ids resuelve', async () => {
+  const fetchImpl = async (url) => {
+    if (url.includes('omdbapi')) return { ok: false, status: 401 }
+    if (url.includes('/search/movie')) return { ok: true, json: async () => ({ results: [{ id: 603, title: 'The Matrix' }] }) }
+    if (url.includes('/603/external_ids')) return { ok: true, json: async () => ({ imdb_id: 'tt0133093' }) }
+    return { ok: true, json: async () => ({ streams: [] }) }
+  }
+  const { search } = createSearch({ fetchImpl, omdbKey: 'MALA', tmdbKey: 'T' })
+  const r = await search('The Matrix', 'movie', 'torrentio')
+  assert.equal(r.imdbId, 'tt0133093'); assert.equal(r.title, 'The Matrix')
+})
+t('sin OMDb key: TMDB resuelve series directamente', async () => {
+  let omdbCalls = 0
+  const fetchImpl = async (url) => {
+    if (url.includes('omdbapi')) { omdbCalls++; return { ok: true, json: async () => ({}) } }
+    if (url.includes('/search/tv')) return { ok: true, json: async () => ({ results: [{ id: 1396, name: 'Breaking Bad' }] }) }
+    if (url.includes('/1396/external_ids')) return { ok: true, json: async () => ({ imdb_id: 'tt0903747' }) }
+    return { ok: true, json: async () => ({ streams: [] }) }
+  }
+  const { search } = createSearch({ fetchImpl, tmdbKey: 'T' })
+  const r = await search('Breaking Bad', 'series', 'torrentio')
+  assert.equal(r.imdbId, 'tt0903747'); assert.equal(omdbCalls, 0)
+})
 t('caché evita segundo fetch', async () => {
   let n = 0
   const fetchImpl = async (url) => { n++; return url.includes('omdbapi') ? { ok: true, json: async () => ({ Response: 'True', imdbID: 'tt1', Title: 'X' }) } : { ok: true, json: async () => ({ streams: [] }) } }

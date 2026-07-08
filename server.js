@@ -70,7 +70,7 @@ app.set('trust proxy', 1)
 const client = new WebTorrent({ maxConns: 100 })
 const store = createStore(path.join(DATA_DIR, 'torrents.json'))
 const userData = createUserData(path.join(DATA_DIR, 'userdata.json'))
-const search = createSearch({ omdbKey: OMDB_API_KEY, cache: new Map() })
+const search = createSearch({ omdbKey: OMDB_API_KEY, tmdbKey: TMDB_API_KEY, cache: new Map() })
 const catalog = createCatalog({ tmdbKey: TMDB_API_KEY, region: TMDB_REGION, cache: new Map() })
 const auth = createAuth({
   usersFile: path.join(DATA_DIR, 'users.json'),
@@ -207,17 +207,19 @@ function serializeTorrent (torrent) {
 // propietario. Si hay metadatos, guarda el .torrent para reanudar offline.
 function persistTorrent (torrent, userId, extra = {}) {
   if (!torrent || !torrent.infoHash) return
-  let hasMeta = false
-  if (torrent.torrentFile) {
+  const prev = store.all().find((e) => e.infoHash === torrent.infoHash)
+  // El .torrent solo sirve para reanudar cuando ya llegaron los metadatos
+  // (dict `info`); antes de eso, torrentFile es un stub imposible de parsear.
+  let hasMeta = !!(prev && prev.hasMeta)
+  if (torrent.info && torrent.torrentFile) {
     try {
       const p = metaPath(torrent.infoHash)
-      if (!fs.existsSync(p)) fs.writeFileSync(p, torrent.torrentFile)
+      if (!hasMeta || !fs.existsSync(p)) fs.writeFileSync(p, torrent.torrentFile)
       hasMeta = true
     } catch (err) {
       console.error('[persistencia] no se pudo guardar .torrent:', err.message)
     }
   }
-  const prev = store.all().find((e) => e.infoHash === torrent.infoHash)
   store.add({
     infoHash: torrent.infoHash,
     magnetURI: torrent.magnetURI,
@@ -806,20 +808,36 @@ function resumePersisted () {
   console.log(`[persistencia] reanudando ${entries.length} torrent(s)…`)
   for (const entry of entries) {
     const meta = metaPath(entry.infoHash)
-    const id = (entry.hasMeta && fs.existsSync(meta)) ? meta : (entry.magnetURI || entry.infoHash)
-    if (!id) continue
+    const magnet = entry.magnetURI || entry.infoHash
+    const useMeta = entry.hasMeta && fs.existsSync(meta)
+    if (!useMeta && !magnet) continue
     try {
       if (client.get(entry.infoHash)) continue
       // Cada torrent se reanuda en la carpeta donde se descargó
       const dir = entry.path || (entry.mode === 'buffer' ? activeBufferDir() : activeDownloadDir())
-      const torrent = client.add(id, { path: dir })
-      torrent.on('error', (err) => console.error('[persistencia] error al reanudar:', err.message))
-      torrent.on('metadata', () => {
-        if (torrent.torrentFile && !fs.existsSync(meta)) {
-          try { fs.writeFileSync(meta, torrent.torrentFile) } catch {}
-        }
-      })
-      if (entry.paused) torrent.once('ready', () => torrent.pause())
+      const addFrom = (id, viaMeta) => {
+        const torrent = client.add(id, { path: dir })
+        torrent.on('error', (err) => {
+          if (viaMeta && magnet) {
+            // .torrent corrupto (p. ej. stub sin `info` guardado por versiones
+            // anteriores): se descarta y se reintenta con el magnet.
+            console.error('[persistencia] .torrent inválido, reintentando con magnet:', entry.name || entry.infoHash)
+            try { fs.unlinkSync(meta) } catch {}
+            store.update(entry.infoHash, { hasMeta: false })
+            addFrom(magnet, false)
+            return
+          }
+          console.error('[persistencia] error al reanudar:', err.message)
+        })
+        torrent.on('metadata', () => {
+          try {
+            fs.writeFileSync(meta, torrent.torrentFile)
+            store.update(entry.infoHash, { hasMeta: true })
+          } catch {}
+        })
+        if (entry.paused) torrent.once('ready', () => torrent.pause())
+      }
+      addFrom(useMeta ? meta : magnet, useMeta)
     } catch (err) {
       console.error('[persistencia] no se pudo reanudar', entry.infoHash, err.message)
     }
