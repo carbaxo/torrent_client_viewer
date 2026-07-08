@@ -48,6 +48,8 @@ object Prefs {
     fun setLanguageOrder(order: List<String>) {
         languageOrder.clear(); languageOrder.addAll(order)
         sp().edit().putString("langOrder", order.joinToString(",")).apply()
+        // Sube el idioma principal a la nube (settings del perfil), como la web
+        runCatching { Sync.saveSettingsLanguage(primaryTmdbLang()) }
     }
 
     /** Idioma principal en formato TMDB (para catálogos y fichas). */
@@ -101,6 +103,36 @@ object Prefs {
 
     fun downloadDirFile(): File = File(downloadDir.value ?: defaultDownloadDir().absolutePath).apply { mkdirs() }
     fun bufferDirFile(): File = File(bufferDir.value ?: defaultBufferDir().absolutePath).apply { mkdirs() }
+
+    // --- Torrents persistentes (descargas permanentes) ---
+    // Guarda "magnet\tsaveDir" por línea para poder reanudarlos al reabrir la
+    // app (libtorrent verifica en disco lo ya descargado). El buffer NO se
+    // persiste (es temporal y se limpia al arrancar).
+    fun savedTorrents(): List<Pair<String, String>> =
+        sp().getString("savedTorrents", null)
+            ?.split("\n")?.filter { it.contains("\t") }
+            ?.map { val i = it.indexOf('\t'); it.substring(0, i) to it.substring(i + 1) }
+            ?: emptyList()
+
+    fun addSavedTorrent(magnet: String, saveDir: String) {
+        if (magnet.isBlank()) return
+        val list = savedTorrents().filterNot { it.first == magnet }.toMutableList()
+        list.add(magnet to saveDir)
+        sp().edit().putString("savedTorrents", list.joinToString("\n") { "${it.first}\t${it.second}" }).apply()
+    }
+
+    fun removeSavedTorrent(magnet: String) {
+        val list = savedTorrents().filterNot { it.first == magnet }
+        sp().edit().putString("savedTorrents", list.joinToString("\n") { "${it.first}\t${it.second}" }).apply()
+    }
+
+    /** Olvida el torrent guardado cuyo magnet contiene ese infoHash. */
+    fun removeSavedTorrentByHash(infoHash: String) {
+        if (infoHash.isBlank()) return
+        val h = infoHash.lowercase()
+        val list = savedTorrents().filterNot { it.first.lowercase().contains(h) }
+        sp().edit().putString("savedTorrents", list.joinToString("\n") { "${it.first}\t${it.second}" }).apply()
+    }
 
     /** Etiqueta corta y legible de una ruta (para mostrar en Ajustes). */
     fun shortLabel(path: String?): String {

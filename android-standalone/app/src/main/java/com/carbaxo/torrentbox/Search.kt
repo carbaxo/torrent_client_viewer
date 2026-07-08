@@ -14,12 +14,26 @@ object Search {
         val seeders: Int,
         val sizeBytes: Long,
         val magnet: String,
-        val lang: String? = null   // código de idioma detectado (Lang), o null
+        val lang: String? = null,  // código de idioma detectado (Lang), o null
+        val quality: String = "Unknown" // 4K/1080p/720p/480p/SD/Unknown
     )
 
     /** Ordena por prioridad de idioma del usuario y, a igualdad, por seeders. */
     fun sortByLang(list: List<Result>, order: List<String>): List<Result> =
         list.sortedWith(compareBy<Result> { Lang.rank(it.lang, order) }.thenByDescending { it.seeders })
+
+    /** Calidad a partir del nombre del torrent (mismas etiquetas que la web). */
+    fun quality(name: String): String {
+        val n = name.lowercase()
+        return when {
+            Regex("\\b(4k|2160p|uhd)\\b").containsMatchIn(n) -> "4K"
+            Regex("\\b(1080p|fhd)\\b").containsMatchIn(n) -> "1080p"
+            Regex("\\b(720p|hdtv|hd)\\b").containsMatchIn(n) -> "720p"
+            Regex("\\b480p\\b").containsMatchIn(n) -> "480p"
+            Regex("\\b(sd|dvdrip|cam|ts|360p)\\b").containsMatchIn(n) -> "SD"
+            else -> "Unknown"
+        }
+    }
 
     /** Construye la query para un episodio concreto: "Título S01E02". */
     fun episodeQuery(title: String, season: Int, episode: Int): String =
@@ -69,7 +83,8 @@ object Search {
                                 seeders = seeders,
                                 sizeBytes = o.optString("size", "0").toLongOrNull() ?: 0,
                                 magnet = buildMagnet(hash.lowercase(), name),
-                                lang = Lang.detectFromTitle(name)
+                                lang = Lang.detectFromTitle(name),
+                                quality = quality(name)
                             )
                         )
                     }

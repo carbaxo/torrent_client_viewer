@@ -30,6 +30,10 @@ object Tmdb {
         Platform("disney", "Disney+", "337")
     )
 
+    // Géneros TMDB aptos para el modo infantil (mismos que la web):
+    // Familia (10751) / Animación (16) / Kids (10762, solo TV)
+    private fun kidsGenres(type: String) = if (type == "series") "10762|16|10751" else "10751|16"
+
     data class Title(
         val tmdbId: Int,
         val title: String,
@@ -92,16 +96,17 @@ object Tmdb {
     }
 
     /** Catálogos de todas las plataformas para un tipo. */
-    fun catalogs(type: String, onResult: (List<Row>?, String?) -> Unit) {
+    fun catalogs(type: String, kids: Boolean = false, onResult: (List<Row>?, String?) -> Unit) {
         io.submit {
             try {
                 val tmdbType = if (type == "series") "tv" else "movie"
+                val kidsFilter = if (kids) "&with_genres=${enc(kidsGenres(type))}" else ""
                 val rows = ArrayList<Row>()
                 for (p in PLATFORMS) {
                     val url = "https://api.themoviedb.org/3/discover/$tmdbType" +
                         "?api_key=${BuildConfig.TMDB_KEY}&language=${L()}" +
                         "&with_watch_providers=${enc(p.providers)}&watch_region=$REGION" +
-                        "&with_watch_monetization_types=flatrate&sort_by=popularity.desc&page=1"
+                        "&with_watch_monetization_types=flatrate&sort_by=popularity.desc&page=1$kidsFilter"
                     try {
                         val d = get(url)
                         val arr = d.optJSONArray("results") ?: continue
@@ -119,7 +124,7 @@ object Tmdb {
     }
 
     /** Explorar (paginado) por plataforma o género. */
-    fun discover(type: String, provider: String?, genreId: Int?, page: Int, onResult: (List<Title>?, String?) -> Unit) {
+    fun discover(type: String, provider: String?, genreId: Int?, page: Int, kids: Boolean = false, onResult: (List<Title>?, String?) -> Unit) {
         io.submit {
             try {
                 val tmdbType = if (type == "series") "tv" else "movie"
@@ -127,7 +132,10 @@ object Tmdb {
                     .append("?api_key=${BuildConfig.TMDB_KEY}&language=${L()}&sort_by=popularity.desc")
                     .append("&vote_count.gte=30&page=").append(page)
                 if (provider != null) sb.append("&with_watch_providers=${enc(provider)}&watch_region=$REGION&with_watch_monetization_types=flatrate")
+                // En modo infantil restringimos a géneros familiares (salvo que ya
+                // se pida un género concreto)
                 if (genreId != null) sb.append("&with_genres=").append(genreId)
+                else if (kids) sb.append("&with_genres=").append(enc(kidsGenres(type)))
                 val d = get(sb.toString())
                 val arr = d.optJSONArray("results")
                 val items = ArrayList<Title>()
