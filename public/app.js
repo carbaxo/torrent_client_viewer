@@ -346,6 +346,40 @@ async function selectProfile (profile) {
   if (CONFIG.catalogs) { loadCatalogs(); loadRecommendations(); loadGenres() }
   if (!KIDS()) { loadRdStatus(); loadServerDirs() }
   renderProfilesSettings()
+  checkEpisodeAlerts() // en segundo plano: avisos de episodios nuevos
+}
+
+// --- Alertas de episodios nuevos (paridad con EpisodeAlerts.kt de Android) ---
+// Compara el último episodio emitido de tus series favoritas (máx. 12) con el
+// último que se conocía; solo avisa si ya conocíamos uno anterior distinto.
+let episodeAlertsRan = false
+async function checkEpisodeAlerts () {
+  if (episodeAlertsRan || !CONFIG.catalogs || KIDS()) return
+  episodeAlertsRan = true
+  const series = MY.favorites.filter((f) => f.type === 'series').slice(0, 12)
+  if (!series.length) return
+  const storeKey = 'tcv_last_ep_' + (CURRENT_USER ? CURRENT_USER.id : '')
+  let known = {}
+  try { known = JSON.parse(localStorage.getItem(storeKey) || '{}') } catch {}
+  const fresh = []
+  for (const f of series) {
+    const m = /^tmdb:(\d+)$/.exec(f.id || '')
+    if (!m) continue
+    try {
+      const params = MY.settings.language ? '?lang=' + encodeURIComponent(MY.settings.language) : ''
+      const res = await api(`/api/title/series/${m[1]}` + params)
+      if (!res.ok) continue
+      const d = await res.json()
+      const ep = d && d.lastEpisode
+      if (!ep) continue
+      const tag = `T${ep.season}E${ep.episode}`
+      const prev = known[m[1]]
+      if (prev && prev !== tag) fresh.push(`${d.title || f.title} (${tag})`)
+      known[m[1]] = tag
+    } catch {}
+  }
+  try { localStorage.setItem(storeKey, JSON.stringify(known)) } catch {}
+  if (fresh.length) toast('📺 Episodios nuevos: ' + fresh.join(' · '))
 }
 
 function applyKidsMode () {

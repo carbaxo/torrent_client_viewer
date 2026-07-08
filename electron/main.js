@@ -3,6 +3,7 @@
 // reutiliza TODO el backend y frontend existentes sin cambios.
 import { app, BrowserWindow, shell, dialog } from 'electron'
 import path from 'node:path'
+import fs from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import net from 'node:net'
 
@@ -82,6 +83,55 @@ function createWindow () {
   if (isDev) mainWindow.webContents.openDevTools({ mode: 'detach' })
 }
 
+// --- Auto-actualización (paridad con Update.kt de la app Android) ---------
+// La CI publica el MSI en la release "windows-latest" con "Build N" en el
+// cuerpo, y estampa el nº de build en electron/build-info.json al compilar.
+const UPDATE_REPO = 'carbaxo/torrent_client_viewer'
+const UPDATE_TAG = 'windows-latest'
+
+function localBuild () {
+  try {
+    return Number(JSON.parse(fs.readFileSync(path.join(__dirname, 'build-info.json'), 'utf8')).build) || 0
+  } catch {
+    return 0
+  }
+}
+
+async function checkForUpdate () {
+  if (!app.isPackaged) return // en desarrollo no molesta
+  try {
+    const res = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/tags/${UPDATE_TAG}`, {
+      headers: { 'User-Agent': 'TorrentViewer', Accept: 'application/vnd.github+json' }
+    })
+    if (!res.ok) return
+    const rel = await res.json()
+    const m = /Build (\d+)/.exec(rel.body || '')
+    const remote = m ? Number(m[1]) : 0
+    const mine = localBuild()
+    if (!remote || !mine || remote <= mine) return
+    const asset = (rel.assets || []).find((a) => a.name && a.name.endsWith('.msi'))
+    if (!asset) return
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      buttons: ['Actualizar ahora', 'Más tarde'],
+      defaultId: 0,
+      cancelId: 1,
+      title: 'Actualización disponible',
+      message: `Hay una versión nueva de Torrent Viewer (build ${remote}; la instalada es ${mine}).`,
+      detail: 'Se descargará el instalador y se abrirá para actualizar. La app se cerrará.'
+    })
+    if (response !== 0) return
+    const dl = await fetch(asset.browser_download_url, { headers: { 'User-Agent': 'TorrentViewer' } })
+    if (!dl.ok) throw new Error('descarga: HTTP ' + dl.status)
+    const dest = path.join(app.getPath('temp'), 'TorrentViewer-Setup.msi')
+    fs.writeFileSync(dest, Buffer.from(await dl.arrayBuffer()))
+    await shell.openPath(dest)
+    app.quit()
+  } catch (err) {
+    console.error('[update]', err.message)
+  }
+}
+
 // Instancia única
 if (!app.requestSingleInstanceLock()) {
   app.quit()
@@ -99,6 +149,7 @@ if (!app.requestSingleInstanceLock()) {
       return
     }
     createWindow()
+    checkForUpdate() // en segundo plano; avisa solo si hay build nueva
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
   })
 
