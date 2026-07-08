@@ -8,7 +8,7 @@ import {
   extractQuality, extractSeeders, extractSize, humanSize,
   buildMagnet, isValidMagnet, isValidInfoHash,
   parseStream, processStreams, parseApibay, dedupeStreams,
-  createSearch, SearchError
+  createSearch, SearchError, detectLang
 } from '../lib/search.js'
 import crypto from 'node:crypto'
 import { createStore } from '../lib/store.js'
@@ -46,6 +46,14 @@ t('quality 4K/1080/720/unknown', () => {
 t('seeders emoji y texto', () => { assert.equal(extractSeeders('👤 152'), 152); assert.equal(extractSeeders('45 seeders'), 45); assert.equal(extractSeeders('nada'), 0) })
 t('size', () => { assert.equal(extractSize('💾 2.18 GB'), '2.18 GB'); assert.equal(extractSize('2.1GB'), '2.1 GB') })
 t('humanSize', () => { assert.equal(humanSize(2 * 1024 ** 3), '2.00 GB'); assert.equal(humanSize(700 * 1024 ** 2), '700 MB'); assert.equal(humanSize(0), 'Unknown') })
+t('detectLang: banderas y palabras clave', () => {
+  assert.equal(detectLang('Peli 1080p 🇪🇸'), 'es-ES')
+  assert.equal(detectLang('Serie 🇲🇽 latino'), 'es-LA')
+  assert.equal(detectLang('Movie 🇪🇸 🇬🇧'), 'multi') // dos banderas distintas
+  assert.equal(detectLang('Pelicula.Castellano.1080p'), 'es-ES')
+  assert.equal(detectLang('Show.S01.Dual.WEB-DL'), 'multi')
+  assert.equal(detectLang('Some.Movie.2020.1080p'), null)
+})
 
 console.log('magnet / validación')
 t('buildMagnet', () => { assert.ok(buildMagnet('ABC', 'Peli').startsWith('magnet:?xt=urn:btih:ABC')); assert.equal(buildMagnet('', 'x'), null) })

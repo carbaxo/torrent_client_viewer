@@ -492,7 +492,25 @@ function applySettings () {
     $('catalog-type').querySelectorAll('button').forEach((x) => x.classList.toggle('active', x.dataset.ctype === CATALOG_TYPE))
   }
   $('setting-lang').value = ['es-ES', 'en-US'].includes(s.language) ? s.language : 'es-ES'
+  $('setting-source-lang').value = ['es-ES', 'es-LA', 'en'].includes(s.sourceLang) ? s.sourceLang : ''
   toggleSeasonFields()
+}
+
+// --- Idioma de las fuentes (paridad con la app Android) ---
+const LANG_META = {
+  'es-ES': { flag: '🇪🇸', label: 'Español (España)' },
+  'es-LA': { flag: '🇲🇽', label: 'Español (Latino)' },
+  en: { flag: '🇬🇧', label: 'Inglés' },
+  multi: { flag: '🌍', label: 'Multi-idioma' }
+}
+
+// Con preferencia: primero tu idioma, luego multi, luego el resto; a igualdad,
+// más seeders. Sin preferencia se respeta el orden del servidor (seeders).
+function sortStreamsByLang (streams) {
+  const pref = MY.settings.sourceLang
+  if (!pref) return streams
+  const rank = (l) => (l === pref ? 0 : l === 'multi' ? 1 : l ? 2 : 3)
+  return [...streams].sort((a, b) => (rank(a.lang) - rank(b.lang)) || (b.seeders - a.seeders))
 }
 
 function saveSettings (patch) {
@@ -773,6 +791,7 @@ function renderDetail (d) {
           <p class="detail-overview">${escapeHtml(d.overview || 'Sin descripción disponible.')}</p>
           <div class="detail-actions">
             <button id="detail-fav" class="btn-ghost">${isFav ? '❤ En favoritos' : '♡ Añadir a favoritos'}</button>
+            ${d.trailer ? '<button id="detail-trailer" class="btn-ghost">▶ Tráiler</button>' : ''}
           </div>
         </div>
       </div>
@@ -807,6 +826,11 @@ function renderDetail (d) {
     })
     $('detail-fav').textContent = FAV_IDS.has(favIdVal) ? '❤ En favoritos' : '♡ Añadir a favoritos'
   })
+  const trailerBtn = $('detail-trailer')
+  if (trailerBtn) {
+    // En Electron los enlaces externos se abren en el navegador del sistema
+    trailerBtn.addEventListener('click', () => window.open(d.trailer, '_blank', 'noopener'))
+  }
   const chips = $('season-chips')
   if (chips) {
     chips.querySelectorAll('.chip').forEach((c) =>
@@ -852,6 +876,10 @@ async function loadDetailSources ({ season, episode } = {}) {
   const st = $('detail-sources-status')
   const ld = $('detail-sources-loader')
   $('sources-title').textContent = episode ? `Fuentes · T${season} E${episode}` : 'Fuentes'
+  // Contexto para "siguiente episodio" en el reproductor
+  EPISODE_CTX = episode
+    ? { tmdbId: DETAIL.tmdbId, query: DETAIL.originalTitle || DETAIL.title, title: DETAIL.title, season, episode, seasons: DETAIL.seasons || [] }
+    : null
   st.textContent = ''
   st.classList.remove('error')
   el.innerHTML = ''
@@ -865,7 +893,7 @@ async function loadDetailSources ({ season, episode } = {}) {
     const data = await res.json()
     if (!res.ok || !data.success) throw new Error(data.error || 'No se pudieron cargar las fuentes.')
     if (!data.streams.length) { st.textContent = 'Sin fuentes disponibles.'; return }
-    el.innerHTML = data.streams.map(resultCardHtml).join('')
+    el.innerHTML = sortStreamsByLang(data.streams).map(resultCardHtml).join('')
     wireResultActions(el)
     let msg = `${data.streams.length} fuentes`
     if (data.warnings) msg += ' · aviso: ' + data.warnings.join(', ')
@@ -1149,6 +1177,7 @@ function resultCardHtml (s, i) {
       </div>
       <div class="result-name">${escapeHtml(s.filename)}</div>
       <div class="result-badges">
+        ${s.lang && LANG_META[s.lang] ? `<span class="badge lang" title="${LANG_META[s.lang].label}">${LANG_META[s.lang].flag} ${escapeHtml(LANG_META[s.lang].label)}</span>` : ''}
         <span class="badge size">${escapeHtml(s.size)}</span>
         <span class="badge seeders">▲ ${s.seeders} seeders</span>
       </div>
@@ -1178,7 +1207,7 @@ function wireResultActions (root) {
 function renderResults (streams) {
   const filtered = QUALITY_FILTER === 'all' ? streams : streams.filter((s) => s.quality === QUALITY_FILTER)
   if (!filtered.length) { searchResults.innerHTML = '<p class="empty">No hay resultados con ese filtro.</p>'; return }
-  searchResults.innerHTML = filtered.map(resultCardHtml).join('')
+  searchResults.innerHTML = sortStreamsByLang(filtered).map(resultCardHtml).join('')
   wireResultActions(searchResults)
 }
 
@@ -1204,6 +1233,7 @@ async function watchFromSearch (magnet, btn) {
       return
     }
     openPlayer(t.infoHash, file, false, null, t.titleRef || (SEARCH_CONTEXT && SEARCH_CONTEXT.wid))
+    PLAYING_EPISODE = EPISODE_CTX // para ofrecer "siguiente episodio" al acabar
   } catch (err) {
     btn.disabled = false
     btn.textContent = old
@@ -1244,6 +1274,7 @@ async function rdWatch (magnet, btn) {
       return
     }
     openPlayerDirect(data.url, data.filename)
+    PLAYING_EPISODE = EPISODE_CTX // para ofrecer "siguiente episodio" al acabar
   } catch (err) {
     toast(err.message, true)
   } finally {
@@ -1382,11 +1413,15 @@ const playerSubs = $('player-subs')
 
 let PLAYING = null // { infoHash, fileIndex, name } del vídeo en curso
 let lastProgressSave = 0
+let EPISODE_CTX = null // episodio cuyas fuentes se están viendo en la ficha
+let PLAYING_EPISODE = null // episodio que se está reproduciendo (para "siguiente")
 
 async function openPlayer (torrentHash, file, transcode, resumeAt, titleRef) {
   playerTitle.textContent = file.name
   playerSubs.innerHTML = ''
   clearTracks() // limpiar tracks previos
+  PLAYING_EPISODE = null // quien conozca el episodio lo fija tras abrir
+  $('player-next').classList.add('hidden')
 
   PLAYING = { infoHash: torrentHash, fileIndex: file.index, name: file.name, titleId: titleRef || null }
   lastProgressSave = Date.now()
@@ -1470,12 +1505,84 @@ player.addEventListener('timeupdate', () => {
 })
 player.addEventListener('pause', () => { if (PLAYING) saveProgress() })
 
+// ---- Siguiente episodio (como en la app Android) ----
+// Calcula el episodio siguiente usando el nº de episodios por temporada de la
+// ficha; al acabar una temporada salta a la primera de la siguiente.
+function nextEpisodeOf (ctx) {
+  if (!ctx) return null
+  const seasons = ctx.seasons || []
+  const cur = seasons.find((s) => s.season === ctx.season)
+  if (cur && ctx.episode < cur.episodes) return { ...ctx, episode: ctx.episode + 1 }
+  const later = seasons.filter((s) => s.season > ctx.season).sort((a, b) => a.season - b.season)[0]
+  if (later) return { ...ctx, season: later.season, episode: 1 }
+  return null
+}
+
+player.addEventListener('ended', () => {
+  if (PLAYING) saveProgress()
+  const next = nextEpisodeOf(PLAYING_EPISODE)
+  const btn = $('player-next')
+  if (!next) { btn.classList.add('hidden'); return }
+  btn.textContent = `▶ Siguiente: T${next.season} E${next.episode}`
+  btn.disabled = false
+  btn.classList.remove('hidden')
+})
+
+$('player-next').addEventListener('click', async () => {
+  const next = nextEpisodeOf(PLAYING_EPISODE)
+  if (!next) return
+  const btn = $('player-next')
+  btn.disabled = true
+  btn.textContent = `Buscando T${next.season} E${next.episode}…`
+  try {
+    const params = new URLSearchParams({
+      query: next.query, type: 'series', source: 'all',
+      season: next.season, episode: next.episode
+    })
+    const res = await api('/api/search?' + params.toString())
+    const data = await res.json()
+    if (!res.ok || !data.success || !data.streams.length) {
+      throw new Error('No hay fuentes para el siguiente episodio.')
+    }
+    const stream = sortStreamsByLang(data.streams)[0] // la mejor fuente
+    // Con Real-Debrid: streaming directo; si no, torrent local en buffer
+    if (RD.configured) {
+      const r = await api('/api/rd/stream', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ magnet: stream.url })
+      })
+      const d = await r.json()
+      if (r.ok && d.ready) {
+        openPlayerDirect(d.url, `${next.title} · T${next.season} E${next.episode}`)
+        PLAYING_EPISODE = next
+        EPISODE_CTX = next
+        return
+      }
+    }
+    const r2 = await api('/api/torrents', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ magnet: stream.url, mode: 'buffer', titleRef: `series:${next.tmdbId}` })
+    })
+    const t = await r2.json()
+    if (!r2.ok) throw new Error(t.error || 'No se pudo añadir el episodio.')
+    const file = await waitForVideoFile(t.infoHash, 30000)
+    if (!file) { toast('Aún obteniendo metadatos: en cuanto esté, podrás verlo desde Actividad.'); return }
+    openPlayer(t.infoHash, file, false, null, t.titleRef)
+    PLAYING_EPISODE = next
+    EPISODE_CTX = next
+  } catch (err) {
+    toast(err.message, true)
+    btn.classList.add('hidden')
+  }
+})
+
 // Reproducción de una URL directa (p.ej. streaming de Real-Debrid)
 function openPlayerDirect (url, title, note) {
   playerTitle.textContent = title || 'Vídeo'
   playerSubs.innerHTML = ''
   clearTracks()
   PLAYING = null // sin seguimiento de progreso: no hay torrent local
+  PLAYING_EPISODE = null // quien conozca el episodio lo fija tras abrir
+  $('player-next').classList.add('hidden')
   player.src = url
   overlay.classList.remove('hidden')
   playerNote.textContent = note || 'Streaming directo desde Real-Debrid.'
@@ -1798,6 +1905,12 @@ $('setting-lang').addEventListener('change', () => {
   loadCatalogs()
   loadRecommendations()
   loadGenres()
+})
+
+// --- Idioma preferido de las fuentes ---
+$('setting-source-lang').addEventListener('change', () => {
+  saveSettings({ sourceLang: $('setting-source-lang').value })
+  if (LAST_RESULTS.length) renderResults(LAST_RESULTS)
 })
 
 // --- Carpetas del servidor ---
