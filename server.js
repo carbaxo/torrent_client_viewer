@@ -18,6 +18,7 @@ import { createCatalog } from './lib/catalog.js'
 import { createUserData, DEFAULT_AVATARS } from './lib/userdata.js'
 import { createFirebaseVerifier, FirebaseAuthError } from './lib/firebaseAuth.js'
 import { createRealDebrid, RdError } from './lib/realdebrid.js'
+import { createRdDownloads } from './lib/rddownloads.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -82,6 +83,7 @@ const auth = createAuth({
 })
 const firebaseVerifier = createFirebaseVerifier({ projectId: FIREBASE_PROJECT_ID })
 const realDebrid = createRealDebrid({})
+const rdDownloads = createRdDownloads({ file: path.join(DATA_DIR, 'rd-downloads.json') })
 
 let ffmpegAvailable = false
 detectFfmpeg().then((ok) => {
@@ -505,6 +507,94 @@ app.post('/api/rd/stream', searchLimiter, async (req, res) => {
   }
 })
 
+// magnet -> descarga el archivo a disco desde el enlace directo de RD
+// (paridad con "⚡ Descargar RD" de la app Android)
+app.post('/api/rd/download', searchLimiter, async (req, res) => {
+  const token = userData.getAccount(req.user.id).realDebridToken
+  if (!token) return res.status(400).json({ error: 'Configura tu token de Real-Debrid en Ajustes.', code: 'NO_TOKEN' })
+  const magnet = String((req.body || {}).magnet || '').trim()
+  if (!isValidMagnet(magnet)) return res.status(400).json({ error: 'El enlace magnet no es válido.' })
+  try {
+    const result = await realDebrid.streamMagnet(token, magnet)
+    // RD sigue descargándolo en sus servidores: el cliente reintentará
+    if (!result.ready) return res.json({ success: true, ...result })
+    const entry = rdDownloads.add({
+      userId: req.user.id,
+      url: result.url,
+      filename: result.filename,
+      magnet,
+      dir: activeDownloadDir()
+    })
+    res.json({ success: true, ready: true, download: rdDownloads.toPublic(entry) })
+  } catch (err) {
+    if (err instanceof RdError) return res.status(err.status).json({ error: err.message, code: err.code })
+    console.error('[rd] download:', err)
+    res.status(502).json({ error: 'Error al preparar la descarga con Real-Debrid.' })
+  }
+})
+
+app.get('/api/rd/downloads', (req, res) => {
+  res.json({ downloads: rdDownloads.listFor(req.user.id) })
+})
+
+// Reanuda una descarga interrumpida o fallida; si el enlace directo caducó,
+// lo regenera a partir del magnet guardado.
+app.post('/api/rd/downloads/:id/retry', searchLimiter, async (req, res) => {
+  const entry = rdDownloads.get(req.params.id, req.user.id)
+  if (!entry) return res.status(404).json({ error: 'Descarga no encontrada.' })
+  const token = userData.getAccount(req.user.id).realDebridToken
+  let freshUrl = null
+  if (token && entry.magnet) {
+    try {
+      const r = await realDebrid.streamMagnet(token, entry.magnet)
+      if (r.ready) freshUrl = r.url
+    } catch {}
+  }
+  res.json({ success: true, download: rdDownloads.resume(entry.id, req.user.id, freshUrl) })
+})
+
+app.delete('/api/rd/downloads/:id', (req, res) => {
+  const deleteFiles = req.query.files === '1' || req.query.files === 'true'
+  const ok = rdDownloads.remove(req.params.id, req.user.id, deleteFiles)
+  if (!ok) return res.status(404).json({ error: 'Descarga no encontrada.' })
+  res.json({ success: true })
+})
+
+// Reproduce un archivo ya descargado de RD (con soporte Range)
+app.get('/rd-file/:id', auth.requireAuth, (req, res) => {
+  const entry = rdDownloads.get(req.params.id, req.user.id)
+  if (!entry) return res.status(404).json({ error: 'Descarga no encontrada.' })
+  let stat
+  try { stat = fs.statSync(entry.path) } catch { return res.status(404).json({ error: 'El archivo ya no está en el disco.' }) }
+  const total = stat.size
+  res.setHeader('Content-Type', MIME[ext(entry.name)] || 'application/octet-stream')
+  res.setHeader('Accept-Ranges', 'bytes')
+  let start = 0
+  let end = total - 1
+  const range = req.headers.range
+  if (range) {
+    const match = /bytes=(\d*)-(\d*)/.exec(range)
+    if (match) {
+      if (match[1]) start = parseInt(match[1], 10)
+      if (match[2]) end = parseInt(match[2], 10)
+    }
+    if (isNaN(start) || isNaN(end) || start > end || start < 0 || end >= total) {
+      res.setHeader('Content-Range', `bytes */${total}`)
+      return res.status(416).end()
+    }
+    res.status(206)
+    res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`)
+  } else {
+    res.status(200)
+  }
+  res.setHeader('Content-Length', end - start + 1)
+  if (req.method === 'HEAD') return res.end()
+  const stream = fs.createReadStream(entry.path, { start, end })
+  stream.on('error', (err) => { console.error('[rd-file]', err.message); if (!res.headersSent) res.status(500); res.end() })
+  req.on('close', () => stream.destroy())
+  stream.pipe(res)
+})
+
 // ========================================================================
 // AJUSTES DEL SERVIDOR (carpetas de descarga y buffer)
 // ========================================================================
@@ -857,6 +947,7 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
     try { store.flush() } catch {}
     try { userData.flush() } catch {}
+    try { rdDownloads.flush() } catch {}
     process.exit(0)
   })
 }

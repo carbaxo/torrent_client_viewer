@@ -31,6 +31,7 @@ let PROGRESS_MAP = {}
 let PROFILES = []
 let ACTIVE_PROFILE = null
 let RD = { configured: false }
+let RD_DOWNLOADS = [] // descargas a disco vía Real-Debrid
 let SEARCH_CONTEXT = null // { wid: 'movie:123', title } del póster clicado
 const KIDS = () => !!(ACTIVE_PROFILE && ACTIVE_PROFILE.kids)
 // Títulos completamente vistos (wid = 'movie:123' | 'series:456')
@@ -127,12 +128,44 @@ function cloudSave () {
     if (ACTIVE_PROFILE) {
       CLOUD_DOC.states[ACTIVE_PROFILE.id] = { favorites: MY.favorites, progress: MY.progress, settings: MY.settings }
     }
+    // merge:true para no pisar campos que escriben otras apps (p. ej. la app
+    // Android guarda el token de Real-Debrid en account.rdToken)
     cloudRef.set({
       profiles: CLOUD_DOC.profiles,
       states: CLOUD_DOC.states,
       updatedAt: new Date().toISOString()
-    }).catch((err) => console.error('[cloud] guardado:', err))
+    }, { merge: true }).catch((err) => console.error('[cloud] guardado:', err))
   }, 800)
+}
+
+// --- Token de Real-Debrid compartido entre dispositivos (account.rdToken) ---
+// Mismo campo que usa la app Android: users/{uid}.account.rdToken
+function cloudSaveRdToken (token) {
+  if (!cloudRef) return
+  const value = token || firebase.firestore.FieldValue.delete()
+  cloudRef.set({ account: { rdToken: value } }, { merge: true })
+    .catch((err) => console.error('[cloud] rdToken:', err))
+}
+
+// Si la nube tiene un token RD (p. ej. conectado desde el móvil) y este
+// servidor aún no, lo adopta automáticamente.
+async function adoptCloudRdToken () {
+  const token = CLOUD_DOC && CLOUD_DOC.account && CLOUD_DOC.account.rdToken
+  if (!cloudRef || !token || typeof token !== 'string') return
+  try {
+    const st = await api('/api/rd/status').then((r) => (r.ok ? r.json() : null))
+    if (!st || st.configured) return
+    const res = await api('/api/rd/token', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token })
+    })
+    if (res.ok) {
+      RD = await res.json()
+      renderRdConfig()
+      toast('⚡ Real-Debrid conectado (sincronizado desde tu cuenta).')
+    }
+  } catch {}
 }
 
 // ===================== Utilidades =====================
@@ -250,6 +283,7 @@ async function onLoggedIn (user) {
   await loadConfig()
   // Perfiles: primero la nube (si hay sesión Google), después el servidor local
   await connectCloudDoc()
+  adoptCloudRdToken() // en segundo plano: adopta el token RD guardado en la nube
   if (!PROFILES.length) await loadProfilesLocal()
   syncProfilesToLocal()
   const savedId = localStorage.getItem('tcv_profile_' + user.id)
@@ -1121,7 +1155,8 @@ function resultCardHtml (s, i) {
       <div class="result-actions">
         <button class="btn-watch" data-magnet="${escapeHtml(s.url)}">▶ Ver</button>
         <button class="btn-dl" data-magnet="${escapeHtml(s.url)}">⬇ Descargar</button>
-        ${RD.configured ? `<button class="btn-rd" data-magnet="${escapeHtml(s.url)}">⚡ RD</button>` : ''}
+        ${RD.configured ? `<button class="btn-rd" data-magnet="${escapeHtml(s.url)}">⚡ Ver RD</button>
+        <button class="btn-rd-dl" data-magnet="${escapeHtml(s.url)}">⚡ Descargar RD</button>` : ''}
         <button class="btn-copy" data-magnet="${escapeHtml(s.url)}" title="Copiar magnet">📋</button>
       </div>
     </div>`
@@ -1134,6 +1169,8 @@ function wireResultActions (root) {
     b.addEventListener('click', () => addMagnetFromSearch(b.dataset.magnet, b)))
   root.querySelectorAll('.btn-rd').forEach((b) =>
     b.addEventListener('click', () => rdWatch(b.dataset.magnet, b)))
+  root.querySelectorAll('.btn-rd-dl').forEach((b) =>
+    b.addEventListener('click', () => rdDownload(b.dataset.magnet, b)))
   root.querySelectorAll('.btn-copy').forEach((b) =>
     b.addEventListener('click', () => copyMagnet(b.dataset.magnet, b)))
 }
@@ -1212,6 +1249,33 @@ async function rdWatch (magnet, btn) {
   } finally {
     btn.disabled = false
     btn.textContent = old
+  }
+}
+
+// "⚡ Descargar RD": el servidor baja el archivo a disco desde el enlace
+// directo de Real-Debrid (queda en la carpeta de descargas, como en Android)
+async function rdDownload (magnet, btn) {
+  btn.disabled = true
+  const old = btn.textContent
+  btn.textContent = '⚡ Preparando…'
+  try {
+    const res = await api('/api/rd/download', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ magnet })
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || 'Error con Real-Debrid')
+    if (!data.ready) {
+      toast(`Real-Debrid lo está descargando en sus servidores (${Math.round(data.progress || 0)}%). Vuelve a pulsar ⚡ en un rato.`)
+      return
+    }
+    btn.textContent = '✓ Descargando'
+    toast(`⚡ Descargando en tu equipo: ${data.download.name}. Puedes seguirlo en Descargas.`)
+    render()
+    return
+  } catch (err) {
+    toast(err.message, true)
+  } finally {
+    if (btn.textContent === '⚡ Preparando…') { btn.disabled = false; btn.textContent = old }
   }
 }
 
@@ -1437,6 +1501,9 @@ const globalStatsEl = $('global-stats')
 
 function render () {
   if (!CURRENT_USER) return
+  api('/api/rd/downloads').then((r) => (r.ok ? r.json() : null)).then((d) => {
+    if (d && Array.isArray(d.downloads)) { RD_DOWNLOADS = d.downloads; renderRdDownloads() }
+  }).catch(() => {})
   api('/api/torrents').then((r) => r.ok ? r.json() : []).then((torrents) => {
     if (!Array.isArray(torrents)) return
     LAST_TORRENTS = torrents
@@ -1568,6 +1635,55 @@ function renderDownloads (torrents) {
     const file = t && t.files[Number(b.dataset.fileindex)]
     if (file) openPlayer(t.infoHash, file, b.dataset.mode === 'transcode', null, t.titleRef)
   }))
+}
+
+// ---- Descargas Real-Debrid (archivos bajados a disco desde enlaces RD) ----
+let lastRdDownloadsHtml = ''
+
+function renderRdDownloads () {
+  const el = $('rd-downloads')
+  if (!el) return
+  let html = ''
+  if (RD_DOWNLOADS.length) {
+    html = '<h3 class="row-title">⚡ Descargas Real-Debrid</h3><div class="downloads-list">' + RD_DOWNLOADS.map((d) => {
+      const pct = d.size ? Math.min(100, Math.round(d.downloaded / d.size * 100)) : 0
+      const statusTag = d.status === 'done'
+        ? '<span class="tag offline">✓ sin conexión</span>'
+        : (d.status === 'downloading' || d.status === 'starting')
+            ? `<span class="tag">descargando ${pct}%</span>`
+            : d.status === 'error'
+              ? `<span class="tag danger">error${d.error ? ': ' + escapeHtml(d.error) : ''}</span>`
+              : '<span class="tag">interrumpida</span>'
+      let btns = ''
+      if (d.status === 'done') btns += `<button class="btn-play" data-rd-play="${d.id}">▶ Ver</button>`
+      if (d.canRetry) btns += `<button class="btn-play alt" data-rd-retry="${d.id}">↻ Reanudar</button>`
+      btns += `<button class="btn-icon danger" data-rd-remove="${d.id}" title="Eliminar descarga">🗑</button>`
+      return `
+        <div class="torrent-card">
+          <div class="torrent-head">
+            <div class="torrent-name">${escapeHtml(d.name)} ${statusTag}</div>
+            <div class="torrent-actions">${btns}</div>
+          </div>
+          ${d.status !== 'done' ? `<div class="continue-bar"><div style="width:${pct}%"></div></div>` : ''}
+          <div class="fmeta">${fmtBytes(d.downloaded)}${d.size ? ' / ' + fmtBytes(d.size) : ''}</div>
+        </div>`
+    }).join('') + '</div>'
+  }
+  if (html !== lastRdDownloadsHtml) {
+    lastRdDownloadsHtml = html
+    el.innerHTML = html
+    el.querySelectorAll('[data-rd-play]').forEach((b) => b.addEventListener('click', () => {
+      const d = RD_DOWNLOADS.find((x) => x.id === b.dataset.rdPlay)
+      if (d) openPlayerDirect(API_BASE + '/rd-file/' + d.id, d.name)
+    }))
+    el.querySelectorAll('[data-rd-retry]').forEach((b) => b.addEventListener('click', async () => {
+      try { await api('/api/rd/downloads/' + b.dataset.rdRetry + '/retry', { method: 'POST' }); render() } catch {}
+    }))
+    el.querySelectorAll('[data-rd-remove]').forEach((b) => b.addEventListener('click', async () => {
+      const withFiles = confirm('¿Eliminar también el archivo del disco?\n\nAceptar = borrar archivo · Cancelar = solo quitar de la lista')
+      try { await api('/api/rd/downloads/' + b.dataset.rdRemove + '?files=' + withFiles, { method: 'DELETE' }); render() } catch {}
+    }))
+  }
 }
 
 function cardHtml (t) {
@@ -1740,6 +1856,7 @@ function renderRdConfig () {
     $('rd-remove-btn').addEventListener('click', async () => {
       try {
         await api('/api/rd/token', { method: 'DELETE' })
+        cloudSaveRdToken(null)
         RD = { configured: false }
         renderRdConfig()
         toast('Token de Real-Debrid eliminado de tu cuenta.')
@@ -1756,13 +1873,15 @@ function renderRdConfig () {
       statusEl.classList.remove('error')
       statusEl.textContent = 'Validando token con Real-Debrid…'
       try {
+        const token = $('rd-token-input').value.trim()
         const res = await api('/api/rd/token', {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: $('rd-token-input').value.trim() })
+          body: JSON.stringify({ token })
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Error')
         RD = data
+        cloudSaveRdToken(token)
         renderRdConfig()
         statusEl.textContent = `Conectado como ${data.rdUser.username}${data.rdUser.premium ? ' (premium)' : ' (SIN premium: RD no funcionará)'}.`
       } catch (err) {

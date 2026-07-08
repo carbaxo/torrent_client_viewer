@@ -492,8 +492,11 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 }
 .btn-dl { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-size: .84rem; padding: 10px 12px; }
 .btn-dl:hover { border-color: var(--accent); }
-.btn-rd { background: rgba(52, 211, 153, .14); border: 1px solid rgba(52, 211, 153, .4); color: var(--green); font-size: .84rem; padding: 10px 12px; font-weight: 700; }
+.btn-rd, .btn-rd-dl { background: rgba(52, 211, 153, .14); border: 1px solid rgba(52, 211, 153, .4); color: var(--green); font-size: .84rem; padding: 10px 12px; font-weight: 700; }
 .rd-badge { color: var(--green); font-weight: 700; font-size: .9rem; }
+.tag.danger { color: var(--danger); }
+#rd-downloads .torrent-card { margin-bottom: 10px; }
+#rd-downloads { margin-bottom: 18px; }
 
 /* ---------- Selector de perfiles ---------- */
 .profile-overlay {
