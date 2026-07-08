@@ -881,7 +881,7 @@ fun SettingsScreen() {
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = {
-                                val cb = { ok: Boolean, err: String? -> onMain { if (ok) resetForm() else pMsg = err ?: "Error" } }
+                                val cb: (Boolean, String?) -> Unit = { ok, err -> onMain { if (ok) resetForm() else pMsg = err ?: "Error" } }
                                 if (editingId == null) Sync.addProfile(pName, pKids, pAvatar, cb)
                                 else Sync.updateProfile(editingId!!, pName, pKids, pAvatar, cb)
                             }) { Text("Guardar") }
