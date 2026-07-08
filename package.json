@@ -31,6 +31,7 @@
     "appId": "com.carbaxo.torrentviewer",
     "productName": "Torrent Viewer",
     "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "asar": false,
     "files": [
       "electron/**",
       "server.js",
