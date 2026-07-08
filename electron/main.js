@@ -54,10 +54,27 @@ function createWindow () {
     webPreferences: { contextIsolation: true }
   })
   mainWindow.loadURL(`http://localhost:${serverPort}`)
-  // Los enlaces externos se abren en el navegador del sistema
+  // Gestión de ventanas emergentes:
+  //  - El popup de login de Google/Firebase debe abrirse DENTRO de Electron
+  //    (si se manda al navegador del sistema, Firebase no puede comunicarse
+  //    con él y falla con auth/popup-blocked).
+  //  - El resto de enlaces externos, al navegador del sistema.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (!url.startsWith(`http://localhost:${serverPort}`)) { shell.openExternal(url); return { action: 'deny' } }
-    return { action: 'allow' }
+    if (url.startsWith(`http://localhost:${serverPort}`)) return { action: 'allow' }
+    const host = (() => { try { return new URL(url).hostname } catch { return '' } })()
+    const isAuthPopup = host === 'accounts.google.com' || host === 'apis.google.com' ||
+      host.endsWith('.firebaseapp.com') || host.endsWith('.google.com') || host.endsWith('.googleapis.com')
+    if (isAuthPopup) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 500, height: 650, autoHideMenuBar: true,
+          webPreferences: { contextIsolation: true, nodeIntegration: false }
+        }
+      }
+    }
+    shell.openExternal(url)
+    return { action: 'deny' }
   })
   if (isDev) mainWindow.webContents.openDevTools({ mode: 'detach' })
 }
