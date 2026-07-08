@@ -17,6 +17,9 @@ process.env.DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || path.join(app.getPath('do
 process.env.BUFFER_DIR = process.env.BUFFER_DIR || path.join(userData, 'buffer')
 // Sesión estable entre reinicios (si el usuario no definió una)
 process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'electron-' + app.getPath('userData')
+// Proyecto de Firebase (mismo que public/config.js; el projectId NO es secreto)
+// para que el servidor local pueda verificar el login con Google.
+process.env.FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'torrent-7dd4b'
 
 let mainWindow = null
 let serverPort = Number(process.env.PORT) || 3000
