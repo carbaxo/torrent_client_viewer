@@ -248,6 +248,17 @@
           </div>
 
           <div class="panel">
+            <h2 class="panel-title">Idioma preferido de las fuentes</h2>
+            <select id="setting-source-lang">
+              <option value="">Sin preferencia (por seeders)</option>
+              <option value="es-ES">🇪🇸 Español (España)</option>
+              <option value="es-LA">🇲🇽 Español (Latino)</option>
+              <option value="en">🇬🇧 Inglés</option>
+            </select>
+            <p class="hint">Las fuentes en tu idioma (detectado por banderas o por el nombre del torrent) aparecerán primero.</p>
+          </div>
+
+          <div class="panel">
             <h2 class="panel-title">Carpetas del servidor</h2>
             <div class="settings-field">
               <label for="setting-download-dir">Carpeta de descargas (permanentes)</label>
@@ -320,6 +331,7 @@
       <video id="player" controls autoplay playsinline crossorigin="use-credentials"></video>
       <div class="player-footer">
         <div id="player-subs" class="player-subs"></div>
+        <button id="player-next" class="btn-primary hidden">▶ Siguiente episodio</button>
         <p id="player-note" class="player-note"></p>
       </div>
     </div>
