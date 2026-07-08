@@ -182,6 +182,62 @@ object Sync {
 
     fun isFav(id: String) = favorites.any { it.id == id }
 
+    // --- Gestión de perfiles desde el móvil (mismo esquema/límites que la web) ---
+    private const val MAX_PROFILES = 5
+
+    private fun writeProfiles(u: String, list: List<Profile>, onDone: (Boolean) -> Unit) {
+        val arr = list.map { mapOf("id" to it.id, "name" to it.name, "avatar" to it.avatar, "kids" to it.kids) }
+        db().collection("users").document(u)
+            .set(mapOf("profiles" to arr, "updatedAt" to iso()), SetOptions.merge())
+            .addOnCompleteListener { onDone(it.isSuccessful) }
+    }
+
+    fun addProfile(name: String, kids: Boolean, avatar: String, onDone: (Boolean, String?) -> Unit) {
+        val u = uid() ?: return onDone(false, "Inicia sesión con Google")
+        if (profiles.size >= MAX_PROFILES) return onDone(false, "Máximo $MAX_PROFILES perfiles")
+        val nm = name.trim().take(24)
+        if (nm.isBlank()) return onDone(false, "Escribe un nombre")
+        val p = Profile(java.util.UUID.randomUUID().toString(), nm, avatar.ifBlank { if (kids) "🧒" else "🍿" }, kids)
+        writeProfiles(u, profiles + p) { ok ->
+            onMain { if (ok) profiles.add(p) }
+            onDone(ok, if (ok) null else "No se pudo guardar")
+        }
+    }
+
+    fun updateProfile(id: String, name: String, kids: Boolean, avatar: String, onDone: (Boolean, String?) -> Unit) {
+        val u = uid() ?: return onDone(false, "Inicia sesión con Google")
+        val idx = profiles.indexOfFirst { it.id == id }
+        if (idx < 0) return onDone(false, "Perfil no encontrado")
+        val nm = name.trim().take(24)
+        if (nm.isBlank()) return onDone(false, "Escribe un nombre")
+        val updated = profiles[idx].copy(name = nm, kids = kids, avatar = avatar.ifBlank { if (kids) "🧒" else "🍿" })
+        val newList = profiles.toMutableList().apply { set(idx, updated) }
+        writeProfiles(u, newList) { ok ->
+            onMain {
+                if (ok) {
+                    profiles[idx] = updated
+                    if (activeProfile?.id == id) activeProfile = updated
+                }
+            }
+            onDone(ok, if (ok) null else "No se pudo guardar")
+        }
+    }
+
+    fun removeProfile(id: String, onDone: (Boolean, String?) -> Unit) {
+        val u = uid() ?: return onDone(false, "Inicia sesión con Google")
+        if (profiles.size <= 1) return onDone(false, "Debe quedar al menos un perfil")
+        val newList = profiles.filter { it.id != id }
+        writeProfiles(u, newList) { ok ->
+            onMain {
+                if (ok) {
+                    profiles.removeAll { it.id == id }
+                    if (activeProfile?.id == id) profiles.firstOrNull()?.let { selectProfile(it.id) }
+                }
+            }
+            onDone(ok, if (ok) null else "No se pudo guardar")
+        }
+    }
+
     /** Añade/quita favorito en el perfil activo y lo guarda (merge por perfil). */
     fun toggleFavorite(t: Tmdb.Title, onDone: (Boolean) -> Unit = {}) {
         val u = uid() ?: return onDone(false)
@@ -216,5 +272,18 @@ object Sync {
         val u = uid() ?: return
         db().collection("users").document(u)
             .set(mapOf("account" to mapOf("rdToken" to token), "updatedAt" to iso()), SetOptions.merge())
+    }
+
+    /**
+     * Sube el idioma del perfil activo a states[pid].settings.language (mismo
+     * campo que la web). No-op si no hay sesión o perfil activo.
+     */
+    fun saveSettingsLanguage(tmdbLang: String) {
+        val u = uid() ?: return
+        val pid = activeProfile?.id ?: return
+        db().collection("users").document(u).set(
+            mapOf("states" to mapOf(pid to mapOf("settings" to mapOf("language" to tmdbLang))), "updatedAt" to iso()),
+            SetOptions.merge()
+        )
     }
 }

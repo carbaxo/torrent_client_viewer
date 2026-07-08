@@ -60,6 +60,15 @@ class MainActivity : ComponentActivity() {
         WatchStore.init(this)
         TorrentEngine.start()
         TorrentEngine.setLimits(Prefs.downLimitKB.value, Prefs.upLimitKB.value)
+        // Reanuda las descargas permanentes de sesiones anteriores (libtorrent
+        // verifica en disco lo ya bajado). El buffer no se restaura (temporal).
+        Thread {
+            runCatching {
+                for ((magnet, dir) in Prefs.savedTorrents()) {
+                    TorrentEngine.addMagnet(magnet, File(dir)) { _, _ -> }
+                }
+            }
+        }.start()
         DownloadService.start(this)
         StreamServer.ensureStarted()
         RealDebrid.init(this)
@@ -147,6 +156,12 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) 
     var pendingPlay by remember { mutableStateOf<Pair<String, PlayCtx>?>(null) }
     val ctx = LocalContext.current
 
+    // Modo infantil: el perfil activo marca kids. Oculta Buscar (búsqueda libre)
+    // y TV (AceStream); los catálogos se filtran a géneros familiares.
+    val kids = Sync.activeProfile?.kids == true
+    val visibleTabs = if (kids) listOf(Tab.DISCOVER, Tab.DOWNLOADS, Tab.SETTINGS) else Tab.values().toList()
+    LaunchedEffect(kids) { if (kids && tab !in visibleTabs) tab = Tab.DISCOVER }
+
     // Refresco de descargas (torrent + Real-Debrid) + auto-reproducción.
     // El trabajo bloqueante (JNI/DownloadManager) va en IO; el estado se
     // actualiza al volver al hilo principal (fin de withContext).
@@ -171,6 +186,8 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) 
     fun addMagnet(m: String, autoplay: Boolean, playCtx: PlayCtx = PlayCtx()) {
         if (m.isBlank()) return
         val dir = if (autoplay) Prefs.bufferDirFile() else Prefs.downloadDirFile()
+        // Solo persistimos las descargas permanentes (para reanudarlas al reabrir)
+        if (!autoplay) Prefs.addSavedTorrent(m.trim(), dir.absolutePath)
         TorrentEngine.addMagnet(m.trim(), dir) { d, _ ->
             if (autoplay && d != null) onMain { pendingPlay = d.infoHash to playCtx }
         }
@@ -199,7 +216,7 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) 
         containerColor = Bg,
         bottomBar = {
             NavigationBar(containerColor = Surface1) {
-                Tab.values().forEach { t ->
+                visibleTabs.forEach { t ->
                     NavigationBarItem(
                         selected = tab == t,
                         onClick = { tab = t },
@@ -215,9 +232,9 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) 
     ) { pad ->
         Box(Modifier.padding(pad)) {
             when (tab) {
-                Tab.DISCOVER -> DiscoverScreen(catalogType, { catalogType = it }, onOpen = { detail = it })
-                Tab.SEARCH -> SearchScreen(onOpen = { detail = it })
-                Tab.TV -> AceScreen(onPlayUrl)
+                Tab.DISCOVER -> DiscoverScreen(catalogType, { catalogType = it }, kids = kids, onOpen = { detail = it })
+                Tab.SEARCH -> if (kids) DiscoverScreen(catalogType, { catalogType = it }, kids = true, onOpen = { detail = it }) else SearchScreen(onOpen = { detail = it })
+                Tab.TV -> if (!kids) AceScreen(onPlayUrl)
                 Tab.DOWNLOADS -> DownloadsScreen(downloads, rdDownloads, { h -> onPlay(h, PlayCtx()) }, { u -> onPlayUrl(u, PlayCtx()) })
                 Tab.SETTINGS -> SettingsScreen()
             }
@@ -270,7 +287,7 @@ fun ContinueCard(p: WatchStore.Prog, onClick: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DiscoverScreen(type: String, onType: (String) -> Unit, onOpen: (Tmdb.Title) -> Unit) {
+fun DiscoverScreen(type: String, onType: (String) -> Unit, kids: Boolean = false, onOpen: (Tmdb.Title) -> Unit) {
     var rows by remember { mutableStateOf<List<Tmdb.Row>>(emptyList()) }
     var status by remember { mutableStateOf(if (Tmdb.hasKey) "Cargando catálogos…" else "") }
     // Explorar una plataforma en modo rejilla paginada ("Ver más")
@@ -284,10 +301,10 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, onOpen: (Tmdb.Title) 
         Tmdb.recommendations(seeds) { list -> onMain { recs.clear(); recs.addAll(list) } }
     }
 
-    LaunchedEffect(type) {
+    LaunchedEffect(type, kids) {
         if (!Tmdb.hasKey) { status = "" ; return@LaunchedEffect }
         status = "Cargando catálogos…"; rows = emptyList()
-        Tmdb.catalogs(type) { list, err ->
+        Tmdb.catalogs(type, kids) { list, err ->
             onMain { rows = list ?: emptyList(); status = if (list == null) (err ?: "Error") else "" }
         }
     }
@@ -297,7 +314,7 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, onOpen: (Tmdb.Title) 
     }
 
     browse?.let { (prov, nm) ->
-        BrowseScreen(prov, nm, type, onOpen = onOpen, onBack = { browse = null })
+        BrowseScreen(prov, nm, type, kids = kids, onOpen = onOpen, onBack = { browse = null })
         return
     }
 
@@ -338,8 +355,8 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, onOpen: (Tmdb.Title) 
                 SegmentedButton(selected = type == "series", onClick = { onType("series") },
                     shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Series") }
             }
-            // Explorar por género
-            if (Tmdb.hasKey) {
+            // Explorar por género (oculto en modo infantil: solo catálogos familiares)
+            if (Tmdb.hasKey && !kids) {
                 Spacer(Modifier.height(10.dp))
                 Text("Géneros", style = MaterialTheme.typography.labelMedium, color = Muted)
                 Spacer(Modifier.height(6.dp))
@@ -394,8 +411,8 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, onOpen: (Tmdb.Title) 
                 }
             }
         }
-        // Recomendado para ti
-        if (recs.isNotEmpty()) item {
+        // Recomendado para ti (oculto en modo infantil)
+        if (recs.isNotEmpty() && !kids) item {
             Column(Modifier.padding(vertical = 8.dp)) {
                 Text("Recomendado para ti", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
@@ -426,7 +443,7 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, onOpen: (Tmdb.Title) 
 }
 
 @Composable
-fun BrowseScreen(provider: String, name: String, type: String, onOpen: (Tmdb.Title) -> Unit, onBack: () -> Unit) {
+fun BrowseScreen(provider: String, name: String, type: String, kids: Boolean = false, onOpen: (Tmdb.Title) -> Unit, onBack: () -> Unit) {
     val items = remember { mutableStateListOf<Tmdb.Title>() }
     var page by remember { mutableStateOf(0) }
     var loading by remember { mutableStateOf(false) }
@@ -439,7 +456,7 @@ fun BrowseScreen(provider: String, name: String, type: String, onOpen: (Tmdb.Tit
         // provider puede ser una plataforma ("8") o un género ("genre:28")
         val genreId = provider.substringAfter("genre:", "").toIntOrNull()
         val prov = if (genreId == null) provider else null
-        Tmdb.discover(type, prov, genreId, next) { list, _ ->
+        Tmdb.discover(type, prov, genreId, next, kids) { list, _ ->
             onMain {
                 loading = false
                 if (list.isNullOrEmpty()) end = true else { page = next; items.addAll(list) }
@@ -822,21 +839,59 @@ fun SettingsScreen() {
                 } else {
                     Text("👤 ${Sync.email}", style = MaterialTheme.typography.bodyMedium)
                     if (Sync.loading) Text("Sincronizando…", color = Muted, style = MaterialTheme.typography.labelSmall)
+                    // Estado del formulario de crear/editar perfil
+                    var editingId by remember { mutableStateOf<String?>(null) }
+                    var showForm by remember { mutableStateOf(false) }
+                    var pName by remember { mutableStateOf("") }
+                    var pKids by remember { mutableStateOf(false) }
+                    var pAvatar by remember { mutableStateOf("") }
+                    var pMsg by remember { mutableStateOf("") }
+                    fun resetForm() { editingId = null; showForm = false; pName = ""; pKids = false; pAvatar = ""; pMsg = "" }
+
                     if (Sync.profiles.isNotEmpty()) {
                         Text("Perfil", style = MaterialTheme.typography.labelMedium, color = Muted)
-                        FlowRowSimple {
-                            Sync.profiles.forEach { p ->
-                                val active = Sync.activeProfile?.id == p.id
+                        Sync.profiles.forEach { p ->
+                            val active = Sync.activeProfile?.id == p.id
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 FilterChip(
                                     selected = active,
                                     onClick = { Sync.selectProfile(p.id) },
-                                    label = { Text("${p.avatar} ${p.name}${if (p.kids) " 🧒" else ""}") }
+                                    label = { Text("${p.avatar} ${p.name}${if (p.kids) " 🧒" else ""}") },
+                                    modifier = Modifier.weight(1f)
                                 )
+                                IconButton(onClick = {
+                                    editingId = p.id; pName = p.name; pKids = p.kids; pAvatar = p.avatar; showForm = true; pMsg = ""
+                                }) { Icon(Icons.Filled.Edit, "Editar perfil") }
+                                if (Sync.profiles.size > 1) IconButton(onClick = {
+                                    Sync.removeProfile(p.id) { ok, err -> onMain { if (!ok) pMsg = err ?: "Error" } }
+                                }) { Icon(Icons.Filled.Close, "Borrar perfil") }
                             }
                         }
                     } else if (!Sync.loading) {
-                        Text("No hay perfiles en la nube todavía. Crea uno en la app del PC.", color = Muted, style = MaterialTheme.typography.labelSmall)
+                        Text("No hay perfiles todavía. Crea el primero aquí abajo.", color = Muted, style = MaterialTheme.typography.labelSmall)
                     }
+
+                    if (showForm) {
+                        Text(if (editingId == null) "Nuevo perfil" else "Editar perfil", style = MaterialTheme.typography.labelMedium, color = Muted)
+                        OutlinedTextField(value = pName, onValueChange = { pName = it }, label = { Text("Nombre") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = pAvatar, onValueChange = { pAvatar = it.take(2) }, label = { Text("Emoji (opcional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = pKids, onCheckedChange = { pKids = it })
+                            Text("Modo infantil (solo catálogos familiares)")
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = {
+                                val cb = { ok: Boolean, err: String? -> onMain { if (ok) resetForm() else pMsg = err ?: "Error" } }
+                                if (editingId == null) Sync.addProfile(pName, pKids, pAvatar, cb)
+                                else Sync.updateProfile(editingId!!, pName, pKids, pAvatar, cb)
+                            }) { Text("Guardar") }
+                            OutlinedButton(onClick = { resetForm() }) { Text("Cancelar") }
+                        }
+                    } else if (Sync.profiles.size < 5) {
+                        OutlinedButton(onClick = { showForm = true; editingId = null; pName = ""; pKids = false; pAvatar = "" }) { Text("＋ Nuevo perfil") }
+                    }
+                    if (pMsg.isNotBlank()) Text(pMsg, color = Muted, style = MaterialTheme.typography.labelSmall)
+
                     OutlinedButton(onClick = { Sync.signOut() }) { Text("Cerrar sesión") }
                 }
             }
@@ -1118,7 +1173,7 @@ fun DownloadCard(d: TorrentEngine.Snapshot, onPlay: (String) -> Unit) {
                 OutlinedButton(onClick = {
                     if (d.paused) TorrentEngine.resume(d.infoHash) else TorrentEngine.pause(d.infoHash)
                 }) { Text(if (d.paused) "Reanudar" else "Pausar") }
-                OutlinedButton(onClick = { TorrentEngine.remove(d.infoHash, deleteFiles = true) }) { Text("Borrar") }
+                OutlinedButton(onClick = { TorrentEngine.remove(d.infoHash, deleteFiles = true); Prefs.removeSavedTorrentByHash(d.infoHash) }) { Text("Borrar") }
             }
         }
     }
@@ -1142,24 +1197,40 @@ fun SourcesSection(
 ) {
     var linksExpanded by remember { mutableStateOf(true) }
     var rdStatus by remember { mutableStateOf("") }
+    var qualityFilter by remember { mutableStateOf("all") }
+
+    // Calidades presentes en los resultados (para los chips de filtro)
+    val qualities = remember(sources) {
+        listOf("4K", "1080p", "720p", "480p", "SD").filter { q -> sources.any { it.quality == q } }
+    }
+    val shown = if (qualityFilter == "all") sources else sources.filter { it.quality == qualityFilter }
 
     Column(Modifier.padding(top = 4.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (loading) Text("Buscando fuentes…", color = Muted, style = MaterialTheme.typography.bodySmall)
         if (sources.isNotEmpty()) {
             Row(Modifier.fillMaxWidth().clickable { linksExpanded = !linksExpanded }, verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "Enlaces (${sources.size})" + if (label.isNotBlank()) " · $label" else "",
+                    "Enlaces (${shown.size})" + if (label.isNotBlank()) " · $label" else "",
                     style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)
                 )
                 Icon(if (linksExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                     contentDescription = if (linksExpanded) "Plegar" else "Desplegar")
             }
+            // Filtros de calidad (como la web)
+            if (linksExpanded && qualities.size > 1) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = qualityFilter == "all", onClick = { qualityFilter = "all" }, label = { Text("Todas") })
+                    qualities.forEach { q ->
+                        FilterChip(selected = qualityFilter == q, onClick = { qualityFilter = q }, label = { Text(q) })
+                    }
+                }
+            }
         }
-        if (linksExpanded) sources.forEach { r ->
+        if (linksExpanded) shown.forEach { r ->
             Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(r.name, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text("${Lang.flag(r.lang)} ${Lang.label(r.lang)}  ·  ▲ ${r.seeders} seeders · ${Search.humanSize(r.sizeBytes)}", style = MaterialTheme.typography.labelSmall, color = Muted)
+                    Text("${Lang.flag(r.lang)} ${Lang.label(r.lang)}" + (if (r.quality != "Unknown") "  ·  ${r.quality}" else "") + "  ·  ▲ ${r.seeders} seeders · ${Search.humanSize(r.sizeBytes)}", style = MaterialTheme.typography.labelSmall, color = Muted)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = { onWatch(r.magnet, buildCtx()) }) { Text("▶ Ver") }
                         OutlinedButton(onClick = { onDownload(r.magnet) }) { Text("⬇ Descargar") }
