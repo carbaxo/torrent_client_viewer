@@ -3,7 +3,7 @@
 // reutiliza TODO el backend y frontend existentes sin cambios.
 import { app, BrowserWindow, shell, dialog } from 'electron'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import net from 'node:net'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -34,8 +34,9 @@ function findFreePort (start) {
 async function startServer () {
   serverPort = await findFreePort(serverPort)
   process.env.PORT = String(serverPort)
-  // server.js arranca el Express al importarse
-  await import(path.join(__dirname, '..', 'server.js'))
+  // server.js arranca el Express al importarse. En Windows, import() de una
+  // ruta absoluta necesita una URL file:// (si no: "Received protocol 'c:'").
+  await import(pathToFileURL(path.join(__dirname, '..', 'server.js')).href)
   // Pequeña espera a que el listener esté activo
   await new Promise((r) => setTimeout(r, 600))
 }
