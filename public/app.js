@@ -202,7 +202,7 @@ function escapeHtml (str) {
 function $ (id) { return document.getElementById(id) }
 
 // ===================== Navegación (sidebar) =====================
-const VIEW_TITLES = { discover: 'Descubrir', search: 'Buscar', favorites: 'Favoritos', downloads: 'Descargas', library: 'Actividad de descargas', add: 'Añadir', settings: 'Ajustes', detail: 'Detalle', browse: 'Explorar' }
+const VIEW_TITLES = { discover: 'Descubrir', search: 'Buscar', tv: 'TV', favorites: 'Favoritos', downloads: 'Descargas', library: 'Actividad de descargas', add: 'Añadir', settings: 'Ajustes', detail: 'Detalle', browse: 'Explorar' }
 let CURRENT_VIEW = 'discover'
 
 function switchView (view) {
@@ -211,6 +211,7 @@ function switchView (view) {
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('hidden', v.id !== 'view-' + view))
   $('view-title').textContent = VIEW_TITLES[view] || ''
   if (view === 'favorites') renderFavoritesView()
+  if (view === 'tv') loadTvChannels()
   window.scrollTo({ top: 0 })
 }
 document.querySelectorAll('.nav-item').forEach((b) => b.addEventListener('click', () => switchView(b.dataset.view)))
@@ -2038,6 +2039,91 @@ function renderRdConfig () {
     })
   }
 }
+
+// ===================== TV (AceStream) =====================
+let TV_CHANNELS = []
+let TV_CAT_FILTER = 'all'
+let tvLoaded = false
+
+async function loadTvChannels () {
+  // Estado del engine local
+  api('/api/tv/engine').then((r) => (r.ok ? r.json() : null)).then((s) => {
+    const el = $('tv-engine')
+    if (!el) return
+    el.textContent = s && s.running
+      ? `✓ AceStream Engine detectado (v${s.version || '?'}).`
+      : 'AceStream no detectado en este equipo. Instálalo desde acestream.org para reproducir.'
+  }).catch(() => {})
+  if (tvLoaded) return
+  tvLoaded = true
+  $('tv-status').textContent = 'Cargando canales…'
+  try {
+    const res = await api('/api/tv/channels')
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || 'Error')
+    TV_CHANNELS = data.channels || []
+    $('tv-status').textContent = ''
+    renderTvFilters()
+    renderTvChannels()
+  } catch (err) {
+    tvLoaded = false
+    $('tv-status').textContent = err.message
+  }
+}
+
+function renderTvFilters () {
+  const cats = [...new Set(TV_CHANNELS.map((c) => c.category))].sort()
+  const el = $('tv-filters')
+  el.innerHTML = `<button class="chip${TV_CAT_FILTER === 'all' ? ' active' : ''}" data-cat="all">Todos</button>` +
+    cats.map((c) => `<button class="chip${TV_CAT_FILTER === c ? ' active' : ''}" data-cat="${escapeHtml(c)}">${escapeHtml(c)}</button>`).join('')
+  el.querySelectorAll('.chip').forEach((b) => b.addEventListener('click', () => {
+    TV_CAT_FILTER = b.dataset.cat
+    renderTvFilters(); renderTvChannels()
+  }))
+}
+
+function renderTvChannels () {
+  const el = $('tv-list')
+  const list = (TV_CAT_FILTER === 'all' ? TV_CHANNELS : TV_CHANNELS.filter((c) => c.category === TV_CAT_FILTER)).slice(0, 300)
+  if (!list.length) { el.innerHTML = '<p class="empty">Sin canales.</p>'; return }
+  el.innerHTML = list.map((c) => `
+    <div class="torrent-card tv-channel">
+      <div class="tv-meta">
+        <div class="tv-name">${escapeHtml(c.name)}</div>
+        <div class="tv-sub">${escapeHtml(c.category)} · ${escapeHtml(c.country)}</div>
+      </div>
+      <button class="btn-watch" data-ace="${escapeHtml(c.contentId)}">▶ Abrir</button>
+      <button class="btn-copy" data-acecopy="${escapeHtml(c.contentId)}" title="Copiar enlace">📋</button>
+    </div>`).join('')
+  el.querySelectorAll('[data-ace]').forEach((b) => b.addEventListener('click', () => openAceChannel(b.dataset.ace)))
+  el.querySelectorAll('[data-acecopy]').forEach((b) => b.addEventListener('click', () => copyMagnet('acestream://' + b.dataset.acecopy, b)))
+}
+
+// Abre el canal en la app de AceStream (protocolo acestream://). En Electron,
+// el gestor de ventanas lo deriva al sistema; en navegador, el SO decide.
+function openAceChannel (contentId) {
+  window.open('acestream://' + contentId, '_blank', 'noopener')
+  toast('Abriendo en AceStream… (debe estar instalado en el equipo)')
+}
+
+$('tv-search-form').addEventListener('submit', async (e) => {
+  e.preventDefault()
+  const q = $('tv-search-input').value.trim()
+  if (!q) return
+  $('tv-status').textContent = 'Buscando…'
+  try {
+    const res = await api('/api/tv/search?q=' + encodeURIComponent(q))
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || 'Error')
+    TV_CHANNELS = data.channels || []
+    TV_CAT_FILTER = 'all'
+    $('tv-status').textContent = TV_CHANNELS.length ? '' : 'Sin resultados.'
+    renderTvFilters(); renderTvChannels()
+  } catch (err) {
+    $('tv-status').textContent = 'Error: ' + err.message
+  }
+})
+$('tv-all-btn').addEventListener('click', () => { tvLoaded = false; TV_CAT_FILTER = 'all'; loadTvChannels() })
 
 // ===================== Init =====================
 initFirebase()

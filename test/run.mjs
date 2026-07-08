@@ -17,6 +17,7 @@ import { createUserData, MAX_PROGRESS } from '../lib/userdata.js'
 import { createFirebaseVerifier } from '../lib/firebaseAuth.js'
 import { createRealDebrid } from '../lib/realdebrid.js'
 import { createRdDownloads, sanitizeFilename } from '../lib/rddownloads.js'
+import { parsePlaylist, extractContentId } from '../lib/acestream.js'
 import { Readable } from 'node:stream'
 
 let passed = 0
@@ -468,6 +469,23 @@ t('reanuda una descarga interrumpida con Range', async () => {
   assert.equal(rdd.get('r1', 'u1').status, 'done')
   assert.equal(fs.readFileSync(dest, 'utf8'), content)
   assert.ok(ranges.includes('bytes=4-'))
+})
+
+console.log('acestream (TV)')
+t('extractContentId acepta acestream:// y hash suelto', () => {
+  const h = 'a'.repeat(40)
+  assert.equal(extractContentId('acestream://' + h), h)
+  assert.equal(extractContentId(h.toUpperCase()), h)
+  assert.equal(extractContentId('sin hash'), null)
+})
+t('parsePlaylist: categoría ES, país y contentId', () => {
+  const h = 'b'.repeat(40)
+  const m3u = `#EXTINF:-1 group-title="sport" tvg-name="DAZN España 🇪🇸",DAZN\nacestream://${h}\n`
+  const ch = parsePlaylist(m3u)
+  assert.equal(ch.length, 1)
+  assert.equal(ch[0].contentId, h)
+  assert.equal(ch[0].category, '⚽ Deportes')
+  assert.equal(ch[0].country, '🇪🇸 España')
 })
 
 Promise.allSettled(pending).then(() => {
