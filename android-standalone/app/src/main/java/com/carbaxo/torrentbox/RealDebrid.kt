@@ -126,11 +126,19 @@ object RealDebrid {
      * onDone(url, filename, error, progress): si url != null, listo; si
      * progress != null, RD aún lo está descargando en sus servidores.
      */
+    // Torrent RD ya creado por magnet, para que los reintentos (mientras RD
+    // descarga a sus servidores) no añadan el mismo torrent una y otra vez
+    private val torrentIdByMagnet = java.util.concurrent.ConcurrentHashMap<String, String>()
+
     fun streamMagnet(magnet: String, onDone: (String?, String?, String?, Int?) -> Unit) {
         io.submit {
             try {
-                val added = rd("POST", "/torrents/addMagnet", mapOf("magnet" to magnet))
-                val id = added.optString("id", "")
+                val id = torrentIdByMagnet[magnet] ?: run {
+                    val added = rd("POST", "/torrents/addMagnet", mapOf("magnet" to magnet))
+                    val nid = added.optString("id", "")
+                    if (nid.isNotBlank()) torrentIdByMagnet[magnet] = nid
+                    nid
+                }
                 if (id.isBlank()) return@submit onDone(null, null, "RD no aceptó el magnet.", null)
 
                 var info = rd("GET", "/torrents/info/$id")
@@ -171,6 +179,8 @@ object RealDebrid {
                     onDone(dl, fname, null, null)
                 }
             } catch (e: Throwable) {
+                // Si el torrent cacheado ya no existe en RD, que el próximo intento lo re-añada
+                torrentIdByMagnet.remove(magnet)
                 onDone(null, null, e.message ?: "Error de Real-Debrid.", null)
             }
         }

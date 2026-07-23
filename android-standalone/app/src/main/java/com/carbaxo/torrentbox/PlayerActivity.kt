@@ -80,6 +80,7 @@ class PlayerActivity : AppCompatActivity() {
 
         val directUrl = intent.getStringExtra("url")
         val infoHash = intent.getStringExtra("infoHash")
+        val rdMagnet = intent.getStringExtra("rdMagnet")
         tmdbId = intent.getIntExtra("tmdbId", -1)
         mediaType = intent.getStringExtra("type") ?: "movie"
         season = intent.getIntExtra("season", -1)
@@ -91,6 +92,7 @@ class PlayerActivity : AppCompatActivity() {
         currentUrl = when {
             !directUrl.isNullOrBlank() -> directUrl
             infoHash != null -> { StreamServer.ensureStarted(); StreamServer.urlFor(infoHash) }
+            rdMagnet != null -> "" // pendiente: se resuelve con Real-Debrid más abajo
             else -> { finish(); return }
         }
 
@@ -169,10 +171,12 @@ class PlayerActivity : AppCompatActivity() {
         player = ExoPlayer.Builder(this).build().also { p ->
             playerView.player = p
             playerView.keepScreenOn = true
-            p.setMediaItem(MediaItem.fromUri(currentUrl))
-            p.prepare()
-            if (resumeMs > 0) p.seekTo(resumeMs)
-            p.playWhenReady = true
+            if (currentUrl.isNotBlank()) {
+                p.setMediaItem(MediaItem.fromUri(currentUrl))
+                p.prepare()
+                if (resumeMs > 0) p.seekTo(resumeMs)
+                p.playWhenReady = true
+            }
             p.addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(state: Int) {
                     if (state == Player.STATE_ENDED && mediaType == "series" && episode > 0) {
@@ -222,6 +226,50 @@ class PlayerActivity : AppCompatActivity() {
                 // Si ya había una sesión de Cast abierta antes de entrar al
                 // reproductor, el listener no dispara: envía ya la reproducción.
                 if (cp.isCastSessionAvailable) switchToCast()
+            }
+        }
+
+        // "Ver RD": el reproductor se abre al momento y aquí se resuelve el
+        // enlace de Real-Debrid mostrando el estado en pantalla.
+        if (rdMagnet != null) startRdPending(rdMagnet, resumeMs)
+    }
+
+    // ------------------- Real-Debrid diferido ("Ver RD") -------------------
+    private fun startRdPending(magnet: String, resumeMs: Long, attempt: Int = 0) {
+        if (attempt == 0) showToast("⚡ Preparando en Real-Debrid…", 120_000)
+        RealDebrid.streamMagnet(magnet) { url, _, err, progress ->
+            mainH.post {
+                if (isDestroyed || isFinishing) return@post
+                when {
+                    url != null -> {
+                        currentUrl = url
+                        if (isCasting()) {
+                            showToast("📺 Enviando a la TV…")
+                            loadOnCast(url, resumeMs)
+                        } else {
+                            val p = player ?: return@post
+                            p.setMediaItem(MediaItem.fromUri(url))
+                            p.prepare()
+                            if (resumeMs > 0) p.seekTo(resumeMs)
+                            p.playWhenReady = true
+                            showToast("▶ Listo", 1200)
+                        }
+                    }
+                    progress != null -> {
+                        // RD aún lo está bajando a sus servidores: reintenta solo
+                        if (attempt < 10) {
+                            showToast("⚡ Real-Debrid preparando… ${progress}%", 120_000)
+                            mainH.postDelayed({ startRdPending(magnet, resumeMs, attempt + 1) }, 4000)
+                        } else {
+                            showToast("Real-Debrid tarda demasiado; probando torrent…", 4000)
+                            startTorrent(magnet, season, episode)
+                        }
+                    }
+                    else -> {
+                        showToast((err ?: "Error de Real-Debrid") + " — probando torrent…", 4000)
+                        startTorrent(magnet, season, episode)
+                    }
+                }
             }
         }
     }
@@ -305,7 +353,9 @@ class PlayerActivity : AppCompatActivity() {
         local.pause()
         playerView.player = cp
         showToast("📺 Enviando a la TV…")
-        loadOnCast(currentUrl, pos)
+        // Con "Ver RD" aún resolviéndose no hay URL todavía: cuando llegue,
+        // startRdPending verá que estamos emitiendo y la cargará en la TV.
+        if (currentUrl.isNotBlank()) loadOnCast(currentUrl, pos)
     }
 
     /**
@@ -529,7 +579,7 @@ class PlayerActivity : AppCompatActivity() {
             p.prepare()
             p.playWhenReady = true
         }
-        showToast("T${s}E$e")
+        if (e > 0) showToast("T${s}E$e")
     }
 
     // ------------------- Progreso -------------------

@@ -9,7 +9,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Volver al frente tras abrir AceStream para arrancar su engine -->
+    <!-- Volver al frente si otra app se quedó por delante al empezar a reproducir -->
     <uses-permission android:name="android.permission.REORDER_TASKS" />
     <!-- Auto-actualización: instalar el APK nuevo descargado de GitHub -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -17,22 +17,6 @@
     <!-- Android TV: instalable en teles (no exige pantalla táctil ni leanback) -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-
-    <!-- Android 11+: sin esto la app no puede "ver" si AceStream está instalado -->
-    <queries>
-        <package android:name="org.acestream.media" />
-        <package android:name="org.acestream.core" />
-        <package android:name="org.acestream.node" />
-        <package android:name="org.acestream.media.atv" />
-        <package android:name="org.acestream.core.atv" />
-        <intent>
-            <action android:name="android.intent.action.VIEW" />
-            <data android:scheme="acestream" />
-        </intent>
-        <intent>
-            <action android:name="org.acestream.engine.service.v0.IAceStreamEngine" />
-        </intent>
-    </queries>
 
     <application
         android:allowBackup="true"

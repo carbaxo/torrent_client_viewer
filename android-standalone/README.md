@@ -4,7 +4,7 @@ App Android **nativa e independiente**: descarga torrents **en el propio móvil*
 y reproduce el vídeo **mientras se descarga**, sin depender de ningún PC ni
 servidor.
 
-- **Interfaz al estilo de la web**: pestañas Descubrir / Buscar / TV / Descargas /
+- **Interfaz al estilo de la web**: pestañas Descubrir / Buscar / Descargas /
   Ajustes, catálogos con carátulas (Netflix, Prime, HBO Max, Disney+ vía TMDB) y
   ficha de detalle con sinopsis, tráiler y fuentes (Ver / Descargar).
 - Motor BitTorrent en el dispositivo: **libtorrent4j** (natives incluidos), con
@@ -14,8 +14,9 @@ servidor.
   siguiente episodio, Chromecast y continuar viendo.
 - Buscador con **dos motores**: Torrentio (banderas de idioma) y apibay/TPB, con
   **filtros de calidad** (4K/1080p/720p/SD) y orden por idioma preferido.
-- **Real-Debrid**: ver por streaming y descargar a disco.
-- **TV (AceStream)**: canales/eventos P2P vía search-ace.stream.
+- **Real-Debrid**: ver por streaming y descargar a disco; sus botones salen
+  primero en las fuentes y «Ver RD» abre el reproductor al momento mostrando
+  el progreso de preparación.
 - **Perfiles** (crear/editar/borrar) con **modo infantil** (solo catálogos
   familiares), sincronizados con la app del PC.
 - Descarga en segundo plano con servicio en primer plano y **auto-actualización**.

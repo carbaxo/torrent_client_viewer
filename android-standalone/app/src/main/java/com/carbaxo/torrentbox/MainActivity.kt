@@ -100,7 +100,9 @@ class MainActivity : ComponentActivity() {
                         saveRoot = saveRoot,
                         initialMagnet = magnetFromIntent(intent),
                         onPlay = { infoHash, c -> bringToFront(); startActivity(playerIntent(c).putExtra("infoHash", infoHash)) },
-                        onPlayUrl = { url, c -> bringToFront(); startActivity(playerIntent(c).putExtra("url", url)) }
+                        onPlayUrl = { url, c -> bringToFront(); startActivity(playerIntent(c).putExtra("url", url)) },
+                        // "Ver RD": abre el reproductor YA; el enlace se resuelve allí con estado en pantalla
+                        onPlayRd = { magnet, c -> bringToFront(); startActivity(playerIntent(c).putExtra("rdMagnet", magnet)) }
                     )
                 }
             }
@@ -108,8 +110,8 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Vuelve a traer NUESTRA app al frente si otra (p.ej. AceStream, que se
-     * abre para arrancar su engine) se quedó por delante al llegar el stream.
+     * Vuelve a traer NUESTRA app al frente si otra se quedó por delante
+     * al empezar la reproducción.
      */
     private fun bringToFront() {
         runCatching {
@@ -140,14 +142,13 @@ data class PlayCtx(
 private enum class Tab(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     DISCOVER("Descubrir", Icons.Filled.Explore),
     SEARCH("Buscar", Icons.Filled.Search),
-    TV("TV", Icons.Filled.LiveTv),
     DOWNLOADS("Descargas", Icons.Filled.Download),
     SETTINGS("Ajustes", Icons.Filled.Settings)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) -> Unit, onPlayUrl: (String, PlayCtx) -> Unit) {
+fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) -> Unit, onPlayUrl: (String, PlayCtx) -> Unit, onPlayRd: (String, PlayCtx) -> Unit) {
     var tab by remember { mutableStateOf(Tab.DISCOVER) }
     var detail by remember { mutableStateOf<Tmdb.Title?>(null) }
     var catalogType by remember { mutableStateOf("movie") }
@@ -156,8 +157,8 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) 
     var pendingPlay by remember { mutableStateOf<Pair<String, PlayCtx>?>(null) }
     val ctx = LocalContext.current
 
-    // Modo infantil: el perfil activo marca kids. Oculta Buscar (búsqueda libre)
-    // y TV (AceStream); los catálogos se filtran a géneros familiares.
+    // Modo infantil: el perfil activo marca kids. Oculta Buscar (búsqueda
+    // libre); los catálogos se filtran a géneros familiares.
     val kids = Sync.activeProfile?.kids == true
     val visibleTabs = if (kids) listOf(Tab.DISCOVER, Tab.DOWNLOADS, Tab.SETTINGS) else Tab.values().toList()
     LaunchedEffect(kids) { if (kids && tab !in visibleTabs) tab = Tab.DISCOVER }
@@ -207,6 +208,7 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) 
             onWatch = { magnet, c -> addMagnet(magnet, true, c); tab = Tab.DOWNLOADS; detail = null },
             onDownload = { magnet -> addMagnet(magnet, false); tab = Tab.DOWNLOADS; detail = null },
             onPlayUrl = { url, c -> onPlayUrl(url, c) },
+            onPlayRd = { magnet, c -> onPlayRd(magnet, c) },
             onOpenDownloads = { tab = Tab.DOWNLOADS; detail = null }
         )
         return
@@ -234,7 +236,6 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) 
             when (tab) {
                 Tab.DISCOVER -> DiscoverScreen(catalogType, { catalogType = it }, kids = kids, onOpen = { detail = it })
                 Tab.SEARCH -> if (kids) DiscoverScreen(catalogType, { catalogType = it }, kids = true, onOpen = { detail = it }) else SearchScreen(onOpen = { detail = it })
-                Tab.TV -> if (!kids) AceScreen(onPlayUrl)
                 Tab.DOWNLOADS -> DownloadsScreen(downloads, rdDownloads, { h -> onPlay(h, PlayCtx()) }, { u -> onPlayUrl(u, PlayCtx()) })
                 Tab.SETTINGS -> SettingsScreen()
             }
@@ -543,277 +544,6 @@ fun SearchScreen(onOpen: (Tmdb.Title) -> Unit) {
     }
 }
 
-/**
- * Pestaña TV: AceStream a pantalla completa (canales en directo y eventos).
- */
-@Composable
-fun AceScreen(onPlayUrl: (String, PlayCtx) -> Unit) {
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
-        item {
-            Text("TV en directo", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text("Canales y eventos vía AceStream (P2P)", style = MaterialTheme.typography.labelSmall, color = Muted)
-            Spacer(Modifier.height(10.dp))
-            AceStreamPanel(onPlayUrl)
-        }
-    }
-}
-
-
-/**
- * Panel de AceStream: busca en acestreamid.com (scraping), reproduce vía el
- * AceStream Engine sin salir de la app, permite pegar un enlace a mano y abre
- * la página del contenido como alternativa si el engine no resuelve.
- */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
-    val ctx = LocalContext.current
-    var query by remember { mutableStateOf("") }
-    var manual by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf<List<AceStream.Result>>(emptyList()) }
-    var status by remember { mutableStateOf("") }
-    var expanded by remember { mutableStateOf(true) }
-    var page by remember { mutableStateOf(1) }
-    // Canales de search-ace.stream (playlist o búsqueda), por categoría + país
-    var channels by remember { mutableStateOf<List<AceStream.Channel>>(emptyList()) }
-    var selCategory by remember { mutableStateOf<String?>(null) }
-    var selCountry by remember { mutableStateOf<String?>(null) }
-    var chFilter by remember { mutableStateOf("") }
-    var loadingCh by remember { mutableStateOf(false) }
-    var aceQuery by remember { mutableStateOf("") }        // búsqueda de texto en search-ace.stream
-
-    // Reproducir GRATIS: se lo pasamos a la app de AceStream (su propio reproductor).
-    fun openInAce(contentId: String) {
-        if (!AceStream.openExternal(ctx, contentId))
-            status = "No hay ninguna app que abra enlaces acestream://. Instala «Ace Stream Media»."
-    }
-
-    // Reproducir DENTRO de TorrentBox: requiere AceStream Premium (el motor gratis
-    // bloquea la reproducción en reproductores externos como el nuestro).
-    fun playInApp(name: String, contentId: String) {
-        status = "Comprobando AceStream Engine…"
-        AceStream.ensureEngine(ctx, onStatus = { s -> onMain { status = s } }) { ok, err ->
-            onMain {
-                if (!ok) {
-                    status = (err ?: "Engine no disponible") + " Usa «Abrir en AceStream» (gratis)."
-                    return@onMain
-                }
-                status = "⚡ Resolviendo en el engine…"
-                AceStream.resolve(contentId) { url, rerr ->
-                    onMain {
-                        if (url != null) { status = ""; onPlayUrl(url, PlayCtx(name = name)) }
-                        else status = (rerr ?: "Reproducción integrada no disponible (requiere Premium).") + " Usa «Abrir en AceStream» (gratis)."
-                    }
-                }
-            }
-        }
-    }
-
-    // Carga la playlist de search-ace.stream (endpoint que sí es público) y la
-    // categoriza por categoría + país. Las categorías se filtran en local.
-    fun loadAceChannels() {
-        loadingCh = true; status = "Cargando canales…"
-        AceStream.loadPlaylist { list, err ->
-            onMain {
-                loadingCh = false
-                if (list == null) status = err ?: "Error"
-                else { channels = list; selCategory = null; selCountry = null; status = "${list.size} canales" }
-            }
-        }
-    }
-
-    // Búsqueda por texto en search-ace.stream (devuelve content_ids reproducibles)
-    fun aceSearch() {
-        if (aceQuery.isBlank()) { status = "Escribe algo para buscar"; return }
-        loadingCh = true; status = "Buscando “${aceQuery.trim()}”…"
-        AceStream.searchAceApi(aceQuery.trim()) { list, err ->
-            onMain {
-                loadingCh = false
-                if (list == null) status = err ?: "Error"
-                else { channels = list; selCategory = null; selCountry = null; status = if (list.isEmpty()) "Sin resultados" else "${list.size} resultados" }
-            }
-        }
-    }
-
-    // Con query vacía lista TODO el directorio; p es la "hoja" (página) pedida
-    fun load(p: Int) {
-        status = if (query.isBlank()) "Cargando directorio (página $p)…" else "Buscando en AceStream…"
-        AceStream.search(query.trim(), p) { list, err ->
-            onMain {
-                when {
-                    list == null -> status = err ?: "Error"
-                    list.isEmpty() -> status = err ?: "Sin resultados"
-                    else -> { results = list; page = p; status = "${list.size} canales/eventos · página $p" }
-                }
-            }
-        }
-    }
-
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(Modifier.fillMaxWidth().clickable { expanded = !expanded }, verticalAlignment = Alignment.CenterVertically) {
-                Text("📡 AceStream (canales y eventos)", style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, contentDescription = null)
-            }
-            if (expanded) {
-                // Canales favoritos (acceso rápido)
-                if (Prefs.aceFavs.isNotEmpty()) {
-                    Text("⭐ Favoritos", style = MaterialTheme.typography.labelMedium, color = Muted)
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(Prefs.aceFavs.size) { i ->
-                            val parts = Prefs.aceFavs[i].split("|", limit = 2)
-                            val fid = parts[0]; val fname = parts.getOrElse(1) { "Canal" }
-                            AssistChip(onClick = { openInAce(fid) }, label = { Text("▶ $fname") })
-                        }
-                    }
-                }
-                Text("Al pulsar ▶ se abre en la app de AceStream (gratis). La reproducción dentro de TorrentBox requiere AceStream Premium.",
-                    style = MaterialTheme.typography.labelSmall, color = Muted)
-                if (!AceStream.engineInstalled(ctx)) {
-                    Text("Requiere la app «Ace Stream Media» (gratis) — esa app YA incluye el engine. La reproducción es P2P dentro de tu app.",
-                        style = MaterialTheme.typography.labelSmall, color = Muted)
-                    OutlinedButton(onClick = { AceStream.openEngineInstall(ctx) }) { Text("Instalar Ace Stream Media") }
-                }
-
-                // ---- Canales de search-ace.stream (búsqueda + categorías) ----
-                HorizontalDivider(color = Muted.copy(alpha = 0.2f))
-                Text("Canales (search-ace.stream)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                OutlinedTextField(
-                    value = aceQuery, onValueChange = { aceQuery = it },
-                    label = { Text("Buscar canal (ej. Movistar, DAZN…)") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(enabled = !loadingCh && aceQuery.isNotBlank(), onClick = { aceSearch() }) { Text("Buscar") }
-                    OutlinedButton(enabled = !loadingCh, onClick = { loadAceChannels() }) {
-                        Text(if (channels.isEmpty()) "Ver todos por categoría/país" else "Recargar todos")
-                    }
-                }
-
-                if (channels.isNotEmpty()) {
-                    val categories = remember(channels) { channels.map { it.category }.distinct().sorted() }
-                    val countries = remember(channels) { channels.map { it.country }.distinct().sorted() }
-                    Text("Categoría", style = MaterialTheme.typography.labelMedium, color = Muted)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        FilterChip(selected = selCategory == null, onClick = { selCategory = null }, label = { Text("Todas") })
-                        categories.forEach { c ->
-                            FilterChip(selected = selCategory == c, onClick = { selCategory = if (selCategory == c) null else c }, label = { Text(c) })
-                        }
-                    }
-                    Text("País", style = MaterialTheme.typography.labelMedium, color = Muted)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        FilterChip(selected = selCountry == null, onClick = { selCountry = null }, label = { Text("Todos") })
-                        countries.forEach { c ->
-                            FilterChip(selected = selCountry == c, onClick = { selCountry = if (selCountry == c) null else c }, label = { Text(c) })
-                        }
-                    }
-                    OutlinedTextField(value = chFilter, onValueChange = { chFilter = it },
-                        label = { Text("Filtrar canal…") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    val shownCh = channels.filter {
-                        (selCategory == null || it.category == selCategory) &&
-                            (selCountry == null || it.country == selCountry) &&
-                            (chFilter.isBlank() || it.name.contains(chFilter, ignoreCase = true))
-                    }
-                    Text("${shownCh.size} canales", style = MaterialTheme.typography.labelSmall, color = Muted)
-                    shownCh.take(300).forEach { ch ->
-                        Row(
-                            Modifier.fillMaxWidth().clickable { if (!AceStream.openChannel(ctx, ch)) status = "No hay app de AceStream instalada." }.padding(vertical = 6.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(ch.name + (if (ch.isInfohash) "  ·(infohash)" else ""), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text("${ch.category}  ·  ${ch.country}", style = MaterialTheme.typography.labelSmall, color = Muted)
-                            }
-                            IconButton(onClick = { status = "Enlace: ${ch.rawUrl}" }) {
-                                Icon(Icons.Filled.Info, contentDescription = "Ver enlace", tint = Muted)
-                            }
-                            IconButton(onClick = { Prefs.toggleAceFav(ch.contentId, ch.name) }) {
-                                Icon(
-                                    if (Prefs.isAceFav(ch.contentId)) Icons.Filled.Star else Icons.Filled.StarBorder,
-                                    contentDescription = "Favorito",
-                                    tint = if (Prefs.isAceFav(ch.contentId)) Color(0xFFFBBF24) else Muted
-                                )
-                            }
-                            Text("📡", color = Accent)
-                        }
-                    }
-                    if (shownCh.size > 300) Text("Mostrando 300 de ${shownCh.size}. Usa los filtros.", style = MaterialTheme.typography.labelSmall, color = Muted)
-                }
-
-                // ---- Búsqueda en acestreamid.com ----
-                HorizontalDivider(color = Muted.copy(alpha = 0.2f))
-                Text("Buscar en acestreamid.com", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                OutlinedTextField(
-                    value = query, onValueChange = { query = it },
-                    label = { Text("Buscar canal / evento… (vacío = ver todos)") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Button(onClick = { results = emptyList(); load(1) }) {
-                    Text(if (query.isBlank()) "Ver todos los enlaces" else "Buscar en AceStream")
-                }
-
-                // Enlace / content-id manual
-                OutlinedTextField(
-                    value = manual, onValueChange = { manual = it },
-                    label = { Text("O pega un enlace acestream:// o content-id") }, singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        enabled = AceStream.extractContentId(manual) != null,
-                        onClick = {
-                            val id = AceStream.extractContentId(manual)
-                            if (id != null) openInAce(id) else status = "Enlace no válido."
-                        }
-                    ) { Text("▶ Reproducir enlace") }
-                    AceStream.extractContentId(manual)?.let { id ->
-                        OutlinedButton(onClick = { playInApp("AceStream", id) }) { Text("Aquí (Premium)") }
-                        OutlinedButton(onClick = { AceStream.openPage(ctx, id) }) { Text("Abrir página") }
-                    }
-                }
-
-                if (status.isNotBlank()) Text(status, color = Muted, style = MaterialTheme.typography.bodySmall)
-
-                results.forEach { r ->
-                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Bg)) {
-                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(r.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                IconButton(onClick = { Prefs.toggleAceFav(r.contentId, r.name) }) {
-                                    Icon(
-                                        if (Prefs.isAceFav(r.contentId)) Icons.Filled.Star else Icons.Filled.StarBorder,
-                                        contentDescription = "Favorito",
-                                        tint = if (Prefs.isAceFav(r.contentId)) Color(0xFFFBBF24) else Muted
-                                    )
-                                }
-                            }
-                            val votes = if (r.likes >= 0 || r.dislikes >= 0)
-                                "👍 ${r.likes.coerceAtLeast(0)} · 👎 ${r.dislikes.coerceAtLeast(0)} · " else ""
-                            Text(votes + r.contentId.take(12) + "…", style = MaterialTheme.typography.labelSmall, color = Muted)
-                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = { openInAce(r.contentId) }) { Text("▶ Reproducir") }
-                                OutlinedButton(onClick = { playInApp(r.name, r.contentId) }) { Text("Aquí (Premium)") }
-                                OutlinedButton(onClick = { AceStream.openPage(ctx, r.pageUrl) }) { Text("Página") }
-                            }
-                        }
-                    }
-                }
-                // Hojas (paginación) del directorio / búsqueda
-                if (results.isNotEmpty() || page > 1) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedButton(onClick = { load(page - 1) }, enabled = page > 1) { Text("◀ Anterior") }
-                        Text("Página $page", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = Muted)
-                        OutlinedButton(onClick = { load(page + 1) }, enabled = results.isNotEmpty()) { Text("Siguiente ▶") }
-                    }
-                }
-            }
-        }
-    }
-}
 
 @Composable
 fun SettingsScreen() {
@@ -1193,6 +923,7 @@ fun SourcesSection(
     onWatch: (String, PlayCtx) -> Unit,
     onDownload: (String) -> Unit,
     onPlayUrl: (String, PlayCtx) -> Unit,
+    onPlayRd: (String, PlayCtx) -> Unit,
     onOpenDownloads: () -> Unit
 ) {
     var linksExpanded by remember { mutableStateOf(true) }
@@ -1232,23 +963,13 @@ fun SourcesSection(
                     Text(r.name, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text("${Lang.flag(r.lang)} ${Lang.label(r.lang)}" + (if (r.quality != "Unknown") "  ·  ${r.quality}" else "") + "  ·  ▲ ${r.seeders} seeders · ${Search.humanSize(r.sizeBytes)}", style = MaterialTheme.typography.labelSmall, color = Muted)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { onWatch(r.magnet, buildCtx()) }) { Text("▶ Ver") }
-                        OutlinedButton(onClick = { onDownload(r.magnet) }) { Text("⬇ Descargar") }
+                        // Con Real-Debrid configurado sus botones van PRIMERO
                         if (RealDebrid.configured) {
                             Button(
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF34D399)),
-                                onClick = {
-                                    rdStatus = "⚡ Preparando en Real-Debrid…"
-                                    RealDebrid.streamMagnet(r.magnet) { url, _, err, progress ->
-                                        onMain {
-                                            when {
-                                                url != null -> { rdStatus = ""; onPlayUrl(url, buildCtx()) }
-                                                progress != null -> rdStatus = "Real-Debrid preparando… ${progress}% (reintenta en un momento)"
-                                                else -> rdStatus = err ?: "Error de Real-Debrid"
-                                            }
-                                        }
-                                    }
-                                }
+                                // Abre el reproductor YA; el enlace RD se resuelve
+                                // allí mostrando el progreso (antes el botón parecía muerto)
+                                onClick = { onPlayRd(r.magnet, buildCtx()) }
                             ) { Text("⚡ Ver RD") }
                             OutlinedButton(onClick = {
                                 rdStatus = "⚡ Preparando descarga con Real-Debrid…"
@@ -1266,6 +987,9 @@ fun SourcesSection(
                                 }
                             }) { Text("⚡ Descargar RD") }
                         }
+                        // …y después los normales (torrent en el dispositivo)
+                        Button(onClick = { onWatch(r.magnet, buildCtx()) }) { Text("▶ Ver") }
+                        OutlinedButton(onClick = { onDownload(r.magnet) }) { Text("⬇ Descargar") }
                     }
                 }
             }
@@ -1276,7 +1000,7 @@ fun SourcesSection(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String, PlayCtx) -> Unit, onDownload: (String) -> Unit, onPlayUrl: (String, PlayCtx) -> Unit, onOpenDownloads: () -> Unit) {
+fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String, PlayCtx) -> Unit, onDownload: (String) -> Unit, onPlayUrl: (String, PlayCtx) -> Unit, onPlayRd: (String, PlayCtx) -> Unit, onOpenDownloads: () -> Unit) {
     val ctx = LocalContext.current
     var detail by remember { mutableStateOf<Tmdb.Detail?>(null) }
     var sources by remember { mutableStateOf<List<Search.Result>>(emptyList()) }
@@ -1413,7 +1137,7 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String, PlayCt
                         enabled = !loadingSources, modifier = Modifier.fillMaxWidth()
                     ) { Text("Buscar temporada $sn completa") }
                     if (expandedEpisode == 0) {
-                        SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onWatch, onDownload, onPlayUrl, onOpenDownloads)
+                        SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onWatch, onDownload, onPlayUrl, onPlayRd, onOpenDownloads)
                     }
                     episodes.forEach { ep ->
                         Card(
@@ -1435,7 +1159,7 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String, PlayCt
                         }
                         // Enlaces JUSTO debajo del episodio seleccionado
                         if (expandedEpisode == ep.episode) {
-                            SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onWatch, onDownload, onPlayUrl, onOpenDownloads)
+                            SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onWatch, onDownload, onPlayUrl, onPlayRd, onOpenDownloads)
                         }
                     }
                 }
@@ -1443,7 +1167,7 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String, PlayCt
                 Button(onClick = { expandedEpisode = -1; dt?.let { loadSources(it) } }, enabled = dt != null && !loadingSources, modifier = Modifier.fillMaxWidth()) {
                     Text(if (loadingSources) "Buscando fuentes…" else "Buscar fuentes")
                 }
-                SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onWatch, onDownload, onPlayUrl, onOpenDownloads)
+                SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onWatch, onDownload, onPlayUrl, onPlayRd, onOpenDownloads)
             }
             Spacer(Modifier.height(24.dp))
         }
