@@ -28,6 +28,37 @@ object RealDebrid {
     var token by mutableStateOf("")          // observable para la UI
     var account by mutableStateOf<String?>(null)   // nombre de usuario RD si válido
 
+    // id de descarga RD por URL directa (para pedir transcodificación al emitir)
+    private val idsByUrl = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    fun downloadIdFor(url: String): String? = idsByUrl[url]
+
+    /**
+     * Enlace HLS transcodificado por RD (audio AAC) para una URL directa ya
+     * generada con streamMagnet. Un Chromecast no decodifica el audio
+     * Dolby/DTS de muchos torrents; la versión HLS de RD sí suena.
+     * onDone(m3u8) con null si no hay transcodificación disponible.
+     */
+    fun transcodeUrl(url: String, onDone: (String?) -> Unit) {
+        val id = idsByUrl[url] ?: return onDone(null)
+        io.submit {
+            try {
+                val t = rd("GET", "/streaming/transcode/$id")
+                val apple = t.optJSONObject("apple")
+                var best = apple?.optString("full", "") ?: ""
+                if (best.isBlank() && apple != null) {
+                    for (k in apple.keys()) {
+                        val v = apple.optString(k, "")
+                        if (v.isNotBlank()) { best = v; break }
+                    }
+                }
+                onDone(best.ifBlank { null })
+            } catch (_: Throwable) {
+                onDone(null)
+            }
+        }
+    }
+
     val configured: Boolean get() = token.isNotBlank()
 
     fun init(ctx: Context) {
@@ -135,7 +166,10 @@ object RealDebrid {
                 val dl = un.optString("download", "")
                 val fname = un.optString("filename", "").ifBlank { info.optString("filename", "video") }
                 if (dl.isBlank()) onDone(null, null, "No se pudo generar el enlace directo.", null)
-                else onDone(dl, fname, null, null)
+                else {
+                    un.optString("id", "").takeIf { it.isNotBlank() }?.let { idsByUrl[dl] = it }
+                    onDone(dl, fname, null, null)
+                }
             } catch (e: Throwable) {
                 onDone(null, null, e.message ?: "Error de Real-Debrid.", null)
             }

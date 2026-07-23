@@ -27,6 +27,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
@@ -58,6 +59,11 @@ class PlayerActivity : AppCompatActivity() {
 
     private val speeds = floatArrayOf(1f, 1.25f, 1.5f, 2f, 0.5f, 0.75f)
     private var speedIdx = 0
+
+    // MIME de las pistas de audio del archivo (las detecta el reproductor local)
+    private var audioMimes: List<String> = emptyList()
+    // La TV está reproduciendo la versión HLS transcodificada de Real-Debrid
+    private var castedTranscoded = false
 
     // Selector de subtítulos externos (.srt/.vtt/.ass)
     private val pickSubtitle = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -173,6 +179,11 @@ class PlayerActivity : AppCompatActivity() {
                         nextBtn.visibility = View.VISIBLE
                     }
                 }
+                override fun onTracksChanged(tracks: Tracks) {
+                    audioMimes = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+                        .flatMap { g -> (0 until g.length).mapNotNull { g.getTrackFormat(it).sampleMimeType } }
+                    if (isCasting()) maybeWarnCastAudio()
+                }
             })
         }
 
@@ -189,7 +200,18 @@ class PlayerActivity : AppCompatActivity() {
                 })
                 cp.addListener(object : Player.Listener {
                     override fun onPlayerError(error: PlaybackException) {
-                        showToast("La TV no pudo reproducir el vídeo (${error.errorCodeName})")
+                        if (castedTranscoded) {
+                            // La versión HLS de RD no funcionó: prueba el enlace directo
+                            castedTranscoded = false
+                            showToast("HLS falló, probando el enlace directo…", 3000)
+                            val pos = runCatching { cp.currentPosition }.getOrDefault(0L)
+                            cp.setMediaItem(castItem(currentUrl), pos)
+                            cp.prepare()
+                            cp.playWhenReady = true
+                            maybeWarnCastAudio()
+                        } else {
+                            showToast("La TV no pudo reproducir el vídeo (${error.errorCodeName})", 5000)
+                        }
                     }
                     override fun onPlaybackStateChanged(state: Int) {
                         if (state == Player.STATE_ENDED && mediaType == "series" && episode > 0) {
@@ -264,9 +286,9 @@ class PlayerActivity : AppCompatActivity() {
         return cp.isCastSessionAvailable && playerView.player === cp
     }
 
-    private fun castItem(url: String): MediaItem = MediaItem.Builder()
+    private fun castItem(url: String, mime: String = castMimeType(url)): MediaItem = MediaItem.Builder()
         .setUri(castableUrl(url))
-        .setMimeType(castMimeType(url))
+        .setMimeType(mime)
         .setMediaMetadata(
             MediaMetadata.Builder()
                 .setTitle(titleName.ifBlank { "TorrentBox" })
@@ -281,11 +303,60 @@ class PlayerActivity : AppCompatActivity() {
         if (playerView.player === cp) return // ya estamos emitiendo
         val pos = local.currentPosition
         local.pause()
-        cp.setMediaItem(castItem(currentUrl), pos)
-        cp.prepare()
-        cp.playWhenReady = true
         playerView.player = cp
         showToast("📺 Enviando a la TV…")
+        loadOnCast(currentUrl, pos)
+    }
+
+    /**
+     * Carga la URL en la TV. Con Real-Debrid pide primero la versión HLS
+     * transcodificada (audio AAC): el audio Dolby/DTS de muchos torrents no
+     * suena en un Chromecast. Si no hay HLS, va el enlace directo con aviso.
+     */
+    private fun loadOnCast(url: String, pos: Long) {
+        val cp = castPlayer ?: return
+        if (RealDebrid.downloadIdFor(url) != null) {
+            RealDebrid.transcodeUrl(url) { m3u8 ->
+                mainH.post {
+                    if (!isCasting()) return@post
+                    castedTranscoded = m3u8 != null
+                    val item = if (m3u8 != null) castItem(m3u8, MimeTypes.APPLICATION_M3U8)
+                    else castItem(url)
+                    cp.setMediaItem(item, pos)
+                    cp.prepare()
+                    cp.playWhenReady = true
+                    if (m3u8 == null) maybeWarnCastAudio()
+                }
+            }
+        } else {
+            castedTranscoded = false
+            cp.setMediaItem(castItem(url), pos)
+            cp.prepare()
+            cp.playWhenReady = true
+            maybeWarnCastAudio()
+        }
+    }
+
+    /** Avisa si el audio del archivo es de los que un Chromecast no decodifica. */
+    private fun maybeWarnCastAudio() {
+        if (castedTranscoded) return
+        val bad = setOf(
+            MimeTypes.AUDIO_AC3, MimeTypes.AUDIO_E_AC3, MimeTypes.AUDIO_E_AC3_JOC,
+            MimeTypes.AUDIO_DTS, MimeTypes.AUDIO_DTS_HD, MimeTypes.AUDIO_TRUEHD
+        )
+        val good = setOf(
+            MimeTypes.AUDIO_AAC, MimeTypes.AUDIO_MPEG, MimeTypes.AUDIO_OPUS,
+            MimeTypes.AUDIO_VORBIS, MimeTypes.AUDIO_FLAC
+        )
+        if (audioMimes.any { it in bad } && audioMimes.none { it in good }) {
+            val label = when {
+                audioMimes.any { it == MimeTypes.AUDIO_TRUEHD } -> "TrueHD"
+                audioMimes.any { it.contains("dts") } -> "DTS"
+                else -> "Dolby (AC3)"
+            }
+            val extra = if (RealDebrid.configured) "" else " o usa Real-Debrid"
+            showToast("⚠️ Audio $label: puede no sonar en la TV.\nPrueba una fuente con audio AAC$extra", 7000)
+        }
     }
 
     private fun switchToLocal() {
@@ -294,6 +365,7 @@ class PlayerActivity : AppCompatActivity() {
         if (playerView.player === local) return
         val pos = runCatching { cp.currentPosition }.getOrDefault(0L)
         runCatching { cp.stop() }
+        castedTranscoded = false
         playerView.player = local
         if (local.playbackState == Player.STATE_IDLE) local.prepare()
         if (pos > 0) local.seekTo(pos)
@@ -366,11 +438,11 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private var toastHide: Runnable? = null
-    private fun showToast(msg: String) {
+    private fun showToast(msg: String, durationMs: Long = 900) {
         toast.text = msg
         toast.visibility = View.VISIBLE
         toastHide?.let { mainH.removeCallbacks(it) }
-        toastHide = Runnable { toast.visibility = View.GONE }.also { mainH.postDelayed(it, 900) }
+        toastHide = Runnable { toast.visibility = View.GONE }.also { mainH.postDelayed(it, durationMs) }
     }
 
     // ------------------- Subtítulos externos -------------------
@@ -450,10 +522,7 @@ class PlayerActivity : AppCompatActivity() {
         season = s; episode = e
         currentUrl = url
         if (isCasting()) {
-            val cp = castPlayer ?: return
-            cp.setMediaItem(castItem(url))
-            cp.prepare()
-            cp.playWhenReady = true
+            loadOnCast(url, 0L)
         } else {
             val p = player ?: return
             p.setMediaItem(MediaItem.fromUri(url))
