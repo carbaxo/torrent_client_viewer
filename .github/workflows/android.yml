@@ -5,7 +5,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [main, master, claude/torrent-downloader-streaming-cqjddi]
+    branches: [main, master, claude/torrent-downloader-streaming-cqjddi, claude/chromecast-casting-playback-vwos5t]
     paths:
       - 'android-standalone/**'
       - '.github/workflows/android.yml'

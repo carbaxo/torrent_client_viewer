@@ -5,11 +5,14 @@ import java.io.InputStream
 import java.io.RandomAccessFile
 
 /**
- * Servidor HTTP local (127.0.0.1) que sirve el archivo de vídeo de un torrent
- * con soporte de peticiones Range, BLOQUEANDO hasta que las piezas necesarias
- * estén descargadas. Así ExoPlayer puede reproducir y adelantar mientras baja.
+ * Servidor HTTP local que sirve el archivo de vídeo de un torrent con soporte
+ * de peticiones Range, BLOQUEANDO hasta que las piezas necesarias estén
+ * descargadas. Así ExoPlayer puede reproducir y adelantar mientras baja.
  *
- * URL: http://127.0.0.1:<port>/<infoHash>
+ * Escucha en TODAS las interfaces (no solo loopback) para que un Chromecast u
+ * otro dispositivo de la misma red pueda leer el stream por la IP de la WiFi.
+ *
+ * URL local: http://127.0.0.1:<port>/<infoHash>
  */
 object StreamServer {
     const val PORT = 8090
@@ -29,7 +32,7 @@ object StreamServer {
         server = null
     }
 
-    private class Server(port: Int) : NanoHTTPD("127.0.0.1", port) {
+    private class Server(port: Int) : NanoHTTPD(null, port) {
         override fun serve(session: IHTTPSession): Response {
             val infoHash = session.uri.trim('/')
             val d = TorrentEngine.get(infoHash)
@@ -70,6 +73,7 @@ object StreamServer {
             val res = newFixedLengthResponse(status, mime, stream, length)
             res.addHeader("Accept-Ranges", "bytes")
             if (partial) res.addHeader("Content-Range", "bytes $start-$end/$total")
+            res.addHeader("Access-Control-Allow-Origin", "*")
             return res
         }
 

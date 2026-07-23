@@ -25,6 +25,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
@@ -109,7 +110,7 @@ class PlayerActivity : AppCompatActivity() {
         }
         val speedBtn = mkBtn("1×") {
             speedIdx = (speedIdx + 1) % speeds.size
-            player?.setPlaybackSpeed(speeds[speedIdx])
+            runCatching { activePlayer()?.setPlaybackSpeed(speeds[speedIdx]) }
             (overlay.getChildAt(0) as TextView).text = "${speeds[speedIdx]}×"
             showToast("Velocidad ${speeds[speedIdx]}×")
         }
@@ -186,37 +187,101 @@ class PlayerActivity : AppCompatActivity() {
                     override fun onCastSessionAvailable() = switchToCast()
                     override fun onCastSessionUnavailable() = switchToLocal()
                 })
+                cp.addListener(object : Player.Listener {
+                    override fun onPlayerError(error: PlaybackException) {
+                        showToast("La TV no pudo reproducir el vídeo (${error.errorCodeName})")
+                    }
+                    override fun onPlaybackStateChanged(state: Int) {
+                        if (state == Player.STATE_ENDED && mediaType == "series" && episode > 0) {
+                            nextBtn.visibility = View.VISIBLE
+                        }
+                    }
+                })
+                // Si ya había una sesión de Cast abierta antes de entrar al
+                // reproductor, el listener no dispara: envía ya la reproducción.
+                if (cp.isCastSessionAvailable) switchToCast()
             }
         }
     }
 
     // ------------------- Chromecast -------------------
-    /** URL que la TV pueda alcanzar: el stream local se sirve por la IP de la WiFi. */
-    private fun castableUrl(u: String): String {
-        if (!u.contains("127.0.0.1")) return u
-        return runCatching {
+    /** IP del móvil en la red local (WiFi, ethernet o hotspot). */
+    private fun lanIp(): String? {
+        // WifiManager (rápido y fiable en WiFi normal)…
+        runCatching {
             @Suppress("DEPRECATION")
             val wm = applicationContext.getSystemService(WIFI_SERVICE) as android.net.wifi.WifiManager
             @Suppress("DEPRECATION")
             val ip = wm.connectionInfo.ipAddress
-            if (ip == 0) u else u.replace(
-                "127.0.0.1",
-                String.format("%d.%d.%d.%d", ip and 0xff, ip shr 8 and 0xff, ip shr 16 and 0xff, ip shr 24 and 0xff)
+            if (ip != 0) return String.format(
+                "%d.%d.%d.%d", ip and 0xff, ip shr 8 and 0xff, ip shr 16 and 0xff, ip shr 24 and 0xff
             )
-        }.getOrDefault(u)
+        }
+        // …y si devuelve 0 (ethernet en Android TV, hotspot), busca en las interfaces
+        return runCatching {
+            java.util.Collections.list(java.net.NetworkInterface.getNetworkInterfaces())
+                .filter { it.isUp && !it.isLoopback }
+                .flatMap { java.util.Collections.list(it.inetAddresses) }
+                .filterIsInstance<java.net.Inet4Address>()
+                .firstOrNull { it.isSiteLocalAddress }
+                ?.hostAddress
+        }.getOrNull()
     }
+
+    /** URL que la TV pueda alcanzar: el stream local se sirve por la IP de la LAN. */
+    private fun castableUrl(u: String): String {
+        if (!u.contains("127.0.0.1")) return u
+        val ip = lanIp() ?: return u
+        return u.replace("127.0.0.1", ip)
+    }
+
+    /**
+     * MIME real del vídeo. El stream local no lleva extensión en la URL, así
+     * que se consulta el nombre del archivo del torrent; para URLs directas
+     * (Real-Debrid) se usa la extensión. La TV lo necesita correcto: con
+     * "video/mp4" fijo un MKV o WebM no llega a reproducirse.
+     */
+    private fun castMimeType(url: String): String {
+        val last = url.substringAfterLast('/').substringBefore('?')
+        val fromTorrent = TorrentEngine.get(last)?.let { d ->
+            if (d.videoIndex >= 0) d.ti.files().fileName(d.videoIndex) else null
+        }
+        val name = fromTorrent ?: runCatching { java.net.URLDecoder.decode(last, "UTF-8") }.getOrDefault(last)
+        return when (name.substringAfterLast('.', "").lowercase()) {
+            "webm" -> MimeTypes.VIDEO_WEBM
+            "mkv" -> MimeTypes.VIDEO_MATROSKA
+            "ts" -> MimeTypes.VIDEO_MP2T
+            "avi" -> "video/x-msvideo"
+            else -> MimeTypes.VIDEO_MP4 // mp4, m4v, mov y desconocidos
+        }
+    }
+
+    /** Reproductor activo: el CastPlayer si estamos emitiendo, si no el local. */
+    private fun activePlayer(): Player? = playerView.player ?: player
+
+    private fun isCasting(): Boolean {
+        val cp = castPlayer ?: return false
+        return cp.isCastSessionAvailable && playerView.player === cp
+    }
+
+    private fun castItem(url: String): MediaItem = MediaItem.Builder()
+        .setUri(castableUrl(url))
+        .setMimeType(castMimeType(url))
+        .setMediaMetadata(
+            MediaMetadata.Builder()
+                .setTitle(titleName.ifBlank { "TorrentBox" })
+                .apply { poster?.let { setArtworkUri(Uri.parse(it)) } }
+                .build()
+        )
+        .build()
 
     private fun switchToCast() {
         val cp = castPlayer ?: return
         val local = player ?: return
+        if (playerView.player === cp) return // ya estamos emitiendo
         val pos = local.currentPosition
-        local.playWhenReady = false
-        val item = MediaItem.Builder()
-            .setUri(castableUrl(currentUrl))
-            .setMimeType(MimeTypes.VIDEO_MP4)
-            .setMediaMetadata(MediaMetadata.Builder().setTitle(titleName.ifBlank { "TorrentBox" }).build())
-            .build()
-        cp.setMediaItem(item, pos)
+        local.pause()
+        cp.setMediaItem(castItem(currentUrl), pos)
         cp.prepare()
         cp.playWhenReady = true
         playerView.player = cp
@@ -226,9 +291,11 @@ class PlayerActivity : AppCompatActivity() {
     private fun switchToLocal() {
         val cp = castPlayer ?: return
         val local = player ?: return
+        if (playerView.player === local) return
         val pos = runCatching { cp.currentPosition }.getOrDefault(0L)
         runCatching { cp.stop() }
         playerView.player = local
+        if (local.playbackState == Player.STATE_IDLE) local.prepare()
         if (pos > 0) local.seekTo(pos)
         local.playWhenReady = true
         showToast("De vuelta al móvil")
@@ -265,7 +332,7 @@ class PlayerActivity : AppCompatActivity() {
                 return true
             }
             override fun onDoubleTap(e: MotionEvent): Boolean {
-                val p = player ?: return true
+                val p = activePlayer() ?: return true
                 val w = playerView.width
                 when {
                     e.x < w / 3f -> { p.seekTo((p.currentPosition - 10_000).coerceAtLeast(0)); showToast("⏪ -10 s") }
@@ -382,16 +449,23 @@ class PlayerActivity : AppCompatActivity() {
     private fun switchTo(url: String, s: Int, e: Int) {
         season = s; episode = e
         currentUrl = url
-        val p = player ?: return
-        p.setMediaItem(MediaItem.fromUri(url))
-        p.prepare()
-        p.playWhenReady = true
+        if (isCasting()) {
+            val cp = castPlayer ?: return
+            cp.setMediaItem(castItem(url))
+            cp.prepare()
+            cp.playWhenReady = true
+        } else {
+            val p = player ?: return
+            p.setMediaItem(MediaItem.fromUri(url))
+            p.prepare()
+            p.playWhenReady = true
+        }
         showToast("T${s}E$e")
     }
 
     // ------------------- Progreso -------------------
     private fun saveProgress() {
-        val p = player ?: return
+        val p = activePlayer() ?: return
         val posMs = p.currentPosition
         val durMs = p.duration // puede ser negativo si aún no se conoce
         if (tmdbId > 0 && posMs > 5000) {
