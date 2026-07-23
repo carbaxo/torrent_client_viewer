@@ -42,7 +42,9 @@ jobs:
       - name: Rename APK
         run: cp app/build/outputs/apk/debug/app-debug.apk TorrentBox.apk
 
+      # Si la cuota de artifacts está agotada no debe impedir publicar la Release
       - name: Upload APK as workflow artifact
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: TorrentBox-apk
