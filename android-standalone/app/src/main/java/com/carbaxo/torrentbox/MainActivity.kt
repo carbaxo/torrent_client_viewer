@@ -726,6 +726,7 @@ fun SearchScreen(onOpen: (Tmdb.Title) -> Unit) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)   // FlowRow (chips de reproductor)
 @Composable
 fun SettingsScreen() {
     val ctx = LocalContext.current
