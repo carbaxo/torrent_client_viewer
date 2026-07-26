@@ -1114,13 +1114,21 @@ fun DetailScreen(
     // Busca fuentes en Torrentio (banderas de idioma) + Peerflix (apibay) a la
     // vez, combina, deduplica por infoHash (gana más seeders) y ordena por el
     // idioma preferido. La combinación se hace en el hilo principal (onMain).
-    fun runSearch(query: String, label: String, season: Int? = null, episode: Int? = null) {
+    fun runSearch(
+        query: String, label: String, season: Int? = null, episode: Int? = null,
+        /** Segunda búsqueda por texto (el título traducido): muchos torrents
+         *  españoles se llaman "Monstruos contra alienígenas", no "Monsters vs
+         *  Aliens", y buscando solo el título original no salían. */
+        altQuery: String? = null
+    ) {
         loadingSources = true; sources = emptyList(); sourcesLabel = label
         ctxSeason = season ?: -1; ctxEpisode = episode ?: -1
         val id = imdbId
         val useTorrentio = id != null && (title.type == "movie" || episode != null)
+        val alt = altQuery?.trim()?.takeIf { it.isNotBlank() && !it.equals(query.trim(), true) }
         val acc = mutableListOf<Search.Result>()
-        var remaining = (if (useTorrentio) 1 else 0) + 1 // +1 = Peerflix (apibay)
+        // Torrentio + Peerflix (apibay) + la búsqueda con el título traducido
+        var remaining = (if (useTorrentio) 1 else 0) + 1 + (if (alt != null) 1 else 0)
         var lastErr: String? = null
         fun part(list: List<Search.Result>?, err: String?) = onMain {
             if (list != null) acc.addAll(list) else lastErr = err
@@ -1142,8 +1150,10 @@ fun DetailScreen(
         }
         if (useTorrentio) Torrentio.streams(title.type, id!!, season, episode) { l, e -> part(l, e) }
         Search.search(query) { l, e -> part(l, e) }
+        if (alt != null) Search.search(alt) { l, e -> part(l, e) }
     }
-    fun loadSources(dt: Tmdb.Detail) = runSearch(dt.originalTitle, dt.title)
+    fun loadSources(dt: Tmdb.Detail) =
+        runSearch(dt.originalTitle, dt.title, altQuery = dt.title)
 
     // Los enlaces salen SOLOS al abrir la ficha (como Stremio). Se espera un
     // momento al id de IMDb: sin el, Torrentio no se puede consultar.
@@ -1170,7 +1180,8 @@ fun DetailScreen(
         expandedEpisode = ep.episode
         runSearch(
             Search.episodeQuery(dt.originalTitle, sn, ep.episode),
-            "${dt.title} · T${sn}E${ep.episode} · ${ep.name}", sn, ep.episode
+            "${dt.title} · T${sn}E${ep.episode} · ${ep.name}", sn, ep.episode,
+            altQuery = Search.episodeQuery(dt.title, sn, ep.episode)
         )
     }
 
@@ -1238,7 +1249,11 @@ fun DetailScreen(
                     OutlinedButton(
                         onClick = {
                             expandedEpisode = 0
-                            runSearch("${dt.originalTitle} " + "S%02d".format(sn), "${dt.title} · Temporada $sn completa", sn, null)
+                            runSearch(
+                                "${dt.originalTitle} " + "S%02d".format(sn),
+                                "${dt.title} · Temporada $sn completa", sn, null,
+                                altQuery = "${dt.title} " + "S%02d".format(sn)
+                            )
                         },
                         enabled = !loadingSources, modifier = Modifier.fillMaxWidth()
                     ) { Text("Buscar temporada $sn completa") }
@@ -1249,7 +1264,11 @@ fun DetailScreen(
                         Card(
                             Modifier.fillMaxWidth().clickable {
                                 expandedEpisode = ep.episode
-                                runSearch(Search.episodeQuery(dt.originalTitle, sn, ep.episode), "${dt.title} · T${sn}E${ep.episode} · ${ep.name}", sn, ep.episode)
+                                runSearch(
+                                    Search.episodeQuery(dt.originalTitle, sn, ep.episode),
+                                    "${dt.title} · T${sn}E${ep.episode} · ${ep.name}", sn, ep.episode,
+                                    altQuery = Search.episodeQuery(dt.title, sn, ep.episode)
+                                )
                             },
                             colors = CardDefaults.cardColors(containerColor = Surface1)
                         ) {
