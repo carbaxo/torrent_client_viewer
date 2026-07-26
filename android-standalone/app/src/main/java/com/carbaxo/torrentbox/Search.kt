@@ -20,12 +20,12 @@ object Search {
         val engine: String = ""
     ) {
         /** ¿Lo devolvió este motor? (un enlace puede venir de los dos). */
-        fun fromEngine(e: String) = e == ENGINE_ALL || engine.contains(e)
+        fun fromEngine(e: String) = e == Search.ENGINE_ALL || engine.contains(e)
 
         /** Etiqueta para la tarjeta: "Torrentio", "Peerflix" o "Torrentio+Peerflix". */
         val engineLabel: String
             get() = engine.split('+').filter { it.isNotBlank() }
-                .joinToString("+") { it.replaceFirstChar { c -> c.uppercase() } }
+                .joinToString("+") { name -> name.replaceFirstChar { c -> c.uppercase() } }
     }
 
     const val ENGINE_TORRENTIO = "torrentio"

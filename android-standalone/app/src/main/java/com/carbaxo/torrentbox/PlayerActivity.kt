@@ -358,25 +358,28 @@ class PlayerActivity : AppCompatActivity() {
         // texto; si venía de Torrentio o no se sabe, se usa Torrentio).
         val usePeerflixOnly = srcEngine.contains(Search.ENGINE_PEERFLIX) &&
             !srcEngine.contains(Search.ENGINE_TORRENTIO)
-        val fetch: ((List<Search.Result>?, String?) -> Unit) -> Unit = { cb ->
-            if (usePeerflixOnly && srcQuery.isNotBlank())
-                Search.search(Search.episodeQuery(srcQuery, s, e)) { l, err -> cb(l, err) }
-            else Torrentio.streams("series", imdbId, s, e) { l, err -> cb(l, err) }
-        }
-        fetch { list, _ ->
+        val handle: (List<Search.Result>?) -> Unit = { list ->
             val best = pickSameKind(list ?: emptyList())
-            if (best == null) { mainH.post { onDone(false) }; return@fetch }
             mainH.post {
-                onDone(true)
-                showToast("Cargando ${best.name.take(40)}…")
-                RealDebrid.streamMagnet(best.magnet) { url, _, err, progress ->
-                    mainH.post {
-                        when {
-                            url != null -> switchTo(url, s, e)
-                            progress != null -> showToast("Real-Debrid lo está preparando… ${progress}%")
-                            else -> showToast(err ?: "Error de Real-Debrid")
-                        }
-                    }
+                if (best == null) onDone(false)
+                else { onDone(true); playEpisode(best, s, e) }
+            }
+        }
+        if (usePeerflixOnly && srcQuery.isNotBlank())
+            Search.search(Search.episodeQuery(srcQuery, s, e)) { l, _ -> handle(l) }
+        else
+            Torrentio.streams("series", imdbId, s, e) { l, _ -> handle(l) }
+    }
+
+    /** Resuelve el enlace elegido en Real-Debrid y lo pone en marcha. */
+    private fun playEpisode(best: Search.Result, s: Int, e: Int) {
+        showToast("Cargando ${best.name.take(40)}…")
+        RealDebrid.streamMagnet(best.magnet) { url, _, err, progress ->
+            mainH.post {
+                when {
+                    url != null -> switchTo(url, s, e)
+                    progress != null -> showToast("Real-Debrid lo está preparando… ${progress}%")
+                    else -> showToast(err ?: "Error de Real-Debrid")
                 }
             }
         }

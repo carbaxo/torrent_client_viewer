@@ -961,16 +961,11 @@ fun SourcesSection(
 ) {
     var linksExpanded by remember { mutableStateOf(true) }
     var rdStatus by remember { mutableStateOf("") }
-    var qualityFilter by remember { mutableStateOf("all") }
-    // Motor elegido (Todos / Torrentio / Peerflix), recordado entre titulos
+    // Motor elegido (Todos / Torrentio / Peerflix), recordado entre titulos.
+    // El ÚNICO filtro es el motor: filtrar por calidad escondía enlaces (los
+    // que no llevan la etiqueta en el nombre, muchos mkv, quedaban fuera).
     val engineFilter = Prefs.engine
-
-    // Calidades presentes en los resultados (para los chips de filtro)
-    val qualities = remember(sources) {
-        listOf("4K", "1080p", "720p", "480p", "SD").filter { q -> sources.any { it.quality == q } }
-    }
-    val byEngine = sources.filter { it.fromEngine(engineFilter) }
-    val shown = if (qualityFilter == "all") byEngine else byEngine.filter { it.quality == qualityFilter }
+    val shown = sources.filter { it.fromEngine(engineFilter) }
 
     Column(Modifier.padding(top = 4.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         // Selector de motor, al estilo de Stremio (visible tambien mientras carga)
@@ -1001,15 +996,6 @@ fun SourcesSection(
                 )
                 Icon(if (linksExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                     contentDescription = if (linksExpanded) "Plegar" else "Desplegar")
-            }
-            // Filtros de calidad (como la web)
-            if (linksExpanded && qualities.size > 1) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = qualityFilter == "all", onClick = { qualityFilter = "all" }, label = { Text("Todas") })
-                    qualities.forEach { q ->
-                        FilterChip(selected = qualityFilter == q, onClick = { qualityFilter = q }, label = { Text(q) })
-                    }
-                }
             }
         }
         if (linksExpanded) shown.forEach { r ->
