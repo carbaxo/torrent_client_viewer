@@ -42,6 +42,10 @@ import coil.compose.AsyncImage
 
 private val mainHandler = Handler(Looper.getMainLooper())
 private fun onMain(block: () -> Unit) = mainHandler.post(block)
+private fun onMainDelayed(ms: Long, block: () -> Unit) = mainHandler.postDelayed(block, ms)
+
+/** Estado de la ventana flotante mientras Real-Debrid prepara un enlace. */
+data class Prep(val download: Boolean, val msg: String, val error: String? = null)
 
 // Paleta al estilo de la web (morado Stremio)
 private val Accent = Color(0xFF7B5BF5)
@@ -990,12 +994,47 @@ fun SourcesSection(
     onOpenDownloads: () -> Unit
 ) {
     var linksExpanded by remember { mutableStateOf(true) }
-    var rdStatus by remember { mutableStateOf("") }
     // Motor elegido (Todos / Torrentio / Peerflix), recordado entre titulos.
     // El ÚNICO filtro es el motor: filtrar por calidad escondía enlaces (los
     // que no llevan la etiqueta en el nombre, muchos mkv, quedaban fuera).
     val engineFilter = Prefs.engine
     val shown = sources.filter { it.fromEngine(engineFilter) }
+
+    // Estado de la ventana flotante "Cargando…" / "Preparando la descarga"
+    var prep by remember { mutableStateOf<Prep?>(null) }
+
+    /**
+     * Pide el enlace a Real-Debrid mostrando un diálogo con el progreso. Si RD
+     * aún está bajando el torrent a sus servidores, reintenta solo (antes había
+     * que volver a pulsar el botón, y parecía que no respondía).
+     */
+    fun prepare(r: Search.Result, download: Boolean, attempt: Int = 0) {
+        if (attempt == 0) {
+            prep = Prep(download, if (download) "Pidiendo el enlace a Real-Debrid…" else "Preparando el vídeo…")
+        }
+        RealDebrid.streamMagnet(r.magnet) { url, fname, err, progress ->
+            onMain {
+                val cur = prep ?: return@onMain     // cancelado por el usuario
+                when {
+                    url != null -> {
+                        prep = null
+                        if (download) {
+                            RdDownloads.enqueue(ctx, url, fname ?: title.title)
+                            onOpenDownloads()
+                        } else onPlayUrl(url, buildCtx().withSource(r))
+                    }
+                    progress != null && attempt < 25 -> {
+                        prep = cur.copy(msg = "Real-Debrid lo está preparando… ${progress}%")
+                        onMainDelayed(4000) { prepare(r, download, attempt + 1) }
+                    }
+                    progress != null -> prep = cur.copy(
+                        error = "Real-Debrid sigue preparándolo (${progress}%). Inténtalo dentro de un rato."
+                    )
+                    else -> prep = cur.copy(error = err ?: "Error de Real-Debrid")
+                }
+            }
+        }
+    }
 
     Column(Modifier.padding(top = 4.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         // Un chip por motor, como las pestañas de addons de Stremio
@@ -1051,35 +1090,9 @@ fun SourcesSection(
                                     // CastManager muestra el progreso y elige la
                                     // versión con audio compatible.
                                     onCastMagnet(r.magnet, buildCtx().withSource(r))
-                                } else {
-                                    rdStatus = "⚡ Preparando en Real-Debrid…"
-                                    RealDebrid.streamMagnet(r.magnet) { url, _, err, progress ->
-                                        onMain {
-                                            when {
-                                                url != null -> { rdStatus = ""; onPlayUrl(url, buildCtx().withSource(r)) }
-                                                progress != null -> rdStatus = "Real-Debrid lo está preparando en sus servidores… ${progress}%. Vuelve a pulsar en un momento."
-                                                else -> rdStatus = err ?: "Error de Real-Debrid"
-                                            }
-                                        }
-                                    }
-                                }
+                                } else prepare(r, download = false)
                             }) { Text(if (CastManager.connected) "📺 Ver en la TV" else "▶ Ver") }
-                            OutlinedButton(onClick = {
-                                rdStatus = "⚡ Preparando la descarga…"
-                                RealDebrid.streamMagnet(r.magnet) { url, fname, err, progress ->
-                                    onMain {
-                                        when {
-                                            url != null -> {
-                                                RdDownloads.enqueue(ctx, url, fname ?: title.title)
-                                                rdStatus = ""
-                                                onOpenDownloads()
-                                            }
-                                            progress != null -> rdStatus = "Real-Debrid lo está preparando en sus servidores… ${progress}%. Vuelve a pulsar en un momento."
-                                            else -> rdStatus = err ?: "Error de Real-Debrid"
-                                        }
-                                    }
-                                }
-                            }) { Text("⬇ Descargar") }
+                            OutlinedButton(onClick = { prepare(r, download = true) }) { Text("⬇ Descargar") }
                         }
                     } else {
                         Text(
@@ -1090,7 +1103,32 @@ fun SourcesSection(
                 }
             }
         }
-        if (rdStatus.isNotBlank()) Text(rdStatus, color = Muted, style = MaterialTheme.typography.bodySmall)
+    }
+
+    // --- Ventana flotante mientras Real-Debrid prepara el enlace ---
+    val p = prep
+    if (p != null) {
+        AlertDialog(
+            onDismissRequest = { prep = null },
+            title = { Text(if (p.download) "Preparando la descarga" else "Cargando…") },
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (p.error == null) {
+                        CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
+                        Spacer(Modifier.width(14.dp))
+                    }
+                    Text(
+                        p.error ?: p.msg,
+                        color = if (p.error != null) Color(0xFFFBBF24) else MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { prep = null }) {
+                    Text(if (p.error != null) "Cerrar" else "Cancelar")
+                }
+            }
+        )
     }
 }
 
