@@ -109,6 +109,18 @@
       </header>
 
       <main>
+        <!-- Aviso de la app nativa (solo en Android, y se puede descartar) -->
+        <div id="apk-banner" class="apk-banner hidden">
+          <div class="apk-banner-text">
+            <b>📱 Mejor con la app</b>
+            <span>La app de Android reproduce MKV con DTS/AC3, permite emitir a la TV con Chromecast y descarga en segundo plano. El mismo APK se instala en tu Android TV.</span>
+          </div>
+          <div class="apk-banner-actions">
+            <a id="apk-banner-link" class="btn-primary" href="#" rel="noopener">Descargar APK</a>
+            <button id="apk-banner-close" class="btn-icon" title="No mostrar más" aria-label="No mostrar más">✕</button>
+          </div>
+        </div>
+
         <!-- DESCUBRIR (catálogos) -->
         <section class="view" id="view-discover">
           <div id="continue-row"></div>
@@ -220,6 +232,15 @@
               <option value="en">🇬🇧 Inglés</option>
             </select>
             <p class="hint">Las fuentes en tu idioma (detectado por banderas o por el nombre del torrent) aparecerán primero.</p>
+          </div>
+
+          <div class="panel" id="apk-panel">
+            <h2 class="panel-title">App para Android y Android TV</h2>
+            <p class="hint">Mejor experiencia que el navegador: reproduce <b>MKV con DTS/AC3</b>, emite a la TV con <b>Chromecast</b>, descarga en segundo plano y se ve sin conexión. <b>El mismo APK se instala en una Android TV o Google TV</b> y aparece en su launcher, así que puedes reproducir en la propia tele sin castear.</p>
+            <div class="settings-row">
+              <a id="apk-link" class="btn-primary" href="#" rel="noopener">⬇ Descargar APK</a>
+            </div>
+            <p class="hint">En el móvil o la TV: abre el APK y permite <b>«Instalar apps desconocidas»</b>. Se actualiza sola desde dentro.</p>
           </div>
 
           <div class="panel">
