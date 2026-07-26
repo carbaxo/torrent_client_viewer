@@ -9,6 +9,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "test": "node test/run.mjs",
+    "test:rules": "firebase emulators:exec --only firestore \"node test/rules.mjs\"",
     "electron": "electron .",
     "dist": "electron-builder --win",
     "dist:msi": "electron-builder --win msi",
@@ -22,8 +23,11 @@
     "express": "^4.19.2"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
     "electron": "^31.0.0",
-    "electron-builder": "^24.13.3"
+    "electron-builder": "^24.13.3",
+    "firebase": "^11.10.0",
+    "firebase-tools": "^14.27.0"
   },
   "build": {
     "appId": "com.carbaxo.torrentviewer",

@@ -131,19 +131,52 @@ modo que la misma cuenta funcione en varios dispositivos.
    (`</>`) y copia el bloque `firebaseConfig`.
 5. Pega esa configuración en **`public/config.js`** (`window.TCV_FIREBASE`).
 6. Pon el mismo projectId en **`.env`**: `FIREBASE_PROJECT_ID=tu-proyecto`.
-7. En **Firestore → Reglas**, pega y publica estas reglas (cada usuario solo
-   puede leer/escribir su propio documento):
+7. **Publica las reglas de seguridad** (paso imprescindible, ver abajo).
 
+### 6.1 Reglas de seguridad de Firestore — ¡no te lo saltes!
+
+⚠️ Si la base de datos está en **modo de prueba**, o sin reglas, **cualquiera
+puede leer y escribir todos los documentos**, incluido el **token de Real-Debrid
+de cada cuenta** (con el que podría usar tu suscripción).
+
+Las reglas están **en el repo**, en [`firestore.rules`](./firestore.rules), para
+que no dependan de acordarse de pegarlas en la consola. Despliégalas con:
+
+```bash
+npx firebase login          # la primera vez
+npx firebase deploy --only firestore:rules
 ```
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /users/{uid} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
-    }
-  }
-}
+
+Hacen tres cosas: solo el dueño puede leer y escribir su documento, se rechaza
+cualquier clave que las apps no usen (para que nadie use tu Firestore como
+almacenamiento gratis) y todo lo demás queda denegado.
+
+Y se pueden **comprobar** contra el emulador, sin tocar tu base de datos real:
+
+```bash
+npm run test:rules
 ```
+
+Verifica, entre otras cosas, que otro usuario **no** puede leer tu documento ni
+tu token, que sin iniciar sesión no se puede hacer nada, y que las cuentas con
+el formato antiguo siguen funcionando.
+
+### 6.2 Servir la web desde Firebase Hosting (gratis)
+
+Alternativa a GitHub Pages, y **funciona aunque el repositorio sea privado**
+(Pages con repo privado exige plan de pago). El repo ya incluye `firebase.json`
+y `.firebaserc`:
+
+```bash
+npx firebase deploy --only hosting
+```
+
+Te dará una URL tipo `https://torrent-7dd4b.web.app`. Dos avisos:
+
+- Si el **backend está en otro dominio** (Fly/Render), pon su URL en
+  `public/config.js` (`window.TCV_API_BASE`) y en el backend define
+  `ALLOWED_ORIGINS` con la URL de Hosting, o las cookies de sesión no viajarán.
+- Si el backend sirve ya el frontend (opción 5.D), no necesitas Hosting.
 
 Notas:
 - El SDK de Firebase se sirve **autoalojado** desde `public/vendor/` (la CSP
