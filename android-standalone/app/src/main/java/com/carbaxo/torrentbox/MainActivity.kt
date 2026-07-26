@@ -1000,7 +1000,7 @@ fun SourcesSection(
     Column(Modifier.padding(top = 4.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         // Un chip por motor, como las pestañas de addons de Stremio
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            val engines = listOf(Search.ENGINE_TORRENTIO, Search.ENGINE_PEERFLIX, Search.ENGINE_TPB)
+            val engines = listOf(Search.ENGINE_PEERFLIX, Search.ENGINE_TORRENTIO, Search.ENGINE_TPB)
             (listOf(Search.ENGINE_ALL) + engines).forEach { key ->
                 val n = if (key == Search.ENGINE_ALL) sources.size else sources.count { it.fromEngine(key) }
                 // Los motores sin resultados no se muestran (salvo el elegido)
@@ -1181,7 +1181,7 @@ fun DetailScreen(
                         .copy(engine = Search.mergeEngines(prev.engine, r.engine))
                 }
                 loadingSources = false
-                sources = Search.sortByLang(byHash.values.toList(), Prefs.languageOrder)
+                sources = Search.sortByEngineAndLang(byHash.values.toList(), Prefs.languageOrder)
                 if (sources.isEmpty()) status = lastErr ?: "Sin fuentes"
             }
         }

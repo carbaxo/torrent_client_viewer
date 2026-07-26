@@ -46,6 +46,29 @@ object Search {
     fun mergeEngines(a: String, b: String): String =
         (a.split('+') + b.split('+')).filter { it.isNotBlank() }.distinct().sorted().joinToString("+")
 
+    /** Orden de preferencia de los motores al listar los enlaces. */
+    private val ENGINE_ORDER = listOf(ENGINE_PEERFLIX, ENGINE_TORRENTIO, ENGINE_TPB)
+
+    /**
+     * Posición del motor en ese orden. Si un torrent lo devuelven varios, cuenta
+     * el mejor colocado (así "Peerflix+Torrentio" va con los de Peerflix).
+     */
+    fun enginePriority(engine: String): Int =
+        engine.split('+').filter { it.isNotBlank() }
+            .minOfOrNull { e -> ENGINE_ORDER.indexOf(e).let { if (it < 0) ENGINE_ORDER.size else it } }
+            ?: ENGINE_ORDER.size
+
+    /**
+     * Orden de la lista de enlaces: primero por MOTOR (Peerflix → Torrentio →
+     * Pirate Bay), luego por el idioma preferido y, a igualdad, por seeders.
+     */
+    fun sortByEngineAndLang(list: List<Result>, order: List<String>): List<Result> =
+        list.sortedWith(
+            compareBy<Result> { enginePriority(it.engine) }
+                .thenBy { Lang.rank(it.lang, order) }
+                .thenByDescending { it.seeders }
+        )
+
     /** Ordena por prioridad de idioma del usuario y, a igualdad, por seeders. */
     fun sortByLang(list: List<Result>, order: List<String>): List<Result> =
         list.sortedWith(compareBy<Result> { Lang.rank(it.lang, order) }.thenByDescending { it.seeders })
