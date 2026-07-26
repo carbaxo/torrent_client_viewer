@@ -57,6 +57,19 @@ object Prefs {
         sp().edit().putBoolean("dlOverMobile", on).apply()
     }
 
+    // --- Con qué se reproduce: el reproductor de la app u otra app ---
+    const val PLAYER_APP = "app"          // el reproductor propio (por defecto)
+    const val PLAYER_ASK = "ask"          // preguntar cada vez
+    const val PLAYER_EXTERNAL = "external" // ir siempre a otra app (VLC, MX…)
+
+    var playerMode by mutableStateOf(PLAYER_APP)
+        private set
+
+    fun savePlayerMode(mode: String) {
+        playerMode = mode
+        sp().edit().putString("playerMode", mode).apply()
+    }
+
     private var secure: android.content.SharedPreferences? = null
 
     /** Almacén cifrado; si el Keystore del fabricante falla, reserva a normal. */
@@ -94,6 +107,7 @@ object Prefs {
         peerflixUrl = sp.getString("peerflixUrl", "") ?: ""
         githubToken = runCatching { secureStore().getString("ghToken", "") ?: "" }.getOrDefault("")
         downloadOverMobile = sp.getBoolean("dlOverMobile", true)
+        playerMode = sp.getString("playerMode", PLAYER_APP) ?: PLAYER_APP
     }
 
     fun savePeerflixUrl(u: String) {

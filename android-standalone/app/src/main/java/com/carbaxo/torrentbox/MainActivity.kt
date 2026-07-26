@@ -129,6 +129,9 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
     var detail by remember { mutableStateOf<Tmdb.Title?>(null) }
     var catalogType by remember { mutableStateOf("movie") }
     var showCastScreen by remember { mutableStateOf(false) }
+    // "Preguntar cada vez" con qué reproductor abrir, y errores al lanzarlo
+    var askPlayer by remember { mutableStateOf<Pair<String, PlayCtx>?>(null) }
+    var playerError by remember { mutableStateOf<String?>(null) }
     val rdDownloads = remember { mutableStateListOf<RdDownloads.Snap>() }
     val ctx = LocalContext.current
 
@@ -136,9 +139,19 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
     LaunchedEffect(Unit) { CastManager.init(ctx) }
 
     // Con TV conectada todo va a la TV; si no, al reproductor del móvil
+    fun openExternal(url: String, c: PlayCtx) {
+        val err = ExternalPlayer.open(ctx, url, c.name, c.resumeMs)
+        if (err != null) playerError = err else detail = null
+    }
+
     fun play(url: String, c: PlayCtx) {
-        if (CastManager.connected) { CastManager.castUrl(url, c); showCastScreen = true; detail = null }
-        else onPlayUrl(url, c)
+        when {
+            CastManager.connected -> { CastManager.castUrl(url, c); showCastScreen = true; detail = null }
+            // Reproductor externo (VLC, MX Player…) según Ajustes → Reproducción
+            Prefs.playerMode == Prefs.PLAYER_EXTERNAL -> openExternal(url, c)
+            Prefs.playerMode == Prefs.PLAYER_ASK -> askPlayer = url to c
+            else -> onPlayUrl(url, c)
+        }
     }
     fun cast(magnet: String, c: PlayCtx) {
         onCastMagnet(magnet, c); showCastScreen = true; detail = null
@@ -165,6 +178,29 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
 
     // Avisos de episodios nuevos cuando llegan los favoritos de la nube
     LaunchedEffect(Sync.favorites.size) { if (Sync.favorites.isNotEmpty()) EpisodeAlerts.check(ctx) }
+
+    // --- ¿Con qué reproductor? (modo "preguntar cada vez") ---
+    askPlayer?.let { (url, c) ->
+        AlertDialog(
+            onDismissRequest = { askPlayer = null },
+            title = { Text("¿Con qué lo abrimos?") },
+            text = { Text("Otra app (VLC, MX Player…) suele manejar mejor los MKV con audio DTS o TrueHD.") },
+            confirmButton = {
+                TextButton(onClick = { askPlayer = null; onPlayUrl(url, c) }) { Text("En la app") }
+            },
+            dismissButton = {
+                TextButton(onClick = { askPlayer = null; openExternal(url, c) }) { Text("Otra app…") }
+            }
+        )
+    }
+    playerError?.let { msg ->
+        AlertDialog(
+            onDismissRequest = { playerError = null },
+            title = { Text("Reproductor externo") },
+            text = { Text(msg) },
+            confirmButton = { TextButton(onClick = { playerError = null }) { Text("Cerrar") } }
+        )
+    }
 
     // Mando de la TV a pantalla completa (mientras se emite)
     if (showCastScreen && CastManager.connected) {
@@ -829,6 +865,34 @@ fun SettingsScreen() {
                     Text("Consíguelo en real-debrid.com/apitoken", color = Muted, style = MaterialTheme.typography.labelSmall)
                 }
                 if (rdStatus.isNotBlank()) Text(rdStatus, color = Muted, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
+        // --- Reproducción ---
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Reproducción", fontWeight = FontWeight.Bold)
+                Text("¿Con qué se abre el vídeo al pulsar Ver?", color = Muted, style = MaterialTheme.typography.bodySmall)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(
+                        Prefs.PLAYER_APP to "Reproductor de la app",
+                        Prefs.PLAYER_ASK to "Preguntar",
+                        Prefs.PLAYER_EXTERNAL to "Otra app"
+                    ).forEach { (mode, label) ->
+                        FilterChip(
+                            selected = Prefs.playerMode == mode,
+                            onClick = { Prefs.savePlayerMode(mode) },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+                Text(
+                    "Con «Otra app» se abre en VLC, MX Player o el que elijas: van mejor con MKV " +
+                        "y audio DTS/TrueHD. Se pierden el «continuar viendo» y el siguiente " +
+                        "episodio automático, que son del reproductor de la app. Al emitir a una " +
+                        "TV esto no aplica: manda el Chromecast.",
+                    color = Muted, style = MaterialTheme.typography.labelSmall
+                )
             }
         }
 

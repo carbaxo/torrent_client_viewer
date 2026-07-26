@@ -21,6 +21,11 @@ servidor propio. Funciona en **móvil y en Android TV**.
   continúa **aunque cierres la app** y queda disponible sin conexión.
 - Reproductor **ExoPlayer (Media3)**: subtítulos, pistas de audio, velocidad,
   gestos de volumen/brillo, siguiente episodio y continuar viendo.
+- 🎬 **Reproductor externo opcional** (Ajustes → Reproducción): el de la app,
+  *preguntar cada vez* o siempre **otra app** (VLC, MX Player…), que manejan
+  mejor los MKV con audio DTS/TrueHD. Vale igual para el streaming de RD y para
+  un fichero ya descargado. A cambio se pierden "continuar viendo" y el
+  siguiente episodio automático, que son del reproductor propio.
 - 📺 **Chromecast**: se elige la TV en la barra superior (antes de abrir nada) y
   luego cada título va a esa TV; envía la versión con **audio AAC** convertida
   por Real-Debrid para que suene (el Chromecast no decodifica Dolby/DTS).
