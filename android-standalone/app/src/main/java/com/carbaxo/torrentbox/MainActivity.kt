@@ -7,10 +7,10 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -37,6 +37,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.util.UnstableApi
 import coil.compose.AsyncImage
 import java.io.File
 
@@ -49,7 +51,8 @@ private val Bg = Color(0xFF0C0B11)
 private val Surface1 = Color(0xFF15141D)
 private val Muted = Color(0xFF8F8BA1)
 
-class MainActivity : ComponentActivity() {
+@UnstableApi
+class MainActivity : AppCompatActivity() {
     private lateinit var saveRoot: File
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -72,6 +75,8 @@ class MainActivity : ComponentActivity() {
         DownloadService.start(this)
         StreamServer.ensureStarted()
         RealDebrid.init(this)
+        // Chromecast: sesión global, se elige la TV antes de abrir nada
+        CastManager.init(this)
         Update.check()
         // Limpia el buffer de la sesión anterior (lo visto ya no sirve al reiniciar)
         Thread {
@@ -155,6 +160,7 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) 
     val downloads = remember { mutableStateListOf<TorrentEngine.Snapshot>() }
     val rdDownloads = remember { mutableStateListOf<RdDownloads.Snap>() }
     var pendingPlay by remember { mutableStateOf<Pair<String, PlayCtx>?>(null) }
+    var showCastScreen by remember { mutableStateOf(false) }
     val ctx = LocalContext.current
 
     // Modo infantil: el perfil activo marca kids. Oculta Buscar (búsqueda
@@ -194,10 +200,39 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) 
         }
     }
 
+    // Con una TV conectada, "Ver" manda el título a la TV (como HBO) en lugar
+    // de abrir el reproductor del móvil; así se puede cambiar de película sin
+    // volver a elegir dispositivo.
+    fun watch(magnet: String, c: PlayCtx) {
+        if (CastManager.connected) {
+            CastManager.castMagnet(magnet, c, preferRd = false); showCastScreen = true; detail = null
+        } else { addMagnet(magnet, true, c); tab = Tab.DOWNLOADS; detail = null }
+    }
+    fun watchRd(magnet: String, c: PlayCtx) {
+        if (CastManager.connected) {
+            CastManager.castMagnet(magnet, c, preferRd = true); showCastScreen = true; detail = null
+        } else onPlayRd(magnet, c)
+    }
+    fun playUrl(url: String, c: PlayCtx) {
+        if (CastManager.connected) {
+            CastManager.castUrl(url, c); showCastScreen = true; detail = null
+        } else onPlayUrl(url, c)
+    }
+    fun playHash(h: String, c: PlayCtx) {
+        if (CastManager.connected) { CastManager.castInfoHash(h, c); showCastScreen = true }
+        else onPlay(h, c)
+    }
+
     LaunchedEffect(initialMagnet) { if (!initialMagnet.isNullOrBlank()) addMagnet(initialMagnet, false) }
 
     // Avisos de episodios nuevos cuando llegan los favoritos de la nube
     LaunchedEffect(Sync.favorites.size) { if (Sync.favorites.isNotEmpty()) EpisodeAlerts.check(ctx) }
+
+    // Mando de la TV a pantalla completa (mientras se emite)
+    if (showCastScreen && CastManager.connected) {
+        CastScreen(onClose = { showCastScreen = false })
+        return
+    }
 
     // Ficha de detalle a pantalla completa
     val d = detail
@@ -205,10 +240,10 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) 
         DetailScreen(
             title = d,
             onBack = { detail = null },
-            onWatch = { magnet, c -> addMagnet(magnet, true, c); tab = Tab.DOWNLOADS; detail = null },
+            onWatch = { magnet, c -> watch(magnet, c) },
             onDownload = { magnet -> addMagnet(magnet, false); tab = Tab.DOWNLOADS; detail = null },
-            onPlayUrl = { url, c -> onPlayUrl(url, c) },
-            onPlayRd = { magnet, c -> onPlayRd(magnet, c) },
+            onPlayUrl = { url, c -> playUrl(url, c) },
+            onPlayRd = { magnet, c -> watchRd(magnet, c) },
             onOpenDownloads = { tab = Tab.DOWNLOADS; detail = null }
         )
         return
@@ -216,18 +251,65 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) 
 
     Scaffold(
         containerColor = Bg,
-        bottomBar = {
-            NavigationBar(containerColor = Surface1) {
-                visibleTabs.forEach { t ->
-                    NavigationBarItem(
-                        selected = tab == t,
-                        onClick = { tab = t },
-                        icon = { Icon(t.icon, contentDescription = t.label) },
-                        label = { Text(t.label) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = Accent, selectedTextColor = Accent, indicatorColor = Surface1
-                        )
+        // Botón de Chromecast siempre visible: se elige la TV ANTES de abrir
+        // ningún título, igual que en HBO o Netflix.
+        topBar = {
+            Row(
+                Modifier.fillMaxWidth().background(Bg).padding(start = 14.dp, end = 6.dp, top = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "TorrentBox", style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold, color = Accent, modifier = Modifier.weight(1f)
+                )
+                if (CastManager.connected) {
+                    Text(
+                        CastManager.deviceName ?: "TV", color = Color(0xFF34D399),
+                        style = MaterialTheme.typography.labelSmall, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 130.dp)
                     )
+                }
+                CastIconButton()
+            }
+        },
+        bottomBar = {
+            Column {
+                // Barra "emitiendo": abre el mando de la TV
+                if (CastManager.connected && CastManager.title.isNotBlank()) {
+                    Row(
+                        Modifier.fillMaxWidth().background(Color(0xFF1B2A25))
+                            .clickable { showCastScreen = true }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Filled.Cast, contentDescription = null, tint = Color(0xFF34D399))
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                CastManager.title, style = MaterialTheme.typography.labelLarge,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                CastManager.status.ifBlank { "Emitiendo en ${CastManager.deviceName ?: "la TV"}" },
+                                style = MaterialTheme.typography.labelSmall, color = Muted,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Text("Abrir ›", color = Accent, style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+                NavigationBar(containerColor = Surface1) {
+                    visibleTabs.forEach { t ->
+                        NavigationBarItem(
+                            selected = tab == t,
+                            onClick = { tab = t },
+                            icon = { Icon(t.icon, contentDescription = t.label) },
+                            label = { Text(t.label) },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = Accent, selectedTextColor = Accent, indicatorColor = Surface1
+                            )
+                        )
+                    }
                 }
             }
         }
@@ -236,9 +318,138 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) 
             when (tab) {
                 Tab.DISCOVER -> DiscoverScreen(catalogType, { catalogType = it }, kids = kids, onOpen = { detail = it })
                 Tab.SEARCH -> if (kids) DiscoverScreen(catalogType, { catalogType = it }, kids = true, onOpen = { detail = it }) else SearchScreen(onOpen = { detail = it })
-                Tab.DOWNLOADS -> DownloadsScreen(downloads, rdDownloads, { h -> onPlay(h, PlayCtx()) }, { u -> onPlayUrl(u, PlayCtx()) })
+                Tab.DOWNLOADS -> DownloadsScreen(downloads, rdDownloads, { h -> playHash(h, PlayCtx()) }, { u -> playUrl(u, PlayCtx()) })
                 Tab.SETTINGS -> SettingsScreen()
             }
+        }
+    }
+}
+
+/** Botón nativo de Chromecast (abre el diálogo "emitir a…" del sistema). */
+@Composable
+fun CastIconButton() {
+    if (!CastManager.available) return
+    AndroidView(
+        modifier = Modifier.size(44.dp),
+        factory = { c ->
+            // Tema propio para que el icono salga blanco sobre el fondo oscuro
+            val themed = androidx.appcompat.view.ContextThemeWrapper(c, R.style.Theme_TorrentBox_CastButton)
+            androidx.mediarouter.app.MediaRouteButton(themed).apply {
+                runCatching {
+                    com.google.android.gms.cast.framework.CastButtonFactory
+                        .setUpMediaRouteButton(c.applicationContext, this)
+                }
+            }
+        }
+    )
+}
+
+/**
+ * Mando de la TV: lo que se está emitiendo, con play/pausa, saltos y barra de
+ * progreso. Permite seguir navegando (botón "Volver a la app") y cambiar de
+ * película sin desconectar.
+ */
+@Composable
+fun CastScreen(onClose: () -> Unit) {
+    val cp = CastManager.player
+    var pos by remember { mutableStateOf(0L) }
+    var dur by remember { mutableStateOf(0L) }
+    var playing by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        var ticks = 0
+        while (true) {
+            pos = runCatching { cp?.currentPosition ?: 0L }.getOrDefault(0L)
+            dur = runCatching { cp?.duration ?: 0L }.getOrDefault(0L)
+            playing = runCatching { cp?.isPlaying == true }.getOrDefault(false)
+            // Guarda "continuar viendo" cada ~10 s mientras se emite
+            ticks++
+            val c = CastManager.playCtx
+            if (ticks % 10 == 0 && c.tmdbId > 0 && pos > 5000) {
+                WatchStore.record(
+                    tmdbId = c.tmdbId, type = c.type,
+                    season = c.season.takeIf { it > 0 }, episode = c.episode.takeIf { it > 0 },
+                    name = c.name, poster = c.poster,
+                    position = pos / 1000.0, duration = if (dur > 0) dur / 1000.0 else 0.0
+                )
+            }
+            kotlinx.coroutines.delay(1000)
+        }
+    }
+
+    fun fmt(ms: Long): String {
+        if (ms <= 0) return "0:00"
+        val s = ms / 1000
+        return if (s >= 3600) String.format("%d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60)
+        else String.format("%d:%02d", s / 60, s % 60)
+    }
+
+    Column(
+        Modifier.fillMaxSize().background(Bg).padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("‹ Volver a la app", color = Accent, modifier = Modifier.clickable { onClose() })
+            Spacer(Modifier.weight(1f))
+            CastIconButton()
+        }
+
+        CastManager.poster?.let { p ->
+            AsyncImage(
+                model = p, contentDescription = null, contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(12.dp))
+            )
+        }
+
+        Text(
+            CastManager.title.ifBlank { "Nada en emisión" },
+            style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold
+        )
+        Text(
+            "📺 ${CastManager.deviceName ?: "TV"}",
+            style = MaterialTheme.typography.labelMedium, color = Color(0xFF34D399)
+        )
+        if (CastManager.status.isNotBlank()) {
+            Text(CastManager.status, style = MaterialTheme.typography.bodySmall, color = Muted)
+        }
+        if (CastManager.warning.isNotBlank()) {
+            Text(CastManager.warning, style = MaterialTheme.typography.bodySmall, color = Color(0xFFFBBF24))
+        }
+
+        // Progreso
+        Slider(
+            value = if (dur > 0) (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f) else 0f,
+            onValueChange = { f -> if (dur > 0) runCatching { cp?.seekTo((f * dur.toFloat()).toLong()) } },
+            enabled = dur > 0
+        )
+        Row(Modifier.fillMaxWidth()) {
+            Text(fmt(pos), style = MaterialTheme.typography.labelSmall, color = Muted)
+            Spacer(Modifier.weight(1f))
+            Text(fmt(dur), style = MaterialTheme.typography.labelSmall, color = Muted)
+        }
+
+        // Controles
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = {
+                cp?.let { p -> runCatching { p.seekTo((p.currentPosition - 10_000).coerceAtLeast(0)) } }
+            }) { Text("⏪ 10s") }
+            Button(onClick = {
+                cp?.let { p -> runCatching { if (p.isPlaying) p.pause() else p.play() } }
+            }) { Text(if (playing) "⏸ Pausa" else "▶ Reproducir") }
+            OutlinedButton(onClick = {
+                cp?.let { p -> runCatching { p.seekTo(p.currentPosition + 10_000) } }
+            }) { Text("10s ⏩") }
+        }
+
+        Text(
+            "Puedes volver a la app y elegir otra película: se enviará a esta misma TV.",
+            style = MaterialTheme.typography.labelSmall, color = Muted
+        )
+
+        Spacer(Modifier.weight(1f))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = { CastManager.stop(); onClose() }) { Text("⏹ Parar") }
+            OutlinedButton(onClick = { CastManager.disconnect(); onClose() }) { Text("Desconectar TV") }
         }
     }
 }

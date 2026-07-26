@@ -53,10 +53,11 @@
             android:supportsPictureInPicture="true"
             android:theme="@style/Theme.TorrentBox.Player" />
 
-        <!-- Chromecast: proveedor de opciones del SDK de Cast (receptor por defecto) -->
+        <!-- Chromecast: nuestras opciones (receptor por defecto SIN DRM, ver
+             CastOptionsProvider.kt: con el receptor DRM la TV no reproducía) -->
         <meta-data
             android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
-            android:value="androidx.media3.cast.DefaultCastOptionsProvider" />
+            android:value="com.carbaxo.torrentbox.CastOptionsProvider" />
 
         <service
             android:name=".DownloadService"

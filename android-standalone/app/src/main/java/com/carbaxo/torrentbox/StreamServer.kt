@@ -34,7 +34,9 @@ object StreamServer {
 
     private class Server(port: Int) : NanoHTTPD(null, port) {
         override fun serve(session: IHTTPSession): Response {
-            val infoHash = session.uri.trim('/')
+            // Tolera rutas con extra (/hash, /hash/video.mp4): el receptor de
+            // Chromecast puede pedir con sufijos.
+            val infoHash = session.uri.trim('/').substringBefore('/')
             val d = TorrentEngine.get(infoHash)
                 ?: return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "no torrent")
             if (d.videoIndex < 0) {
@@ -43,6 +45,16 @@ object StreamServer {
 
             val total = d.ti.files().fileSize(d.videoIndex)
             val mime = mimeFor(d.ti.files().fileName(d.videoIndex))
+
+            // El Chromecast comprueba antes con HEAD si el recurso existe y si
+            // admite Range: hay que contestar sin bloquear esperando piezas.
+            if (session.method == Method.HEAD) {
+                val head = newFixedLengthResponse(Response.Status.OK, mime, null, total)
+                head.addHeader("Accept-Ranges", "bytes")
+                head.addHeader("Access-Control-Allow-Origin", "*")
+                return head
+            }
+
             val range = session.headers["range"]
 
             var start = 0L

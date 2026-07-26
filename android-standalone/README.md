@@ -11,7 +11,13 @@ servidor.
   **persistencia**: las descargas permanentes se reanudan al reabrir la app.
 - Descarga **secuencial** con priorización de piezas → reproducción mientras baja.
 - Reproductor **ExoPlayer (Media3)**: subtítulos, pistas de audio, velocidad,
-  siguiente episodio, Chromecast y continuar viendo.
+  siguiente episodio y continuar viendo.
+- **Chromecast al estilo HBO**: el botón de emitir está en la barra superior, se
+  elige la TV **antes** de abrir nada y después cada título que pulses se manda a
+  esa TV (se puede cambiar de película sin reconectar), con mando propio
+  (play/pausa, saltos, barra de progreso). Para que suene y se vea siempre, se
+  prueba en cadena: **HLS de Real-Debrid (H.264+AAC)** → enlace directo →
+  formato exacto, con colchón previo de descarga en los torrents locales.
 - Buscador con **dos motores**: Torrentio (banderas de idioma) y apibay/TPB, con
   **filtros de calidad** (4K/1080p/720p/SD) y orden por idioma preferido.
 - **Real-Debrid**: ver por streaming y descargar a disco; sus botones salen

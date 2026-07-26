@@ -1,12 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Tema del framework para no depender de com.google.android.material.
-         El contenido lo dibuja Compose (MaterialTheme). -->
-    <style name="Theme.TorrentBox" parent="@android:style/Theme.Material.NoActionBar" />
+    <!-- AppCompat en toda la app: el botón y el diálogo "emitir a…" de
+         Chromecast lo exigen. El contenido lo dibuja Compose (MaterialTheme). -->
+    <style name="Theme.TorrentBox" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">#0C0B11</item>
+        <item name="colorPrimary">#7B5BF5</item>
+        <item name="colorAccent">#7B5BF5</item>
+    </style>
 
     <!-- El reproductor usa AppCompat porque el diálogo de Chromecast lo requiere -->
     <style name="Theme.TorrentBox.Player" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowBackground">@android:color/black</item>
+        <item name="colorPrimary">#7B5BF5</item>
+        <item name="colorAccent">#7B5BF5</item>
+    </style>
+
+    <!-- Icono del botón de Cast en blanco, para que se vea sobre el fondo oscuro -->
+    <style name="Theme.TorrentBox.CastButton" parent="Theme.AppCompat.NoActionBar">
+        <item name="colorControlNormal">#FFFFFFFF</item>
         <item name="colorPrimary">#7B5BF5</item>
         <item name="colorAccent">#7B5BF5</item>
     </style>

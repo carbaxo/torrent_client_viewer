@@ -19,27 +19,20 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.media3.cast.CastPlayer
-import androidx.media3.cast.SessionAvailabilityListener
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
-import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.TrackSelectionDialogBuilder
 import com.google.android.gms.cast.framework.CastButtonFactory
-import com.google.android.gms.cast.framework.CastContext
 
 @UnstableApi
 class PlayerActivity : AppCompatActivity() {
 
     private var player: ExoPlayer? = null
-    private var castPlayer: CastPlayer? = null
     private lateinit var playerView: PlayerView
     private lateinit var toast: TextView       // feedback de gestos (volumen/brillo/salto)
     private lateinit var nextBtn: TextView     // "Siguiente episodio"
@@ -60,10 +53,9 @@ class PlayerActivity : AppCompatActivity() {
     private val speeds = floatArrayOf(1f, 1.25f, 1.5f, 2f, 0.5f, 0.75f)
     private var speedIdx = 0
 
-    // MIME de las pistas de audio del archivo (las detecta el reproductor local)
-    private var audioMimes: List<String> = emptyList()
-    // La TV está reproduciendo la versión HLS transcodificada de Real-Debrid
-    private var castedTranscoded = false
+    // Magnet pendiente de resolver con Real-Debrid (botón "⚡ Ver RD")
+    private var rdMagnet: String? = null
+    private var resumeMs = 0L
 
     // Selector de subtítulos externos (.srt/.vtt/.ass)
     private val pickSubtitle = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -80,7 +72,7 @@ class PlayerActivity : AppCompatActivity() {
 
         val directUrl = intent.getStringExtra("url")
         val infoHash = intent.getStringExtra("infoHash")
-        val rdMagnet = intent.getStringExtra("rdMagnet")
+        rdMagnet = intent.getStringExtra("rdMagnet")
         tmdbId = intent.getIntExtra("tmdbId", -1)
         mediaType = intent.getStringExtra("type") ?: "movie"
         season = intent.getIntExtra("season", -1)
@@ -95,6 +87,7 @@ class PlayerActivity : AppCompatActivity() {
             rdMagnet != null -> "" // pendiente: se resuelve con Real-Debrid más abajo
             else -> { finish(); return }
         }
+        this.resumeMs = resumeMs
 
         val root = FrameLayout(this)
         playerView = PlayerView(this).apply {
@@ -134,7 +127,8 @@ class PlayerActivity : AppCompatActivity() {
         overlay.addView(speedBtn, lpBtn); overlay.addView(audioBtn, lpBtn); overlay.addView(srtBtn, lpBtn)
         // Botón de Chromecast (solo si hay Google Play Services)
         runCatching {
-            val castBtn = androidx.mediarouter.app.MediaRouteButton(this)
+            val themed = androidx.appcompat.view.ContextThemeWrapper(this, R.style.Theme_TorrentBox_CastButton)
+            val castBtn = androidx.mediarouter.app.MediaRouteButton(themed)
             CastButtonFactory.setUpMediaRouteButton(applicationContext, castBtn)
             overlay.addView(castBtn, LinearLayout.LayoutParams(-2, -2))
         }
@@ -183,55 +177,20 @@ class PlayerActivity : AppCompatActivity() {
                         nextBtn.visibility = View.VISIBLE
                     }
                 }
-                override fun onTracksChanged(tracks: Tracks) {
-                    audioMimes = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
-                        .flatMap { g -> (0 until g.length).mapNotNull { g.getTrackFormat(it).sampleMimeType } }
-                    if (isCasting()) maybeWarnCastAudio()
-                }
             })
         }
 
         // El IMDb id hace falta para buscar el siguiente episodio en Torrentio
         if (mediaType == "series" && tmdbId > 0) Tmdb.imdbId("series", tmdbId) { id -> imdb = id }
 
-        // Chromecast: al conectar con una TV se pasa la reproducción al CastPlayer
-        runCatching {
-            val cc = CastContext.getSharedInstance(this)
-            castPlayer = CastPlayer(cc).also { cp ->
-                cp.setSessionAvailabilityListener(object : SessionAvailabilityListener {
-                    override fun onCastSessionAvailable() = switchToCast()
-                    override fun onCastSessionUnavailable() = switchToLocal()
-                })
-                cp.addListener(object : Player.Listener {
-                    override fun onPlayerError(error: PlaybackException) {
-                        if (castedTranscoded) {
-                            // La versión HLS de RD no funcionó: prueba el enlace directo
-                            castedTranscoded = false
-                            showToast("HLS falló, probando el enlace directo…", 3000)
-                            val pos = runCatching { cp.currentPosition }.getOrDefault(0L)
-                            cp.setMediaItem(castItem(currentUrl), pos)
-                            cp.prepare()
-                            cp.playWhenReady = true
-                            maybeWarnCastAudio()
-                        } else {
-                            showToast("La TV no pudo reproducir el vídeo (${error.errorCodeName})", 5000)
-                        }
-                    }
-                    override fun onPlaybackStateChanged(state: Int) {
-                        if (state == Player.STATE_ENDED && mediaType == "series" && episode > 0) {
-                            nextBtn.visibility = View.VISIBLE
-                        }
-                    }
-                })
-                // Si ya había una sesión de Cast abierta antes de entrar al
-                // reproductor, el listener no dispara: envía ya la reproducción.
-                if (cp.isCastSessionAvailable) switchToCast()
-            }
-        }
+        // Chromecast: la sesión es global (CastManager). Si se conecta con una TV
+        // mientras vemos algo, la reproducción se pasa a la TV y al revés.
+        CastManager.onSessionChanged = { conn -> if (conn) switchToCast() else switchToLocal() }
+        if (CastManager.connected) switchToCast()
 
         // "Ver RD": el reproductor se abre al momento y aquí se resuelve el
         // enlace de Real-Debrid mostrando el estado en pantalla.
-        if (rdMagnet != null) startRdPending(rdMagnet, resumeMs)
+        rdMagnet?.let { startRdPending(it, resumeMs) }
     }
 
     // ------------------- Real-Debrid diferido ("Ver RD") -------------------
@@ -244,8 +203,11 @@ class PlayerActivity : AppCompatActivity() {
                     url != null -> {
                         currentUrl = url
                         if (isCasting()) {
-                            showToast("📺 Enviando a la TV…")
-                            loadOnCast(url, resumeMs)
+                            showToast("📺 Enviando a la TV…", 2500)
+                            CastManager.castUrl(
+                                url,
+                                PlayCtx(tmdbId, mediaType, season, episode, titleName, poster, resumeMs)
+                            )
                         } else {
                             val p = player ?: return@post
                             p.setMediaItem(MediaItem.fromUri(url))
@@ -274,154 +236,56 @@ class PlayerActivity : AppCompatActivity() {
         }
     }
 
-    // ------------------- Chromecast -------------------
-    /** IP del móvil en la red local (WiFi, ethernet o hotspot). */
-    private fun lanIp(): String? {
-        // WifiManager (rápido y fiable en WiFi normal)…
-        runCatching {
-            @Suppress("DEPRECATION")
-            val wm = applicationContext.getSystemService(WIFI_SERVICE) as android.net.wifi.WifiManager
-            @Suppress("DEPRECATION")
-            val ip = wm.connectionInfo.ipAddress
-            if (ip != 0) return String.format(
-                "%d.%d.%d.%d", ip and 0xff, ip shr 8 and 0xff, ip shr 16 and 0xff, ip shr 24 and 0xff
-            )
-        }
-        // …y si devuelve 0 (ethernet en Android TV, hotspot), busca en las interfaces
-        return runCatching {
-            java.util.Collections.list(java.net.NetworkInterface.getNetworkInterfaces())
-                .filter { it.isUp && !it.isLoopback }
-                .flatMap { java.util.Collections.list(it.inetAddresses) }
-                .filterIsInstance<java.net.Inet4Address>()
-                .firstOrNull { it.isSiteLocalAddress }
-                ?.hostAddress
-        }.getOrNull()
-    }
-
-    /** URL que la TV pueda alcanzar: el stream local se sirve por la IP de la LAN. */
-    private fun castableUrl(u: String): String {
-        if (!u.contains("127.0.0.1")) return u
-        val ip = lanIp() ?: return u
-        return u.replace("127.0.0.1", ip)
-    }
-
-    /**
-     * MIME real del vídeo. El stream local no lleva extensión en la URL, así
-     * que se consulta el nombre del archivo del torrent; para URLs directas
-     * (Real-Debrid) se usa la extensión. La TV lo necesita correcto: con
-     * "video/mp4" fijo un MKV o WebM no llega a reproducirse.
-     */
-    private fun castMimeType(url: String): String {
-        val last = url.substringAfterLast('/').substringBefore('?')
-        val fromTorrent = TorrentEngine.get(last)?.let { d ->
-            if (d.videoIndex >= 0) d.ti.files().fileName(d.videoIndex) else null
-        }
-        val name = fromTorrent ?: runCatching { java.net.URLDecoder.decode(last, "UTF-8") }.getOrDefault(last)
-        return when (name.substringAfterLast('.', "").lowercase()) {
-            "webm" -> MimeTypes.VIDEO_WEBM
-            "mkv" -> MimeTypes.VIDEO_MATROSKA
-            "ts" -> MimeTypes.VIDEO_MP2T
-            "avi" -> "video/x-msvideo"
-            else -> MimeTypes.VIDEO_MP4 // mp4, m4v, mov y desconocidos
-        }
-    }
-
-    /** Reproductor activo: el CastPlayer si estamos emitiendo, si no el local. */
+    // ------------------- Chromecast (sesión global: CastManager) -------------------
+    /** Reproductor activo: el remoto si estamos emitiendo, si no el local. */
     private fun activePlayer(): Player? = playerView.player ?: player
 
     private fun isCasting(): Boolean {
-        val cp = castPlayer ?: return false
-        return cp.isCastSessionAvailable && playerView.player === cp
+        val cp = CastManager.player ?: return false
+        return CastManager.connected && playerView.player === cp
     }
 
-    private fun castItem(url: String, mime: String = castMimeType(url)): MediaItem = MediaItem.Builder()
-        .setUri(castableUrl(url))
-        .setMimeType(mime)
-        .setMediaMetadata(
-            MediaMetadata.Builder()
-                .setTitle(titleName.ifBlank { "TorrentBox" })
-                .apply { poster?.let { setArtworkUri(Uri.parse(it)) } }
-                .build()
-        )
-        .build()
-
+    /** Pasa lo que se está viendo a la TV (el CastManager elige el formato). */
     private fun switchToCast() {
-        val cp = castPlayer ?: return
+        val cp = CastManager.player ?: return
         val local = player ?: return
         if (playerView.player === cp) return // ya estamos emitiendo
-        val pos = local.currentPosition
+        // Si aún no había empezado en el móvil (p. ej. "Ver RD" resolviendo),
+        // se arranca en la TV desde donde lo dejamos la última vez.
+        val pos = local.currentPosition.takeIf { it > 0 } ?: resumeMs
         local.pause()
-        playerView.player = cp
-        showToast("📺 Enviando a la TV…")
-        // Con "Ver RD" aún resolviéndose no hay URL todavía: cuando llegue,
-        // startRdPending verá que estamos emitiendo y la cargará en la TV.
-        if (currentUrl.isNotBlank()) loadOnCast(currentUrl, pos)
-    }
-
-    /**
-     * Carga la URL en la TV. Con Real-Debrid pide primero la versión HLS
-     * transcodificada (audio AAC): el audio Dolby/DTS de muchos torrents no
-     * suena en un Chromecast. Si no hay HLS, va el enlace directo con aviso.
-     */
-    private fun loadOnCast(url: String, pos: Long) {
-        val cp = castPlayer ?: return
-        if (RealDebrid.downloadIdFor(url) != null) {
-            RealDebrid.transcodeUrl(url) { m3u8 ->
-                mainH.post {
-                    if (!isCasting()) return@post
-                    castedTranscoded = m3u8 != null
-                    val item = if (m3u8 != null) castItem(m3u8, MimeTypes.APPLICATION_M3U8)
-                    else castItem(url)
-                    cp.setMediaItem(item, pos)
-                    cp.prepare()
-                    cp.playWhenReady = true
-                    if (m3u8 == null) maybeWarnCastAudio()
-                }
-            }
-        } else {
-            castedTranscoded = false
-            cp.setMediaItem(castItem(url), pos)
-            cp.prepare()
-            cp.playWhenReady = true
-            maybeWarnCastAudio()
+        playerView.player = cp   // el mando del reproductor controla la TV
+        showToast("\uD83D\uDCFA Enviando a la TV\u2026", 2500)
+        val ctx = PlayCtx(tmdbId, mediaType, season, episode, titleName, poster, pos)
+        when {
+            currentUrl.isNotBlank() -> CastManager.castUrl(currentUrl, ctx)
+            // "Ver RD" todavía resolviendo: que lo resuelva el CastManager
+            rdMagnet != null -> CastManager.castMagnet(rdMagnet!!, ctx)
         }
+        // Avisos de formato del CastManager (MKV/AVI dudoso en Chromecast)
+        mainH.postDelayed({
+            if (CastManager.warning.isNotBlank()) showToast(CastManager.warning, 6000)
+            else if (CastManager.status.isNotBlank()) showToast(CastManager.status, 4000)
+        }, 2500)
     }
 
-    /** Avisa si el audio del archivo es de los que un Chromecast no decodifica. */
-    private fun maybeWarnCastAudio() {
-        if (castedTranscoded) return
-        val bad = setOf(
-            MimeTypes.AUDIO_AC3, MimeTypes.AUDIO_E_AC3, MimeTypes.AUDIO_E_AC3_JOC,
-            MimeTypes.AUDIO_DTS, MimeTypes.AUDIO_DTS_HD, MimeTypes.AUDIO_TRUEHD
-        )
-        val good = setOf(
-            MimeTypes.AUDIO_AAC, MimeTypes.AUDIO_MPEG, MimeTypes.AUDIO_OPUS,
-            MimeTypes.AUDIO_VORBIS, MimeTypes.AUDIO_FLAC
-        )
-        if (audioMimes.any { it in bad } && audioMimes.none { it in good }) {
-            val label = when {
-                audioMimes.any { it == MimeTypes.AUDIO_TRUEHD } -> "TrueHD"
-                audioMimes.any { it.contains("dts") } -> "DTS"
-                else -> "Dolby (AC3)"
-            }
-            val extra = if (RealDebrid.configured) "" else " o usa Real-Debrid"
-            showToast("⚠️ Audio $label: puede no sonar en la TV.\nPrueba una fuente con audio AAC$extra", 7000)
-        }
-    }
-
+    /** La TV se desconectó: sigue en el móvil donde iba. */
     private fun switchToLocal() {
-        val cp = castPlayer ?: return
         val local = player ?: return
         if (playerView.player === local) return
-        val pos = runCatching { cp.currentPosition }.getOrDefault(0L)
-        runCatching { cp.stop() }
-        castedTranscoded = false
+        val pos = runCatching { CastManager.player?.currentPosition ?: 0L }.getOrDefault(0L)
         playerView.player = local
-        if (local.playbackState == Player.STATE_IDLE) local.prepare()
-        if (pos > 0) local.seekTo(pos)
-        local.playWhenReady = true
-        showToast("De vuelta al móvil")
+        if (currentUrl.isNotBlank()) {
+            if (local.playbackState == Player.STATE_IDLE) {
+                local.setMediaItem(MediaItem.fromUri(currentUrl))
+                local.prepare()
+            }
+            if (pos > 0) local.seekTo(pos)
+            local.playWhenReady = true
+        }
+        showToast("De vuelta al m\u00F3vil")
     }
+
 
     /** Pantalla completa inmersiva: oculta barra de estado y de navegación. */
     private fun enableImmersive() {
@@ -572,7 +436,7 @@ class PlayerActivity : AppCompatActivity() {
         season = s; episode = e
         currentUrl = url
         if (isCasting()) {
-            loadOnCast(url, 0L)
+            CastManager.castUrl(url, PlayCtx(tmdbId, mediaType, s, e, titleName, poster, 0L))
         } else {
             val p = player ?: return
             p.setMediaItem(MediaItem.fromUri(url))
@@ -610,8 +474,9 @@ class PlayerActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         saveProgress()
-        runCatching { castPlayer?.setSessionAvailabilityListener(null); castPlayer?.release() }
-        castPlayer = null
+        // La sesión de Cast es global (CastManager): no se libera aquí, solo
+        // se deja de escuchar para no notificar a una pantalla destruida.
+        if (CastManager.onSessionChanged != null) CastManager.onSessionChanged = null
         player?.release()
         player = null
     }
