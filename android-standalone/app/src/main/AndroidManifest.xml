@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!--
+      Modo Real-Debrid: la app no torrentea nada. Solo necesita red (buscar en
+      TMDB/Torrentio/apibay y hablar con la API de Real-Debrid) y notificaciones
+      para el progreso de las descargas. Sin servicio en primer plano ni
+      WAKE_LOCK: al cerrar la app no queda NADA corriendo. Las descargas las
+      hace el DownloadManager del sistema, que sigue aunque la app esté cerrada.
+    -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- IP de la WiFi para que el Chromecast pueda leer el stream local -->
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Volver al frente si otra app se quedó por delante al empezar a reproducir -->
-    <uses-permission android:name="android.permission.REORDER_TASKS" />
     <!-- Auto-actualización: instalar el APK nuevo descargado de GitHub -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
@@ -24,7 +24,6 @@
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.TorrentBox">
 
         <activity
@@ -36,13 +35,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
                 <!-- Aparece también en el launcher de Android TV -->
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
-            </intent-filter>
-            <!-- Permite abrir enlaces magnet desde otras apps -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="magnet" />
             </intent-filter>
         </activity>
 
@@ -58,11 +50,6 @@
         <meta-data
             android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
             android:value="com.carbaxo.torrentbox.CastOptionsProvider" />
-
-        <service
-            android:name=".DownloadService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
 
         <!-- Servir el APK descargado al instalador del sistema (auto-actualización) -->
         <provider

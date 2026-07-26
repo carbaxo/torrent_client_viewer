@@ -1,0 +1,46 @@
+// Reglas de seguridad de Firestore.
+//
+// Despliega con:  firebase deploy --only firestore:rules
+//
+// Sin estas reglas (o con la base de datos en "modo de prueba") CUALQUIERA
+// puede leer y escribir todos los documentos, incluido el token de Real-Debrid
+// de cada cuenta. Por eso viven aquí, versionadas, y no como un paso manual en
+// la consola que se olvida.
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Un documento por usuario: users/{uid}, donde uid es el de Firebase Auth.
+    // Contiene perfiles, favoritos, historial, ajustes y el token de RD, y lo
+    // comparten la web, la app de Windows y la de Android.
+    match /users/{uid} {
+
+      // Solo el propio dueño, y con sesión iniciada.
+      allow read: if request.auth != null && request.auth.uid == uid;
+
+      // Además de ser el dueño, el documento resultante solo puede tener las
+      // claves que usan las apps. Así, aunque a alguien le robaran la sesión,
+      // no podría usar tu Firestore como almacenamiento gratuito.
+      //
+      // Las tres últimas (favorites/progress/settings en la raíz) son del
+      // formato ANTIGUO: siguen permitidas porque una escritura con merge sobre
+      // un documento viejo las conserva, y sin ellas se bloquearía a las
+      // cuentas que aún no han migrado.
+      allow write: if request.auth != null
+                   && request.auth.uid == uid
+                   && request.resource.data.keys().hasOnly([
+                        'profiles', 'states', 'account', 'updatedAt',
+                        'favorites', 'progress', 'settings'
+                      ]);
+
+      // Nada cuelga de users/{uid}: sin subcolecciones que permitir.
+    }
+
+    // Todo lo demás, denegado. (En Firestore lo no permitido ya está denegado;
+    // esto lo deja explícito para quien lea el fichero.)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

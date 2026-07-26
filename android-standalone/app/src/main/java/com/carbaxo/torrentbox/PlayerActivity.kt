@@ -53,10 +53,6 @@ class PlayerActivity : AppCompatActivity() {
     private val speeds = floatArrayOf(1f, 1.25f, 1.5f, 2f, 0.5f, 0.75f)
     private var speedIdx = 0
 
-    // Magnet pendiente de resolver con Real-Debrid (botón "⚡ Ver RD")
-    private var rdMagnet: String? = null
-    private var resumeMs = 0L
-
     // Selector de subtítulos externos (.srt/.vtt/.ass)
     private val pickSubtitle = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -71,8 +67,6 @@ class PlayerActivity : AppCompatActivity() {
         enableImmersive()
 
         val directUrl = intent.getStringExtra("url")
-        val infoHash = intent.getStringExtra("infoHash")
-        rdMagnet = intent.getStringExtra("rdMagnet")
         tmdbId = intent.getIntExtra("tmdbId", -1)
         mediaType = intent.getStringExtra("type") ?: "movie"
         season = intent.getIntExtra("season", -1)
@@ -81,13 +75,10 @@ class PlayerActivity : AppCompatActivity() {
         poster = intent.getStringExtra("poster")
         val resumeMs = intent.getLongExtra("resumeMs", 0L)
 
-        currentUrl = when {
-            !directUrl.isNullOrBlank() -> directUrl
-            infoHash != null -> { StreamServer.ensureStarted(); StreamServer.urlFor(infoHash) }
-            rdMagnet != null -> "" // pendiente: se resuelve con Real-Debrid más abajo
-            else -> { finish(); return }
-        }
-        this.resumeMs = resumeMs
+        // Siempre una URL directa: streaming de Real-Debrid o un fichero ya
+        // descargado por el DownloadManager.
+        if (directUrl.isNullOrBlank()) { finish(); return }
+        currentUrl = directUrl
 
         val root = FrameLayout(this)
         playerView = PlayerView(this).apply {
@@ -111,7 +102,7 @@ class PlayerActivity : AppCompatActivity() {
         }
         val speedBtn = mkBtn("1×") {
             speedIdx = (speedIdx + 1) % speeds.size
-            runCatching { activePlayer()?.setPlaybackSpeed(speeds[speedIdx]) }
+            player?.setPlaybackSpeed(speeds[speedIdx])
             (overlay.getChildAt(0) as TextView).text = "${speeds[speedIdx]}×"
             showToast("Velocidad ${speeds[speedIdx]}×")
         }
@@ -165,12 +156,10 @@ class PlayerActivity : AppCompatActivity() {
         player = ExoPlayer.Builder(this).build().also { p ->
             playerView.player = p
             playerView.keepScreenOn = true
-            if (currentUrl.isNotBlank()) {
-                p.setMediaItem(MediaItem.fromUri(currentUrl))
-                p.prepare()
-                if (resumeMs > 0) p.seekTo(resumeMs)
-                p.playWhenReady = true
-            }
+            p.setMediaItem(MediaItem.fromUri(currentUrl))
+            p.prepare()
+            if (resumeMs > 0) p.seekTo(resumeMs)
+            p.playWhenReady = true
             p.addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(state: Int) {
                     if (state == Player.STATE_ENDED && mediaType == "series" && episode > 0) {
@@ -183,109 +172,53 @@ class PlayerActivity : AppCompatActivity() {
         // El IMDb id hace falta para buscar el siguiente episodio en Torrentio
         if (mediaType == "series" && tmdbId > 0) Tmdb.imdbId("series", tmdbId) { id -> imdb = id }
 
-        // Chromecast: la sesión es global (CastManager). Si se conecta con una TV
-        // mientras vemos algo, la reproducción se pasa a la TV y al revés.
+        // Chromecast: la sesión es global (CastManager), compartida con la
+        // pantalla principal. Si se conecta una TV mientras vemos algo aquí, la
+        // reproducción se pasa a la TV, y al desconectar vuelve al móvil.
+        CastManager.init(this)
         CastManager.onSessionChanged = { conn -> if (conn) switchToCast() else switchToLocal() }
         if (CastManager.connected) switchToCast()
-
-        // "Ver RD": el reproductor se abre al momento y aquí se resuelve el
-        // enlace de Real-Debrid mostrando el estado en pantalla.
-        rdMagnet?.let { startRdPending(it, resumeMs) }
-    }
-
-    // ------------------- Real-Debrid diferido ("Ver RD") -------------------
-    private fun startRdPending(magnet: String, resumeMs: Long, attempt: Int = 0) {
-        if (attempt == 0) showToast("⚡ Preparando en Real-Debrid…", 120_000)
-        RealDebrid.streamMagnet(magnet) { url, _, err, progress ->
-            mainH.post {
-                if (isDestroyed || isFinishing) return@post
-                when {
-                    url != null -> {
-                        currentUrl = url
-                        if (isCasting()) {
-                            showToast("📺 Enviando a la TV…", 2500)
-                            CastManager.castUrl(
-                                url,
-                                PlayCtx(tmdbId, mediaType, season, episode, titleName, poster, resumeMs)
-                            )
-                        } else {
-                            val p = player ?: return@post
-                            p.setMediaItem(MediaItem.fromUri(url))
-                            p.prepare()
-                            if (resumeMs > 0) p.seekTo(resumeMs)
-                            p.playWhenReady = true
-                            showToast("▶ Listo", 1200)
-                        }
-                    }
-                    progress != null -> {
-                        // RD aún lo está bajando a sus servidores: reintenta solo
-                        if (attempt < 10) {
-                            showToast("⚡ Real-Debrid preparando… ${progress}%", 120_000)
-                            mainH.postDelayed({ startRdPending(magnet, resumeMs, attempt + 1) }, 4000)
-                        } else {
-                            showToast("Real-Debrid tarda demasiado; probando torrent…", 4000)
-                            startTorrent(magnet, season, episode)
-                        }
-                    }
-                    else -> {
-                        showToast((err ?: "Error de Real-Debrid") + " — probando torrent…", 4000)
-                        startTorrent(magnet, season, episode)
-                    }
-                }
-            }
-        }
     }
 
     // ------------------- Chromecast (sesión global: CastManager) -------------------
-    /** Reproductor activo: el remoto si estamos emitiendo, si no el local. */
-    private fun activePlayer(): Player? = playerView.player ?: player
-
+    // La URL de Real-Debrid es HTTPS pública: la TV la descarga ella misma de los
+    // servidores de RD (el vídeo no pasa por el móvil). El CastManager se encarga
+    // de enviar la versión con audio AAC, porque el Chromecast no decodifica
+    // Dolby/DTS y se vería sin sonido.
     private fun isCasting(): Boolean {
         val cp = CastManager.player ?: return false
         return CastManager.connected && playerView.player === cp
     }
 
-    /** Pasa lo que se está viendo a la TV (el CastManager elige el formato). */
     private fun switchToCast() {
         val cp = CastManager.player ?: return
         val local = player ?: return
-        if (playerView.player === cp) return // ya estamos emitiendo
-        // Si aún no había empezado en el móvil (p. ej. "Ver RD" resolviendo),
-        // se arranca en la TV desde donde lo dejamos la última vez.
-        val pos = local.currentPosition.takeIf { it > 0 } ?: resumeMs
-        local.pause()
+        if (playerView.player === cp) return
+        val pos = local.currentPosition
+        local.playWhenReady = false
         playerView.player = cp   // el mando del reproductor controla la TV
-        showToast("\uD83D\uDCFA Enviando a la TV\u2026", 2500)
-        val ctx = PlayCtx(tmdbId, mediaType, season, episode, titleName, poster, pos)
-        when {
-            currentUrl.isNotBlank() -> CastManager.castUrl(currentUrl, ctx)
-            // "Ver RD" todavía resolviendo: que lo resuelva el CastManager
-            rdMagnet != null -> CastManager.castMagnet(rdMagnet!!, ctx)
-        }
-        // Avisos de formato del CastManager (MKV/AVI dudoso en Chromecast)
+        showToast("📺 Enviando a la TV…", 2500)
+        CastManager.castUrl(currentUrl, PlayCtx(tmdbId, mediaType, season, episode, titleName, poster, pos))
+        // Estado/avisos del CastManager (p. ej. si no hay versión convertida)
         mainH.postDelayed({
-            if (CastManager.warning.isNotBlank()) showToast(CastManager.warning, 6000)
+            if (CastManager.warning.isNotBlank()) showToast(CastManager.warning, 7000)
             else if (CastManager.status.isNotBlank()) showToast(CastManager.status, 4000)
         }, 2500)
     }
 
-    /** La TV se desconectó: sigue en el móvil donde iba. */
     private fun switchToLocal() {
         val local = player ?: return
         if (playerView.player === local) return
         val pos = runCatching { CastManager.player?.currentPosition ?: 0L }.getOrDefault(0L)
         playerView.player = local
-        if (currentUrl.isNotBlank()) {
-            if (local.playbackState == Player.STATE_IDLE) {
-                local.setMediaItem(MediaItem.fromUri(currentUrl))
-                local.prepare()
-            }
-            if (pos > 0) local.seekTo(pos)
-            local.playWhenReady = true
+        if (local.playbackState == Player.STATE_IDLE) {
+            local.setMediaItem(MediaItem.fromUri(currentUrl))
+            local.prepare()
         }
-        showToast("De vuelta al m\u00F3vil")
+        if (pos > 0) local.seekTo(pos)
+        local.playWhenReady = true
+        showToast("De vuelta al móvil")
     }
-
 
     /** Pantalla completa inmersiva: oculta barra de estado y de navegación. */
     private fun enableImmersive() {
@@ -318,7 +251,7 @@ class PlayerActivity : AppCompatActivity() {
                 return true
             }
             override fun onDoubleTap(e: MotionEvent): Boolean {
-                val p = activePlayer() ?: return true
+                val p = player ?: return true
                 val w = playerView.width
                 when {
                     e.x < w / 3f -> { p.seekTo((p.currentPosition - 10_000).coerceAtLeast(0)); showToast("⏪ -10 s") }
@@ -397,8 +330,13 @@ class PlayerActivity : AppCompatActivity() {
         }
     }
 
-    /** Busca fuentes del episodio y reproduce la mejor (RD si está configurado; si no, torrent). */
+    /** Busca fuentes del episodio y reproduce la mejor vía Real-Debrid. */
     private fun trySources(imdbId: String, s: Int, e: Int, onDone: (Boolean) -> Unit) {
+        if (!RealDebrid.configured) {
+            showToast("Conecta Real-Debrid en Ajustes para el siguiente episodio")
+            onDone(true) // no seguimos probando temporadas: falta la configuración
+            return
+        }
         Torrentio.streams("series", imdbId, s, e) { list, _ ->
             val sorted = Search.sortByLang(list ?: emptyList(), Prefs.languageOrder)
             val best = sorted.firstOrNull()
@@ -406,27 +344,15 @@ class PlayerActivity : AppCompatActivity() {
             mainH.post {
                 onDone(true)
                 showToast("Cargando ${best.name.take(40)}…")
-                if (RealDebrid.configured) {
-                    RealDebrid.streamMagnet(best.magnet) { url, _, err, progress ->
-                        mainH.post {
-                            when {
-                                url != null -> switchTo(url, s, e)
-                                progress != null -> showToast("Real-Debrid… ${progress}%")
-                                else -> { showToast(err ?: "Error RD, probando torrent…"); startTorrent(best.magnet, s, e) }
-                            }
+                RealDebrid.streamMagnet(best.magnet) { url, _, err, progress ->
+                    mainH.post {
+                        when {
+                            url != null -> switchTo(url, s, e)
+                            progress != null -> showToast("Real-Debrid lo está preparando… ${progress}%")
+                            else -> showToast(err ?: "Error de Real-Debrid")
                         }
                     }
-                } else startTorrent(best.magnet, s, e)
-            }
-        }
-    }
-
-    private fun startTorrent(magnet: String, s: Int, e: Int) {
-        StreamServer.ensureStarted()
-        TorrentEngine.addMagnet(magnet, Prefs.bufferDirFile()) { d, err ->
-            mainH.post {
-                if (d == null || d.videoIndex < 0) showToast(err ?: "Sin vídeo en esa fuente")
-                else switchTo(StreamServer.urlFor(d.infoHash), s, e)
+                }
             }
         }
     }
@@ -436,6 +362,7 @@ class PlayerActivity : AppCompatActivity() {
         season = s; episode = e
         currentUrl = url
         if (isCasting()) {
+            // Sigue en la TV, con su versión de audio compatible
             CastManager.castUrl(url, PlayCtx(tmdbId, mediaType, s, e, titleName, poster, 0L))
         } else {
             val p = player ?: return
@@ -443,12 +370,13 @@ class PlayerActivity : AppCompatActivity() {
             p.prepare()
             p.playWhenReady = true
         }
-        if (e > 0) showToast("T${s}E$e")
+        showToast("T${s}E$e")
     }
 
     // ------------------- Progreso -------------------
     private fun saveProgress() {
-        val p = activePlayer() ?: return
+        // Si estamos emitiendo, la posición buena es la de la TV
+        val p = (if (isCasting()) CastManager.player else player) ?: return
         val posMs = p.currentPosition
         val durMs = p.duration // puede ser negativo si aún no se conoce
         if (tmdbId > 0 && posMs > 5000) {
@@ -474,9 +402,9 @@ class PlayerActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         saveProgress()
-        // La sesión de Cast es global (CastManager): no se libera aquí, solo
-        // se deja de escuchar para no notificar a una pantalla destruida.
-        if (CastManager.onSessionChanged != null) CastManager.onSessionChanged = null
+        // La sesión de Cast es global (CastManager): no se libera aquí, solo se
+        // deja de escuchar para no avisar a una pantalla ya destruida.
+        CastManager.onSessionChanged = null
         player?.release()
         player = null
     }

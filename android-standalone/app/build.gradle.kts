@@ -95,14 +95,6 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.mediarouter:mediarouter:1.7.0")
 
-    // Motor BitTorrent en el dispositivo (natives incluidos por ABI)
-    implementation("org.libtorrent4j:libtorrent4j-android-arm64:2.1.0-31")
-    implementation("org.libtorrent4j:libtorrent4j-android-arm:2.1.0-31")
-    implementation("org.libtorrent4j:libtorrent4j-android-x86_64:2.1.0-31")
-
-    // Servidor HTTP local para hacer streaming del archivo mientras baja
-    implementation("org.nanohttpd:nanohttpd:2.3.1")
-
     // Cliente HTTP para la búsqueda (apibay) y TMDB
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 

@@ -71,22 +71,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
           <span class="nav-label">Favoritos</span>
         </button>
-        <button class="nav-item" data-view="tv" title="TV (AceStream)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="13" rx="2"/><polyline points="8 3 12 7 16 3"/></svg>
-          <span class="nav-label">TV</span>
-        </button>
         <button class="nav-item" data-view="downloads" title="Descargas">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
           <span class="nav-label">Descargas</span>
-        </button>
-        <button class="nav-item" data-view="library" title="Actividad de descargas">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          <span class="nav-label">Actividad</span>
           <span id="nav-lib-badge" class="nav-badge hidden"></span>
-        </button>
-        <button class="nav-item" data-view="add" title="Añadir manualmente">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-          <span class="nav-label">Añadir</span>
         </button>
         <button class="nav-item" data-view="settings" title="Ajustes">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -121,8 +109,21 @@
       </header>
 
       <main>
+        <!-- Aviso de la app nativa (solo en Android, y se puede descartar) -->
+        <div id="apk-banner" class="apk-banner hidden">
+          <div class="apk-banner-text">
+            <b>📱 Mejor con la app</b>
+            <span>La app de Android reproduce MKV con DTS/AC3, permite emitir a la TV con Chromecast y descarga en segundo plano. El mismo APK se instala en tu Android TV.</span>
+          </div>
+          <div class="apk-banner-actions">
+            <a id="apk-banner-link" class="btn-primary" href="#" rel="noopener">Descargar APK</a>
+            <button id="apk-banner-close" class="btn-icon" title="No mostrar más" aria-label="No mostrar más">✕</button>
+          </div>
+        </div>
+
         <!-- DESCUBRIR (catálogos) -->
         <section class="view" id="view-discover">
+          <div id="continue-row"></div>
           <div id="my-list"></div>
           <div id="recs-row"></div>
           <div id="catalog-panel">
@@ -198,54 +199,9 @@
           <div id="favorites-grid" class="poster-grid"></div>
         </section>
 
-        <!-- TV (AceStream) -->
-        <section class="view hidden" id="view-tv">
-          <div class="panel">
-            <p id="tv-engine" class="status"></p>
-            <form id="tv-search-form" class="add-form">
-              <input type="text" id="tv-search-input" placeholder="Buscar canal o evento (fútbol, DAZN, La Liga…)" autocomplete="off" />
-              <button type="submit" class="btn-primary">Buscar</button>
-              <button type="button" id="tv-all-btn" class="btn-ghost">Ver todos</button>
-            </form>
-            <div id="tv-filters" class="quality-filters"></div>
-            <p id="tv-status" class="status"></p>
-          </div>
-          <div id="tv-list" class="downloads-list"></div>
-          <p class="hint">La reproducción abre la app <b>AceStream</b> (instálala en el PC desde <span class="mono">acestream.org</span>). Contenido P2P de terceros: úsalo bajo tu responsabilidad.</p>
-        </section>
-
-        <!-- DESCARGAS (biblioteca offline) -->
+        <!-- DESCARGAS (vía Real-Debrid) -->
         <section class="view hidden" id="view-downloads">
           <div id="rd-downloads"></div>
-          <div id="downloads-list" class="downloads-list"></div>
-        </section>
-
-        <!-- ACTIVIDAD (torrents en curso) -->
-        <section class="view hidden" id="view-library">
-          <div id="continue-row"></div>
-          <div id="torrent-list" class="torrent-list"></div>
-        </section>
-
-        <!-- AÑADIR MANUAL -->
-        <section class="view hidden" id="view-add">
-          <div class="panel">
-            <h2 class="panel-title">Enlace magnet</h2>
-            <form id="magnet-form" class="add-form">
-              <input type="text" id="magnet-input" placeholder="magnet:?xt=urn:btih:…" autocomplete="off" />
-              <button type="submit" class="btn-primary">Añadir magnet</button>
-            </form>
-          </div>
-          <div class="panel">
-            <h2 class="panel-title">Archivo .torrent</h2>
-            <form id="upload-form" class="add-form">
-              <label class="file-label">
-                <input type="file" id="torrent-file" accept=".torrent" />
-                <span id="file-name">Elegir archivo .torrent…</span>
-              </label>
-              <button type="submit" class="btn-primary">Subir .torrent</button>
-            </form>
-          </div>
-          <p id="add-status" class="status"></p>
         </section>
 
         <!-- AJUSTES -->
@@ -278,28 +234,33 @@
             <p class="hint">Las fuentes en tu idioma (detectado por banderas o por el nombre del torrent) aparecerán primero.</p>
           </div>
 
-          <div class="panel">
-            <h2 class="panel-title">Carpetas del servidor</h2>
-            <div class="settings-field">
-              <label for="setting-download-dir">Carpeta de descargas (permanentes)</label>
-              <input type="text" id="setting-download-dir" placeholder="D:\Descargas" autocomplete="off" />
-            </div>
-            <div class="settings-field">
-              <label for="setting-buffer-dir">Carpeta de buffer (al usar "Ver": se borra tras verlo)</label>
-              <input type="text" id="setting-buffer-dir" placeholder="D:\Buffer" autocomplete="off" />
-            </div>
+          <div class="panel" id="apk-panel">
+            <h2 class="panel-title">App para Android y Android TV</h2>
+            <p class="hint">Mejor experiencia que el navegador: reproduce <b>MKV con DTS/AC3</b>, emite a la TV con <b>Chromecast</b>, descarga en segundo plano y se ve sin conexión. <b>El mismo APK se instala en una Android TV o Google TV</b> y aparece en su launcher, así que puedes reproducir en la propia tele sin castear.</p>
             <div class="settings-row">
-              <button id="save-dirs-btn" class="btn-primary">Guardar carpetas</button>
+              <a id="apk-link" class="btn-primary" href="#" rel="noopener">⬇ Descargar APK</a>
             </div>
-            <p id="dirs-status" class="status"></p>
-            <p class="hint">Se aplican a los torrents nuevos. Deben ser carpetas distintas.</p>
+            <p class="hint">En el móvil o la TV: abre el APK y permite <b>«Instalar apps desconocidas»</b>. Se actualiza sola desde dentro.</p>
           </div>
 
           <div class="panel">
             <h2 class="panel-title">Real-Debrid</h2>
             <div id="rd-config"></div>
             <p id="rd-status" class="status"></p>
-            <p class="hint">Tu token es privado de esta cuenta: se guarda solo en el servidor y ninguna otra cuenta puede usarlo. Consíguelo en <span class="mono">real-debrid.com/apitoken</span>.</p>
+            <p class="hint">Real-Debrid es <b>imprescindible</b>: la app no descarga por BitTorrent, todo el vídeo llega por streaming directo desde sus servidores. Tu token es privado de esta cuenta: se guarda solo en el servidor y ninguna otra cuenta puede usarlo. Consíguelo en <span class="mono">real-debrid.com/apitoken</span>.</p>
+          </div>
+
+          <div class="panel">
+            <h2 class="panel-title">Carpeta de descargas</h2>
+            <div class="settings-field">
+              <label for="setting-download-dir">Dónde guardar lo que descargues con Real-Debrid</label>
+              <input type="text" id="setting-download-dir" placeholder="D:\Descargas" autocomplete="off" />
+            </div>
+            <div class="settings-row">
+              <button id="save-dirs-btn" class="btn-primary">Guardar carpeta</button>
+            </div>
+            <p id="dirs-status" class="status"></p>
+            <p class="hint">Es una carpeta <b>del servidor</b>: en la app de Windows es tu propio disco; en un servidor remoto, el suyo. Se aplica a las descargas nuevas.</p>
           </div>
         </section>
       </main>

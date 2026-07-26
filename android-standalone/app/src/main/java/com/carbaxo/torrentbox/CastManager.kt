@@ -21,19 +21,23 @@ import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
 /**
- * Sesión de Chromecast COMPARTIDA por toda la app (como HBO o Netflix): la TV
- * se elige una vez con el botón de la barra superior y, a partir de ahí,
- * cualquier título que se abra se envía a esa TV; se puede cambiar de película
- * sin volver a conectar.
+ * Sesión de Chromecast COMPARTIDA por toda la app (como HBO o Netflix): la TV se
+ * elige una vez con el botón de la barra superior y, a partir de ahí, cualquier
+ * título que se abra se envía a esa TV; se puede cambiar de película sin volver
+ * a conectar.
  *
- * Emitir a un Chromecast es delicado: el receptor solo admite MP4/WebM y
- * HLS/DASH, y no decodifica audio Dolby (AC3/EAC3) ni DTS. Por eso NO se envía
- * un único enlace: se construye una CADENA de candidatos y se pasa al siguiente
- * en cuanto uno falla, informando por pantalla:
+ * El problema del sonido: el receptor de Google Cast solo decodifica AAC, MP3,
+ * Opus, Vorbis y FLAC. Casi todas las releases traen **Dolby AC3/EAC3 o DTS**,
+ * así que al enviar el archivo tal cual se ve la imagen pero NO se oye nada.
+ * La solución es no enviar nunca el archivo original si se puede evitar: se pide
+ * a Real-Debrid su versión **transcodificada a H.264 + AAC** y se prueba en
+ * cadena, pasando al siguiente candidato en cuanto la TV falla:
  *
- *   1. HLS de Real-Debrid (H.264 + AAC) -> compatible con cualquier Chromecast
- *   2. Enlace directo anunciado como video/mp4 -> el receptor detecta el formato
- *   3. Enlace directo con su tipo real (mkv/webm/…) -> último intento
+ *   1. HLS de Real-Debrid          (m3u8, H.264 + AAC)  <- audio garantizado
+ *   2. MP4 convertido por RD       (video/mp4,  AAC)    <- audio garantizado
+ *   3. WebM convertido por RD      (video/webm, AAC)    <- audio garantizado
+ *   4. Enlace original como mp4    (el receptor detecta el formato)
+ *   5. Enlace original con su tipo real (último intento)
  */
 @UnstableApi
 object CastManager {
@@ -41,7 +45,6 @@ object CastManager {
     /** Reintentos mientras Real-Debrid descarga el torrent en sus servidores. */
     private const val MAX_RD_TRIES = 15
 
-    private var appCtx: Context? = null
     private var castContext: CastContext? = null
 
     /** Reproductor remoto (null si no hay Google Play Services). */
@@ -53,17 +56,11 @@ object CastManager {
     var connected by mutableStateOf(false); private set   // hay TV conectada
     var deviceName by mutableStateOf<String?>(null); private set
     var status by mutableStateOf(""); private set         // "Enviando a la TV…", errores…
-    var warning by mutableStateOf(""); private set        // aviso de formato dudoso
+    var warning by mutableStateOf(""); private set        // aviso de audio/formato
     var title by mutableStateOf(""); private set
     var poster by mutableStateOf<String?>(null); private set
     /** Contexto del título emitido (para guardar "continuar viendo"). */
     var playCtx by mutableStateOf(PlayCtx()); private set
-
-    private data class Candidate(val url: String, val mime: String, val label: String)
-
-    private var candidates: List<Candidate> = emptyList()
-    private var candidateIdx = 0
-    private var startMs = 0L
 
     /**
      * Aviso de conexión/desconexión con la TV para pantallas que no son Compose
@@ -72,6 +69,12 @@ object CastManager {
      */
     var onSessionChanged: ((Boolean) -> Unit)? = null
 
+    private data class Candidate(val url: String, val mime: String, val label: String, val converted: Boolean)
+
+    private var candidates: List<Candidate> = emptyList()
+    private var candidateIdx = 0
+    private var startMs = 0L
+
     private val mainH = Handler(Looper.getMainLooper())
     private val http = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS).readTimeout(8, TimeUnit.SECONDS).build()
@@ -79,9 +82,9 @@ object CastManager {
     // ------------------------------------------------------------------
     // Inicio
     // ------------------------------------------------------------------
+    /** Se puede llamar varias veces: reintenta si Play Services no estaba listo. */
     fun init(context: Context) {
         if (castContext != null) return
-        appCtx = context.applicationContext
         runCatching {
             val cc = CastContext.getSharedInstance(context.applicationContext)
             castContext = cc
@@ -126,31 +129,23 @@ object CastManager {
     // ------------------------------------------------------------------
 
     /**
-     * Emite un magnet: lo resuelve con Real-Debrid (preferido, da audio AAC) y
-     * si no está configurado o falla, lo descarga como torrent en el móvil.
+     * Emite un magnet: lo resuelve en Real-Debrid y envía a la TV la versión
+     * convertida (con audio AAC) en cuanto esté.
      */
-    fun castMagnet(magnet: String, ctx: PlayCtx, preferRd: Boolean = true) {
+    fun castMagnet(magnet: String, ctx: PlayCtx) {
         begin(ctx)
-        if (preferRd && RealDebrid.configured) {
-            status = "⚡ Preparando en Real-Debrid…"
-            resolveRd(magnet, 0)
-        } else {
-            status = "Buscando peers del torrent…"
-            resolveTorrent(magnet)
+        if (!RealDebrid.configured) {
+            status = "Configura Real-Debrid en Ajustes para emitir a la TV"
+            return
         }
+        status = "⚡ Preparando en Real-Debrid…"
+        resolveRd(magnet, 0)
     }
 
-    /** Emite una URL ya resuelta (Real-Debrid, descarga local o stream propio). */
+    /** Emite una URL ya resuelta (streaming de RD o descarga local). */
     fun castUrl(url: String, ctx: PlayCtx) {
         begin(ctx)
         buildLadder(url)
-    }
-
-    /** Emite un torrent que ya se está descargando en el móvil. */
-    fun castInfoHash(infoHash: String, ctx: PlayCtx) {
-        begin(ctx)
-        StreamServer.ensureStarted()
-        startLadder(directCandidates(StreamServer.urlFor(infoHash)))
     }
 
     private fun begin(ctx: PlayCtx) {
@@ -164,7 +159,7 @@ object CastManager {
         status = "📺 Enviando a la TV…"
     }
 
-    /** Para de emitir (la TV vuelve a la pantalla de inicio del receptor). */
+    /** Para de emitir (la TV vuelve a su pantalla de inicio). */
     fun stop() {
         runCatching { player?.stop() }
         candidates = emptyList()
@@ -181,7 +176,7 @@ object CastManager {
     }
 
     // ------------------------------------------------------------------
-    // Real-Debrid / torrent -> URL
+    // Real-Debrid -> URL
     // ------------------------------------------------------------------
     private fun resolveRd(magnet: String, attempt: Int) {
         RealDebrid.streamMagnet(magnet) { url, _, err, progress ->
@@ -189,77 +184,45 @@ object CastManager {
                 when {
                     url != null -> buildLadder(url)
                     progress != null && attempt < MAX_RD_TRIES -> {
-                        status = "⚡ Real-Debrid preparando… ${progress}%"
+                        status = "⚡ Real-Debrid lo está preparando… ${progress}%"
                         mainH.postDelayed({ resolveRd(magnet, attempt + 1) }, 4000)
                     }
-                    else -> {
-                        status = (err ?: "Real-Debrid tarda demasiado") + " — probando torrent…"
-                        resolveTorrent(magnet)
-                    }
+                    progress != null -> status =
+                        "Real-Debrid sigue preparándolo (${progress}%). Inténtalo en un par de minutos."
+                    else -> status = err ?: "Error de Real-Debrid"
                 }
             }
         }
-    }
-
-    private fun resolveTorrent(magnet: String) {
-        StreamServer.ensureStarted()
-        TorrentEngine.addMagnet(magnet, Prefs.bufferDirFile()) { d, err ->
-            mainH.post {
-                if (d == null || d.videoIndex < 0) {
-                    status = err ?: "Esa fuente no tiene vídeo"
-                    return@post
-                }
-                // Algunos MP4 llevan el índice (moov) al final: pide también la
-                // cola, si no la TV se queda esperando para siempre.
-                val total = d.ti.files().fileSize(d.videoIndex)
-                runCatching { TorrentEngine.prioritizeFrom(d, (total - 2L * 1024 * 1024).coerceAtLeast(0)) }
-                waitBufferThenCast(d, 0)
-            }
-        }
-    }
-
-    /**
-     * Espera a tener el principio del vídeo antes de enviarlo. Un Chromecast
-     * corta la conexión si el servidor tarda en contestar, y al empezar un
-     * torrent las piezas aún no están: sin este colchón la TV no arranca.
-     */
-    private fun waitBufferThenCast(d: TorrentEngine.Download, tries: Int) {
-        val mb = 1024L * 1024
-        val total = d.ti.files().fileSize(d.videoIndex)
-        val goal = 6
-        val ready = (0 until goal).count { i ->
-            val off = i * mb
-            off < total && runCatching { TorrentEngine.hasByte(d, off) }.getOrDefault(false)
-        }
-        if (ready >= goal || (total <= goal * mb && ready > 0) || tries > 90) {
-            status = "📺 Enviando a la TV…"
-            startLadder(directCandidates(StreamServer.urlFor(d.infoHash)))
-            return
-        }
-        runCatching { TorrentEngine.prioritizeFrom(d, 0) }
-        status = "Preparando el vídeo para la TV… $ready/$goal MB"
-        mainH.postDelayed({ waitBufferThenCast(d, tries + 1) }, 1000)
     }
 
     // ------------------------------------------------------------------
     // Cadena de candidatos
     // ------------------------------------------------------------------
 
-    /** Con Real-Debrid intenta primero su HLS (audio AAC); si no, enlace directo. */
+    /** Pide a RD las versiones convertidas y monta la cadena a probar. */
     private fun buildLadder(url: String) {
-        if (RealDebrid.downloadIdFor(url) == null) {
-            startLadder(directCandidates(url))
-            return
-        }
         status = "⚡ Preparando audio compatible con la TV…"
-        RealDebrid.transcodeUrl(url) { m3u8 ->
-            validateHls(m3u8) { ok ->
+        RealDebrid.transcodeVariants(url) { variants, err ->
+            // El HLS se comprueba antes de enviarlo: si RD devuelve un enlace
+            // roto, mejor descartarlo aquí que quedarnos en negro en la TV.
+            val hls = variants.firstOrNull { it.kind == "hls" }
+            validateHls(hls?.url) { hlsOk ->
                 mainH.post {
                     val list = ArrayList<Candidate>()
-                    if (ok && m3u8 != null) {
-                        list.add(Candidate(m3u8, MimeTypes.APPLICATION_M3U8, "HLS con audio AAC"))
+                    variants.forEach { v ->
+                        when (v.kind) {
+                            "hls" -> if (hlsOk) list.add(
+                                Candidate(v.url, MimeTypes.APPLICATION_M3U8, "HLS convertido (AAC)", true)
+                            )
+                            "mp4" -> list.add(Candidate(v.url, MimeTypes.VIDEO_MP4, "MP4 convertido (AAC)", true))
+                            "webm" -> list.add(Candidate(v.url, MimeTypes.VIDEO_WEBM, "WebM convertido (AAC)", true))
+                        }
                     }
                     list.addAll(directCandidates(url))
+                    if (list.none { it.converted }) {
+                        warning = "⚠️ Sin versión convertida" + (err?.let { " ($it)" } ?: "") +
+                            ". Si la película lleva audio Dolby/DTS puede verse sin sonido: prueba otra fuente (mejor si pone AAC)."
+                    }
                     startLadder(list)
                 }
             }
@@ -267,16 +230,16 @@ object CastManager {
     }
 
     /**
-     * Para un archivo suelto: primero anunciado como MP4 (así el receptor
-     * detecta el formato real, que es lo que más veces funciona) y luego con su
-     * tipo exacto. Declarar "video/x-matroska" de primeras hace que el receptor
-     * lo rechace sin intentarlo.
+     * El archivo original: primero anunciado como MP4 (así el receptor detecta
+     * el formato real, que es lo que más veces funciona) y luego con su tipo
+     * exacto. Declarar "video/x-matroska" de primeras hace que el receptor lo
+     * rechace sin intentarlo.
      */
     private fun directCandidates(url: String): List<Candidate> {
         val real = mimeFor(url)
-        val first = Candidate(url, MimeTypes.VIDEO_MP4, "enlace directo")
+        val first = Candidate(url, MimeTypes.VIDEO_MP4, "archivo original", false)
         return if (real == MimeTypes.VIDEO_MP4) listOf(first)
-        else listOf(first, Candidate(url, real, real.substringAfterLast('/')))
+        else listOf(first, Candidate(url, real, real.substringAfterLast('/'), false))
     }
 
     private fun startLadder(list: List<Candidate>) {
@@ -294,15 +257,10 @@ object CastManager {
             status = "Conecta con una TV para empezar a emitir"
             return
         }
-        val playable = castableUrl(c.url)
-        if (playable == null) {
-            status = "No se pudo obtener la IP del móvil; conéctate a la misma WiFi que la TV"
-            return
-        }
-        warning = riskWarning(c.mime)
-        status = if (i == 0) "📺 Enviando a la TV…" else "Probando ${c.label} en la TV…"
+        status = if (i == 0) "📺 Enviando a la TV…" else "Probando en la TV: ${c.label}…"
+        if (c.converted) warning = ""
         val item = MediaItem.Builder()
-            .setUri(playable)
+            .setUri(c.url)
             .setMimeType(c.mime)
             .setMediaMetadata(
                 MediaMetadata.Builder()
@@ -322,29 +280,22 @@ object CastManager {
             loadCandidate(next)
         } else {
             candidates = emptyList()
-            status = "La TV no pudo reproducir este archivo (${error.errorCodeName}). " +
-                if (RealDebrid.configured) "Prueba otra fuente."
-                else "Configura Real-Debrid en Ajustes o elige una fuente MP4 con audio AAC."
+            status = "La TV no pudo reproducir este archivo (${error.errorCodeName}). Prueba otra fuente."
         }
     }
 
-    private fun riskWarning(mime: String): String = when (mime) {
-        MimeTypes.VIDEO_MATROSKA, "video/x-msvideo" ->
-            "⚠️ MKV/AVI no siempre funciona en un Chromecast. Con «⚡ Ver RD» se envía convertido y va seguro."
-        else -> ""
-    }
+    /** Lo que se está emitiendo lleva audio convertido (sonará seguro). */
+    val playingConverted: Boolean
+        get() = candidates.getOrNull(candidateIdx)?.converted == true
 
     // ------------------------------------------------------------------
     // Utilidades
     // ------------------------------------------------------------------
 
-    /** Tipo real del vídeo, por el nombre del archivo del torrent o de la URL. */
+    /** Tipo real del vídeo según la extensión de la URL. */
     private fun mimeFor(url: String): String {
         val last = url.substringAfterLast('/').substringBefore('?')
-        val fromTorrent = TorrentEngine.get(last)?.let { d ->
-            if (d.videoIndex >= 0) d.ti.files().fileName(d.videoIndex) else null
-        }
-        val name = fromTorrent ?: runCatching { java.net.URLDecoder.decode(last, "UTF-8") }.getOrDefault(last)
+        val name = runCatching { java.net.URLDecoder.decode(last, "UTF-8") }.getOrDefault(last)
         return when (name.substringAfterLast('.', "").lowercase()) {
             "webm" -> MimeTypes.VIDEO_WEBM
             "mkv" -> MimeTypes.VIDEO_MATROSKA
@@ -352,36 +303,6 @@ object CastManager {
             "avi" -> "video/x-msvideo"
             else -> MimeTypes.VIDEO_MP4 // mp4, m4v, mov y desconocidos
         }
-    }
-
-    /** El stream local se sirve por la IP de la LAN para que la TV lo alcance. */
-    private fun castableUrl(u: String): String? {
-        if (!u.contains("127.0.0.1")) return u
-        val ip = lanIp() ?: return null
-        return u.replace("127.0.0.1", ip)
-    }
-
-    /** IP del móvil en la red local (WiFi, ethernet o hotspot). */
-    private fun lanIp(): String? {
-        val ctx = appCtx
-        if (ctx != null) runCatching {
-            @Suppress("DEPRECATION")
-            val wm = ctx.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
-            @Suppress("DEPRECATION")
-            val ip = wm.connectionInfo.ipAddress
-            if (ip != 0) return String.format(
-                "%d.%d.%d.%d", ip and 0xff, ip shr 8 and 0xff, ip shr 16 and 0xff, ip shr 24 and 0xff
-            )
-        }
-        // WifiManager devuelve 0 con ethernet (Android TV) o compartiendo datos
-        return runCatching {
-            java.util.Collections.list(java.net.NetworkInterface.getNetworkInterfaces())
-                .filter { it.isUp && !it.isLoopback }
-                .flatMap { java.util.Collections.list(it.inetAddresses) }
-                .filterIsInstance<java.net.Inet4Address>()
-                .firstOrNull { it.isSiteLocalAddress }
-                ?.hostAddress
-        }.getOrNull()
     }
 
     /** Comprueba que el HLS de Real-Debrid existe de verdad antes de enviarlo. */

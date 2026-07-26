@@ -1,44 +1,99 @@
-# 📱 TorrentBox — app Android autónoma
+# 📱 TorrentBox — app Android (modo Real-Debrid)
 
-App Android **nativa e independiente**: descarga torrents **en el propio móvil**
-y reproduce el vídeo **mientras se descarga**, sin depender de ningún PC ni
-servidor.
+App Android **nativa e independiente** para buscar películas y series y verlas
+por **streaming directo desde Real-Debrid**, sin depender de ningún PC ni
+servidor propio. Funciona en **móvil y en Android TV**.
+
+> ⚡ **Requiere una cuenta de Real-Debrid.** La app **no lleva motor BitTorrent**:
+> no descarga por torrent ni se conecta a ningún peer. Lo único que hace con un
+> magnet es entregárselo a Real-Debrid, que lo resuelve en sus servidores y
+> devuelve una URL HTTPS normal. Sin token de RD configurado no se puede ver ni
+> descargar nada.
+
+## Funciones
 
 - **Interfaz al estilo de la web**: pestañas Descubrir / Buscar / Descargas /
   Ajustes, catálogos con carátulas (Netflix, Prime, HBO Max, Disney+ vía TMDB) y
-  ficha de detalle con sinopsis, tráiler y fuentes (Ver / Descargar).
-- Motor BitTorrent en el dispositivo: **libtorrent4j** (natives incluidos), con
-  **persistencia**: las descargas permanentes se reanudan al reabrir la app.
-- Descarga **secuencial** con priorización de piezas → reproducción mientras baja.
+  ficha de detalle con sinopsis, tráiler y fuentes.
+- ▶️ **Ver**: streaming directo desde los servidores de Real-Debrid. El vídeo va
+  del CDN de RD al reproductor; no se descarga nada en el móvil.
+- ⬇️ **Descargar**: la encola en el **DownloadManager del sistema**, así que
+  continúa **aunque cierres la app** y queda disponible sin conexión.
 - Reproductor **ExoPlayer (Media3)**: subtítulos, pistas de audio, velocidad,
-  siguiente episodio y continuar viendo.
-- **Chromecast al estilo HBO**: el botón de emitir está en la barra superior, se
-  elige la TV **antes** de abrir nada y después cada título que pulses se manda a
-  esa TV (se puede cambiar de película sin reconectar), con mando propio
-  (play/pausa, saltos, barra de progreso). Para que suene y se vea siempre, se
-  prueba en cadena: **HLS de Real-Debrid (H.264+AAC)** → enlace directo →
-  formato exacto, con colchón previo de descarga en los torrents locales.
+  gestos de volumen/brillo, siguiente episodio y continuar viendo.
+- 📺 **Chromecast**: se elige la TV en la barra superior (antes de abrir nada) y
+  luego cada título va a esa TV; envía la versión con **audio AAC** convertida
+  por Real-Debrid para que suene (el Chromecast no decodifica Dolby/DTS).
 - Buscador con **dos motores**: Torrentio (banderas de idioma) y apibay/TPB, con
   **filtros de calidad** (4K/1080p/720p/SD) y orden por idioma preferido.
-- **Real-Debrid**: ver por streaming y descargar a disco; sus botones salen
-  primero en las fuentes y «Ver RD» abre el reproductor al momento mostrando
-  el progreso de preparación.
 - **Perfiles** (crear/editar/borrar) con **modo infantil** (solo catálogos
-  familiares), sincronizados con la app del PC.
-- Descarga en segundo plano con servicio en primer plano y **auto-actualización**.
+  familiares), sincronizados con tu cuenta de Google.
+- 🔔 Avisos de episodios nuevos de tus series favoritas y auto-actualización.
+
+## Nada en segundo plano
+
+Al no haber motor de torrents, la app **no tiene servicio en primer plano, ni
+`WAKE_LOCK`, ni notificación permanente**. Cuando la cierras, se cierra: cero
+CPU y cero batería. Las descargas siguen porque las lleva el sistema, no la app.
+
+Permisos que pide: `INTERNET`, `ACCESS_NETWORK_STATE`, `POST_NOTIFICATIONS`
+(progreso de las descargas) y `REQUEST_INSTALL_PACKAGES` (auto-actualización).
+
+## Android TV
+
+El manifiesto ya declara `LEANBACK_LAUNCHER`, banner y `leanback`/`touchscreen`
+como no obligatorios, así que **el mismo APK se instala en una Android TV o
+Google TV y aparece en su launcher**. Reproduciendo en la propia TV no hace
+falta castear nada, y ExoPlayer se encarga de los MKV con DTS/AC3 que un
+Chromecast no acepta.
+
+## Emitir a Chromecast (al estilo de HBO)
+
+El botón de emitir está en la **barra superior**, en todas las pestañas: eliges
+la TV **antes** de abrir nada y desde ese momento cada título que pulsas se
+manda a esa TV, pudiendo **cambiar de película sin reconectar**. Hay una barra
+"emitiendo" y un **mando** propio (play/pausa, ±10 s, barra de progreso, parar,
+desconectar), y el "continuar viendo" se guarda igual que en el móvil.
+
+**El sonido**: el receptor de Google Cast solo decodifica AAC/MP3/Opus/Vorbis/
+FLAC, y casi todas las releases traen **Dolby AC3/EAC3 o DTS** → se ve la imagen
+pero no se oye nada. Por eso la app no envía el archivo original si puede
+evitarlo: pide a Real-Debrid su versión **transcodificada a H.264 + AAC** y va
+probando en cadena, pasando al siguiente candidato si la TV falla:
+
+1. **HLS de Real-Debrid** (m3u8, H.264 + AAC) — se comprueba por HTTP antes de enviarlo
+2. **MP4 convertido por RD** (audio AAC)
+3. **WebM convertido por RD** (audio AAC)
+4. Archivo original anunciado como `video/mp4` (el receptor detecta el formato)
+5. Archivo original con su tipo exacto
+
+Si RD no ofrece versión convertida, se avisa en pantalla de que puede quedarse
+sin sonido y de que conviene elegir otra fuente. El vídeo lo descarga la TV
+directamente de RD: no pasa por el móvil.
+
+> Detalle de implementación: se usa el **Default Media Receiver** `CC1AD845`
+> (ver `CastOptionsProvider.kt`). El receptor con DRM que trae media3 por defecto
+> rechaza los archivos cuyo tipo no reconoce y la TV se queda en negro.
+
+## Configuración
+
+1. **Ajustes → Real-Debrid** → pega tu token de <https://real-debrid.com/apitoken>.
+   Si entras con Google, el token se sincroniza con tus otros dispositivos.
+2. **Ajustes → Cuenta → Entrar con Google** (opcional) para perfiles, favoritos
+   e historial compartidos.
 
 ## Sincronización con tu cuenta de Google
 
-La app usa **la misma cuenta** que la app del PC y sincroniza perfiles,
-favoritos, historial y el token de Real-Debrid vía Firebase (Auth + Firestore).
-Google exige registrar la **huella SHA-1** de la app en tu proyecto de Firebase:
+La app sincroniza perfiles, favoritos, historial y el token de Real-Debrid vía
+Firebase (Auth + Firestore). Google exige registrar la **huella SHA-1** de la
+app en tu proyecto de Firebase:
 
 1. Firebase Console → tu proyecto → **Configuración → Tus apps → Añadir app →
    Android**. Nombre de paquete: `com.carbaxo.torrentbox`.
 2. En **SHA-1** pega:
    `8C:82:4C:DD:BA:A8:DE:9D:96:71:AE:00:49:70:C6:33:F1:F1:26:49`
 3. Descarga el `google-services.json` y el **ID de cliente web** (OAuth 2.0),
-   y pásamelo (o pégalo en `gradle.properties` → `GOOGLE_WEB_CLIENT_ID`).
+   y pégalo en `gradle.properties` → `GOOGLE_WEB_CLIENT_ID`.
 
 La app se firma con `torrentbox.keystore` (incluido) para que la SHA-1 sea
 siempre la misma.
@@ -52,7 +107,8 @@ No necesitas compilar nada: **GitHub Actions lo compila y lo publica**.
 2. Cuando termine (verde), descarga el APK desde:
    - la **Release** `android-latest` (`TorrentBox.apk`), o
    - los **Artifacts** de la ejecución del workflow.
-3. En el móvil: abre el APK, permite **"Instalar apps desconocidas"** e instálalo.
+3. En el móvil o la TV: abre el APK, permite **"Instalar apps desconocidas"** e
+   instálalo.
 
 ## Compilar en local (opcional, requiere Android Studio o el SDK)
 
@@ -63,8 +119,15 @@ cd android-standalone
 ```
 
 ## Notas
+
 - Requiere Android 7.0 (API 24) o superior.
-- La descarga va a la carpeta privada de la app (`Android/data/.../torrents`).
-- Formatos: mp4/webm se reproducen nativamente; mkv/avi dependen de los códecs
-  del dispositivo (ExoPlayer soporta muchos).
+- Las descargas van a la carpeta privada de la app
+  (`Android/data/com.carbaxo.torrentbox/files/Movies`).
+- Formatos: ExoPlayer reproduce mp4/webm y la mayoría de mkv/avi según los
+  códecs del dispositivo. Al emitir, el Chromecast no admite MKV ni audio
+  Dolby/DTS: la app lo resuelve enviando la versión convertida de Real-Debrid
+  (ver "Emitir a Chromecast"). Si aun así falla, reproducir en la propia
+  Android TV siempre funciona.
+- Si RD aún no tiene el torrent cacheado, lo descarga primero en sus servidores:
+  la app avisa del progreso y basta con volver a pulsar en un momento.
 - Uso legítimo: descarga solo contenido para el que tengas derechos.

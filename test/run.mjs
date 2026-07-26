@@ -11,13 +11,11 @@ import {
   createSearch, SearchError, detectLang
 } from '../lib/search.js'
 import crypto from 'node:crypto'
-import { createStore } from '../lib/store.js'
 import { createAuth, parseCookies } from '../lib/auth.js'
 import { createUserData, MAX_PROGRESS } from '../lib/userdata.js'
 import { createFirebaseVerifier } from '../lib/firebaseAuth.js'
 import { createRealDebrid } from '../lib/realdebrid.js'
 import { createRdDownloads, sanitizeFilename } from '../lib/rddownloads.js'
-import { parsePlaylist, extractContentId } from '../lib/acestream.js'
 import { Readable } from 'node:stream'
 
 let passed = 0
@@ -184,23 +182,6 @@ t('TIMEOUT', async () => {
   await assert.rejects(() => search('slow', 'movie', 'torrentio'), (e) => e.code === 'TIMEOUT')
 })
 
-console.log('store (persistencia + propietarios)')
-t('owners: add/remove/isOwner', () => {
-  const s = createStore(path.join(tmp(), 'torrents.json'))
-  s.add({ infoHash: 'x', magnetURI: 'm', owners: ['u1'] })
-  assert.ok(s.isOwner('x', 'u1'))
-  s.addOwner('x', 'u2')
-  assert.equal(s.getOwners('x').length, 2)
-  assert.equal(s.removeOwner('x', 'u1'), 1)
-  assert.ok(!s.isOwner('x', 'u1'))
-})
-t('persiste y recarga', () => {
-  const dir = tmp(); const file = path.join(dir, 'torrents.json')
-  const s1 = createStore(file); s1.add({ infoHash: 'z', owners: ['u'] }); s1.flush()
-  const s2 = createStore(file)
-  assert.equal(s2.all()[0].infoHash, 'z')
-})
-
 console.log('userdata (perfiles + favoritos + progreso + ajustes)')
 const P = 'default'
 t('perfiles: por defecto, crear, editar, eliminar', () => {
@@ -247,28 +228,42 @@ t('favoritos: add/dedupe/remove y saneado', () => {
   assert.ok(u.removeFavorite('u1', P, 'tmdb:1'))
   assert.equal(u.getFavorites('u1', P).length, 0)
 })
-t('progreso: watched al 95%, permanente y visible entre perfiles', () => {
+t('progreso: watched al 95%, permanente y clave por título', () => {
   const u = createUserData(path.join(tmp(), 'userdata.json'))
   assert.equal(u.setProgress('u1', P, {}), null)
-  assert.equal(u.setProgress('u1', P, { infoHash: 'h', fileIndex: -1, position: 10 }), null)
-  const p1 = u.setProgress('u1', P, { infoHash: 'h', fileIndex: 0, name: 'peli.mkv', position: 600, duration: 6000, titleId: 'tmdb:7' })
+  assert.equal(u.setProgress('u1', P, { tmdbId: 0, position: 10 }), null)
+  const p1 = u.setProgress('u1', P, { tmdbId: 7, type: 'movie', name: 'Inception', poster: '/p.jpg', position: 600, duration: 6000 })
   assert.equal(p1.watched, false)
-  assert.equal(p1.titleId, 'tmdb:7')
-  const p2 = u.setProgress('u1', P, { infoHash: 'h', fileIndex: 0, position: 5800, duration: 6000 })
+  assert.equal(p1.key, 'movie:7')
+  assert.equal(p1.titleId, 'movie:7')
+  assert.equal(p1.poster, '/p.jpg')
+  const p2 = u.setProgress('u1', P, { tmdbId: 7, type: 'movie', position: 5800, duration: 6000 })
   assert.equal(p2.watched, true)
-  assert.equal(p2.titleId, 'tmdb:7') // hereda titleId
+  assert.equal(p2.name, 'Inception') // hereda nombre y póster
   // Rebobinar no des-marca lo visto
-  const p3 = u.setProgress('u1', P, { infoHash: 'h', fileIndex: 0, position: 100, duration: 6000 })
+  const p3 = u.setProgress('u1', P, { tmdbId: 7, type: 'movie', position: 100, duration: 6000 })
   assert.equal(p3.watched, true)
-  assert.ok(u.isWatchedByAnyProfile('u1', 'h', 0)) // para limpiar el buffer
-  assert.ok(!u.isWatchedByAnyProfile('u1', 'h', 1))
-  assert.ok(u.removeProgress('u1', P, 'h:0'))
+  assert.ok(u.isWatchedTitle('u1', P, 'movie', 7))
+  assert.ok(!u.isWatchedTitle('u1', P, 'movie', 8))
+  assert.ok(u.removeProgress('u1', P, 'movie:7'))
   assert.equal(u.getProgress('u1', P).length, 0)
+})
+t('progreso: clave de serie con temporada y episodio', () => {
+  const u = createUserData(path.join(tmp(), 'userdata.json'))
+  const s = u.setProgress('u1', P, { tmdbId: 42, type: 'series', season: 2, episode: 5, position: 100, duration: 1000 })
+  assert.equal(s.key, 'series:42:2:5')
+  assert.equal(s.titleId, 'series:42') // el título, no el episodio
+  assert.equal(s.season, 2)
+  assert.equal(s.episode, 5)
+  // Sin episodio explícito cae en el 1 (temporada completa)
+  assert.equal(u.setProgress('u1', P, { tmdbId: 42, type: 'series', season: 3, position: 10, duration: 100 }).key, 'series:42:3:1')
+  // Una serie sin temporada se trata como película (clave de título)
+  assert.equal(u.setProgress('u1', P, { tmdbId: 42, type: 'series', position: 10, duration: 100 }).key, 'movie:42')
 })
 t('progreso: poda las entradas más antiguas', () => {
   const u = createUserData(path.join(tmp(), 'userdata.json'))
-  for (let i = 0; i <= MAX_PROGRESS + 10; i++) {
-    u.setProgress('u1', P, { infoHash: 'h' + i, fileIndex: 0, position: 100, duration: 1000 })
+  for (let i = 1; i <= MAX_PROGRESS + 10; i++) {
+    u.setProgress('u1', P, { tmdbId: i, type: 'movie', position: 100, duration: 1000 })
   }
   assert.equal(u.getProgress('u1', P).length, MAX_PROGRESS)
 })
@@ -294,12 +289,12 @@ t('persiste y recarga', () => {
   const file = path.join(tmp(), 'userdata.json')
   const u1 = createUserData(file)
   u1.addFavorite('u1', P, { id: 'tmdb:9', title: 'Otra' })
-  u1.setProgress('u1', P, { infoHash: 'h', fileIndex: 1, position: 50, duration: 100 })
+  u1.setProgress('u1', P, { tmdbId: 9, type: 'movie', position: 50, duration: 100 })
   u1.setAccount('u1', { realDebridToken: 'tok' })
   u1.flush()
   const u2 = createUserData(file)
   assert.equal(u2.getFavorites('u1', P)[0].id, 'tmdb:9')
-  assert.equal(u2.getProgressFor('u1', P, 'h', 1).position, 50)
+  assert.equal(u2.getProgressFor('u1', P, 'movie:9').position, 50)
   assert.equal(u2.getAccount('u1').realDebridToken, 'tok')
 })
 
@@ -469,23 +464,6 @@ t('reanuda una descarga interrumpida con Range', async () => {
   assert.equal(rdd.get('r1', 'u1').status, 'done')
   assert.equal(fs.readFileSync(dest, 'utf8'), content)
   assert.ok(ranges.includes('bytes=4-'))
-})
-
-console.log('acestream (TV)')
-t('extractContentId acepta acestream:// y hash suelto', () => {
-  const h = 'a'.repeat(40)
-  assert.equal(extractContentId('acestream://' + h), h)
-  assert.equal(extractContentId(h.toUpperCase()), h)
-  assert.equal(extractContentId('sin hash'), null)
-})
-t('parsePlaylist: categoría ES, país y contentId', () => {
-  const h = 'b'.repeat(40)
-  const m3u = `#EXTINF:-1 group-title="sport" tvg-name="DAZN España 🇪🇸",DAZN\nacestream://${h}\n`
-  const ch = parsePlaylist(m3u)
-  assert.equal(ch.length, 1)
-  assert.equal(ch[0].contentId, h)
-  assert.equal(ch[0].category, '⚽ Deportes')
-  assert.equal(ch[0].country, '🇪🇸 España')
 })
 
 Promise.allSettled(pending).then(() => {

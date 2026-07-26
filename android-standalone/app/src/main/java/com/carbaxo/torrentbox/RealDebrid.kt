@@ -33,30 +33,47 @@ object RealDebrid {
 
     fun downloadIdFor(url: String): String? = idsByUrl[url]
 
+    /** Una versión transcodificada por Real-Debrid (siempre H.264 + AAC). */
+    data class Transcoded(val url: String, val kind: String)
+
     /**
-     * Enlace HLS transcodificado por RD (audio AAC) para una URL directa ya
-     * generada con streamMagnet. Un Chromecast no decodifica el audio
-     * Dolby/DTS de muchos torrents; la versión HLS de RD sí suena.
-     * onDone(m3u8) con null si no hay transcodificación disponible.
+     * Versiones transcodificadas de un enlace ya generado con streamMagnet.
+     *
+     * Es la pieza clave para emitir a un Chromecast: la mayoría de releases
+     * llevan audio Dolby (AC3/EAC3) o DTS, que el receptor de Google Cast NO
+     * decodifica —se ve la imagen pero no se oye nada—. Real-Debrid reconvierte
+     * el archivo en sus servidores a H.264 + AAC, que sí suena.
+     *
+     * Devuelve las variantes en orden de preferencia para Cast:
+     *   hls (m3u8) -> liveMP4 -> h264WebM
+     * y, si no hay ninguna, el motivo para poder explicarlo en pantalla.
      */
-    fun transcodeUrl(url: String, onDone: (String?) -> Unit) {
-        val id = idsByUrl[url] ?: return onDone(null)
+    fun transcodeVariants(url: String, onDone: (List<Transcoded>, String?) -> Unit) {
+        val id = idsByUrl[url] ?: return onDone(emptyList(), "el enlace no viene de Real-Debrid")
         io.submit {
             try {
                 val t = rd("GET", "/streaming/transcode/$id")
-                val apple = t.optJSONObject("apple")
-                var best = apple?.optString("full", "") ?: ""
-                if (best.isBlank() && apple != null) {
-                    for (k in apple.keys()) {
-                        val v = apple.optString(k, "")
-                        if (v.isNotBlank()) { best = v; break }
-                    }
-                }
-                onDone(best.ifBlank { null })
-            } catch (_: Throwable) {
-                onDone(null)
+                val out = ArrayList<Transcoded>()
+                // "apple" = HLS; el resto son streams progresivos ya convertidos
+                pickBest(t.optJSONObject("apple"))?.let { out.add(Transcoded(it, "hls")) }
+                pickBest(t.optJSONObject("liveMP4"))?.let { out.add(Transcoded(it, "mp4")) }
+                pickBest(t.optJSONObject("h264WebM"))?.let { out.add(Transcoded(it, "webm")) }
+                onDone(out, if (out.isEmpty()) "Real-Debrid no ofrece versión convertida de este archivo" else null)
+            } catch (e: Throwable) {
+                onDone(emptyList(), e.message ?: "Real-Debrid no pudo convertir el archivo")
             }
         }
+    }
+
+    /** De un bloque de calidades {full, 1080p, 720p…} coge la mejor disponible. */
+    private fun pickBest(o: JSONObject?): String? {
+        if (o == null) return null
+        o.optString("full", "").takeIf { it.isNotBlank() }?.let { return it }
+        for (k in o.keys()) {
+            val v = o.optString(k, "")
+            if (v.startsWith("http")) return v
+        }
+        return null
     }
 
     val configured: Boolean get() = token.isNotBlank()

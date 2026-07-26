@@ -1,7 +1,7 @@
 {
   "name": "torrent-client-viewer",
   "version": "1.0.0",
-  "description": "Descarga torrents por magnet o archivo .torrent y reproduce el vídeo mientras se descarga",
+  "description": "Busca películas y series y reprodúcelas por streaming directo con Real-Debrid (sin motor BitTorrent)",
   "author": "carbaxo",
   "type": "module",
   "main": "electron/main.js",
@@ -9,6 +9,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "test": "node test/run.mjs",
+    "test:rules": "firebase emulators:exec --only firestore \"node test/rules.mjs\"",
     "electron": "electron .",
     "dist": "electron-builder --win",
     "dist:msi": "electron-builder --win msi",
@@ -19,13 +20,14 @@
   },
   "dependencies": {
     "cors": "^2.8.6",
-    "express": "^4.19.2",
-    "multer": "^1.4.5-lts.1",
-    "webtorrent": "^1.9.7"
+    "express": "^4.19.2"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
     "electron": "^31.0.0",
-    "electron-builder": "^24.13.3"
+    "electron-builder": "^24.13.3",
+    "firebase": "^11.10.0",
+    "firebase-tools": "^14.27.0"
   },
   "build": {
     "appId": "com.carbaxo.torrentviewer",

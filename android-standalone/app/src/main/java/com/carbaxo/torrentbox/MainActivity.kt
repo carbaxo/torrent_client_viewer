@@ -38,9 +38,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.common.util.UnstableApi
 import coil.compose.AsyncImage
-import java.io.File
 
 private val mainHandler = Handler(Looper.getMainLooper())
 private fun onMain(block: () -> Unit) = mainHandler.post(block)
@@ -51,42 +49,18 @@ private val Bg = Color(0xFF0C0B11)
 private val Surface1 = Color(0xFF15141D)
 private val Muted = Color(0xFF8F8BA1)
 
-@UnstableApi
+// AppCompatActivity: el diálogo "emitir a…" de Chromecast lo exige
 class MainActivity : AppCompatActivity() {
-    private lateinit var saveRoot: File
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        saveRoot = File(getExternalFilesDir(null) ?: filesDir, "torrents").apply { mkdirs() }
 
         Prefs.init(this)
         WatchStore.init(this)
-        TorrentEngine.start()
-        TorrentEngine.setLimits(Prefs.downLimitKB.value, Prefs.upLimitKB.value)
-        // Reanuda las descargas permanentes de sesiones anteriores (libtorrent
-        // verifica en disco lo ya bajado). El buffer no se restaura (temporal).
-        Thread {
-            runCatching {
-                for ((magnet, dir) in Prefs.savedTorrents()) {
-                    TorrentEngine.addMagnet(magnet, File(dir)) { _, _ -> }
-                }
-            }
-        }.start()
-        DownloadService.start(this)
-        StreamServer.ensureStarted()
         RealDebrid.init(this)
         // Chromecast: sesión global, se elige la TV antes de abrir nada
         CastManager.init(this)
         Update.check()
-        // Limpia el buffer de la sesión anterior (lo visto ya no sirve al reiniciar)
-        Thread {
-            runCatching {
-                if (Prefs.autoCleanBuffer.value) {
-                    val b = Prefs.bufferDirFile(); val dl = Prefs.downloadDirFile()
-                    if (b.absolutePath != dl.absolutePath) b.listFiles()?.forEach { it.deleteRecursively() }
-                }
-            }
-        }.start()
         // El token de Real-Debrid guardado en la nube (cuenta) se adopta aquí
         Sync.onRdToken = { t -> RealDebrid.adoptToken(t) }
         Sync.init(this)
@@ -102,26 +76,14 @@ class MainActivity : AppCompatActivity() {
             ) {
                 Surface(Modifier.fillMaxSize(), color = Bg) {
                     AppScreen(
-                        saveRoot = saveRoot,
-                        initialMagnet = magnetFromIntent(intent),
-                        onPlay = { infoHash, c -> bringToFront(); startActivity(playerIntent(c).putExtra("infoHash", infoHash)) },
-                        onPlayUrl = { url, c -> bringToFront(); startActivity(playerIntent(c).putExtra("url", url)) },
-                        // "Ver RD": abre el reproductor YA; el enlace se resuelve allí con estado en pantalla
-                        onPlayRd = { magnet, c -> bringToFront(); startActivity(playerIntent(c).putExtra("rdMagnet", magnet)) }
+                        onPlayUrl = { url, c -> startActivity(playerIntent(c).putExtra("url", url)) },
+                        // "Ver" con TV conectada: el reproductor no se abre, se
+                        // resuelve el enlace y se manda a la TV desde el momento
+                        // en que se pulsa (con su estado en pantalla).
+                        onCastMagnet = { magnet, c -> CastManager.castMagnet(magnet, c) }
                     )
                 }
             }
-        }
-    }
-
-    /**
-     * Vuelve a traer NUESTRA app al frente si otra se quedó por delante
-     * al empezar la reproducción.
-     */
-    private fun bringToFront() {
-        runCatching {
-            val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
-            am.appTasks.firstOrNull()?.moveToFront()
         }
     }
 
@@ -129,11 +91,6 @@ class MainActivity : AppCompatActivity() {
         putExtra("tmdbId", c.tmdbId); putExtra("type", c.type)
         putExtra("season", c.season); putExtra("episode", c.episode)
         putExtra("name", c.name); putExtra("poster", c.poster); putExtra("resumeMs", c.resumeMs)
-    }
-
-    private fun magnetFromIntent(i: Intent?): String? {
-        val data = i?.data?.toString()
-        return if (data != null && data.startsWith("magnet:")) data else null
     }
 }
 
@@ -153,77 +110,44 @@ private enum class Tab(val label: String, val icon: androidx.compose.ui.graphics
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) -> Unit, onPlayUrl: (String, PlayCtx) -> Unit, onPlayRd: (String, PlayCtx) -> Unit) {
+fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayCtx) -> Unit) {
     var tab by remember { mutableStateOf(Tab.DISCOVER) }
     var detail by remember { mutableStateOf<Tmdb.Title?>(null) }
     var catalogType by remember { mutableStateOf("movie") }
-    val downloads = remember { mutableStateListOf<TorrentEngine.Snapshot>() }
-    val rdDownloads = remember { mutableStateListOf<RdDownloads.Snap>() }
-    var pendingPlay by remember { mutableStateOf<Pair<String, PlayCtx>?>(null) }
     var showCastScreen by remember { mutableStateOf(false) }
+    val rdDownloads = remember { mutableStateListOf<RdDownloads.Snap>() }
     val ctx = LocalContext.current
 
-    // Modo infantil: el perfil activo marca kids. Oculta Buscar (búsqueda
-    // libre); los catálogos se filtran a géneros familiares.
+    // Si Play Services no estaba listo al arrancar, se reintenta al pintar
+    LaunchedEffect(Unit) { CastManager.init(ctx) }
+
+    // Con TV conectada todo va a la TV; si no, al reproductor del móvil
+    fun play(url: String, c: PlayCtx) {
+        if (CastManager.connected) { CastManager.castUrl(url, c); showCastScreen = true; detail = null }
+        else onPlayUrl(url, c)
+    }
+    fun cast(magnet: String, c: PlayCtx) {
+        onCastMagnet(magnet, c); showCastScreen = true; detail = null
+    }
+
+    // Modo infantil: el perfil activo marca kids. Oculta Buscar (búsqueda libre);
+    // los catálogos se filtran a géneros familiares.
     val kids = Sync.activeProfile?.kids == true
     val visibleTabs = if (kids) listOf(Tab.DISCOVER, Tab.DOWNLOADS, Tab.SETTINGS) else Tab.values().toList()
     LaunchedEffect(kids) { if (kids && tab !in visibleTabs) tab = Tab.DISCOVER }
 
-    // Refresco de descargas (torrent + Real-Debrid) + auto-reproducción.
-    // El trabajo bloqueante (JNI/DownloadManager) va en IO; el estado se
-    // actualiza al volver al hilo principal (fin de withContext).
+    // Refresco del progreso de las descargas del DownloadManager. La consulta
+    // es bloqueante, así que va en IO; el estado se actualiza al volver al hilo
+    // principal (fin de withContext).
     LaunchedEffect(Unit) {
         while (true) {
-            val snaps = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { TorrentEngine.snapshots() }
             val rd = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 try { RdDownloads.snapshots(ctx) } catch (_: Throwable) { emptyList() }
             }
-            downloads.clear(); downloads.addAll(snaps)
             rdDownloads.clear(); rdDownloads.addAll(rd)
-            val p = pendingPlay
-            if (p != null) {
-                val s = snaps.find { it.infoHash == p.first && it.hasVideo }
-                if (s != null) { pendingPlay = null; onPlay(p.first, p.second) }
-            }
             kotlinx.coroutines.delay(1000)
         }
     }
-
-    // buffer=true (Ver) descarga a la carpeta temporal; false (Descargar) a la permanente
-    fun addMagnet(m: String, autoplay: Boolean, playCtx: PlayCtx = PlayCtx()) {
-        if (m.isBlank()) return
-        val dir = if (autoplay) Prefs.bufferDirFile() else Prefs.downloadDirFile()
-        // Solo persistimos las descargas permanentes (para reanudarlas al reabrir)
-        if (!autoplay) Prefs.addSavedTorrent(m.trim(), dir.absolutePath)
-        TorrentEngine.addMagnet(m.trim(), dir) { d, _ ->
-            if (autoplay && d != null) onMain { pendingPlay = d.infoHash to playCtx }
-        }
-    }
-
-    // Con una TV conectada, "Ver" manda el título a la TV (como HBO) en lugar
-    // de abrir el reproductor del móvil; así se puede cambiar de película sin
-    // volver a elegir dispositivo.
-    fun watch(magnet: String, c: PlayCtx) {
-        if (CastManager.connected) {
-            CastManager.castMagnet(magnet, c, preferRd = false); showCastScreen = true; detail = null
-        } else { addMagnet(magnet, true, c); tab = Tab.DOWNLOADS; detail = null }
-    }
-    fun watchRd(magnet: String, c: PlayCtx) {
-        if (CastManager.connected) {
-            CastManager.castMagnet(magnet, c, preferRd = true); showCastScreen = true; detail = null
-        } else onPlayRd(magnet, c)
-    }
-    fun playUrl(url: String, c: PlayCtx) {
-        if (CastManager.connected) {
-            CastManager.castUrl(url, c); showCastScreen = true; detail = null
-        } else onPlayUrl(url, c)
-    }
-    fun playHash(h: String, c: PlayCtx) {
-        if (CastManager.connected) { CastManager.castInfoHash(h, c); showCastScreen = true }
-        else onPlay(h, c)
-    }
-
-    LaunchedEffect(initialMagnet) { if (!initialMagnet.isNullOrBlank()) addMagnet(initialMagnet, false) }
 
     // Avisos de episodios nuevos cuando llegan los favoritos de la nube
     LaunchedEffect(Sync.favorites.size) { if (Sync.favorites.isNotEmpty()) EpisodeAlerts.check(ctx) }
@@ -240,10 +164,8 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) 
         DetailScreen(
             title = d,
             onBack = { detail = null },
-            onWatch = { magnet, c -> watch(magnet, c) },
-            onDownload = { magnet -> addMagnet(magnet, false); tab = Tab.DOWNLOADS; detail = null },
-            onPlayUrl = { url, c -> playUrl(url, c) },
-            onPlayRd = { magnet, c -> watchRd(magnet, c) },
+            onPlayUrl = { url, c -> play(url, c) },
+            onCastMagnet = { magnet, c -> cast(magnet, c) },
             onOpenDownloads = { tab = Tab.DOWNLOADS; detail = null }
         )
         return
@@ -318,7 +240,7 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) 
             when (tab) {
                 Tab.DISCOVER -> DiscoverScreen(catalogType, { catalogType = it }, kids = kids, onOpen = { detail = it })
                 Tab.SEARCH -> if (kids) DiscoverScreen(catalogType, { catalogType = it }, kids = true, onOpen = { detail = it }) else SearchScreen(onOpen = { detail = it })
-                Tab.DOWNLOADS -> DownloadsScreen(downloads, rdDownloads, { h -> playHash(h, PlayCtx()) }, { u -> playUrl(u, PlayCtx()) })
+                Tab.DOWNLOADS -> DownloadsScreen(rdDownloads) { u -> play(u, PlayCtx()) }
                 Tab.SETTINGS -> SettingsScreen()
             }
         }
@@ -328,7 +250,6 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) 
 /** Botón nativo de Chromecast (abre el diálogo "emitir a…" del sistema). */
 @Composable
 fun CastIconButton() {
-    if (!CastManager.available) return
     AndroidView(
         modifier = Modifier.size(44.dp),
         factory = { c ->
@@ -345,9 +266,8 @@ fun CastIconButton() {
 }
 
 /**
- * Mando de la TV: lo que se está emitiendo, con play/pausa, saltos y barra de
- * progreso. Permite seguir navegando (botón "Volver a la app") y cambiar de
- * película sin desconectar.
+ * Mando de la TV: qué se está emitiendo, con play/pausa, saltos y barra de
+ * progreso. Se puede volver a la app y elegir otra película sin desconectar.
  */
 @Composable
 fun CastScreen(onClose: () -> Unit) {
@@ -397,7 +317,7 @@ fun CastScreen(onClose: () -> Unit) {
         CastManager.poster?.let { p ->
             AsyncImage(
                 model = p, contentDescription = null, contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(12.dp))
+                modifier = Modifier.fillMaxWidth().height(200.dp).clip(RoundedCornerShape(12.dp))
             )
         }
 
@@ -406,7 +326,8 @@ fun CastScreen(onClose: () -> Unit) {
             style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold
         )
         Text(
-            "📺 ${CastManager.deviceName ?: "TV"}",
+            "📺 ${CastManager.deviceName ?: "TV"}" +
+                if (CastManager.playingConverted) "  ·  audio convertido a AAC" else "",
             style = MaterialTheme.typography.labelMedium, color = Color(0xFF34D399)
         )
         if (CastManager.status.isNotBlank()) {
@@ -755,7 +676,6 @@ fun SearchScreen(onOpen: (Tmdb.Title) -> Unit) {
     }
 }
 
-
 @Composable
 fun SettingsScreen() {
     val ctx = LocalContext.current
@@ -872,57 +792,6 @@ fun SettingsScreen() {
             }
         }
 
-        // --- Carpetas de descarga ---
-        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Carpetas", fontWeight = FontWeight.Bold)
-                var folderStatus by remember { mutableStateOf("") }
-                // Selector de carpeta del sistema (SAF). Convertimos el árbol elegido
-                // a una ruta real; si Android no deja escribir ahí sin permisos, avisamos.
-                val pickDownload = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-                    if (uri == null) return@rememberLauncherForActivityResult
-                    runCatching { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
-                    val path = Prefs.resolveTreeUri(uri)
-                    if (path != null) { Prefs.setDownloadDir(path); folderStatus = "Descargas → ${Prefs.shortLabel(path)}" }
-                    else folderStatus = "Android no permite escribir en esa carpeta sin permisos especiales. Elige otra o usa las de la app."
-                }
-                val pickBuffer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-                    if (uri == null) return@rememberLauncherForActivityResult
-                    runCatching { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
-                    val path = Prefs.resolveTreeUri(uri)
-                    if (path != null) { Prefs.setBufferDir(path); folderStatus = "Buffer → ${Prefs.shortLabel(path)}" }
-                    else folderStatus = "Android no permite escribir en esa carpeta sin permisos especiales. Elige otra o usa las de la app."
-                }
-
-                val vols = remember { Prefs.availableVolumes() }
-                fun volLabel(i: Int) = if (i == 0) "Memoria interna (app)" else "Tarjeta SD / externa (app)"
-
-                Text("Descargas (permanente):", style = MaterialTheme.typography.labelMedium)
-                Text("Actual: ${Prefs.shortLabel(Prefs.downloadDir.value)}", style = MaterialTheme.typography.labelSmall, color = Muted)
-                vols.forEachIndexed { i, f ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = Prefs.downloadDir.value == f.absolutePath, onClick = { Prefs.setDownloadDir(f.absolutePath); folderStatus = "" })
-                        Text(volLabel(i), style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-                OutlinedButton(onClick = { pickDownload.launch(null) }) { Text("Elegir otra carpeta…") }
-
-                Spacer(Modifier.height(4.dp))
-                Text("Buffer (al pulsar “Ver”):", style = MaterialTheme.typography.labelMedium)
-                Text("Actual: ${Prefs.shortLabel(Prefs.bufferDir.value)}", style = MaterialTheme.typography.labelSmall, color = Muted)
-                vols.forEachIndexed { i, f ->
-                    val bf = File(f.parentFile, "buffer")
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = Prefs.bufferDir.value == bf.absolutePath, onClick = { Prefs.setBufferDir(bf.absolutePath); folderStatus = "" })
-                        Text(volLabel(i), style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-                OutlinedButton(onClick = { pickBuffer.launch(null) }) { Text("Elegir otra carpeta…") }
-
-                if (folderStatus.isNotBlank()) Text(folderStatus, color = Muted, style = MaterialTheme.typography.bodySmall)
-            }
-        }
-
         // --- Real-Debrid ---
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -931,7 +800,7 @@ fun SettingsScreen() {
                     Text("⚡ Conectado${RealDebrid.account?.let { " · $it" } ?: ""}", color = Color(0xFF34D399), style = MaterialTheme.typography.bodyMedium)
                     OutlinedButton(onClick = { RealDebrid.disconnect() }) { Text("Desconectar") }
                 } else {
-                    Text("Pega tu token para reproducir por streaming directo (sin descargar en el móvil). Se comparte con tu cuenta si has entrado con Google.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("⚠️ Real-Debrid es imprescindible: la app no descarga por BitTorrent, todo el vídeo llega por streaming directo desde los servidores de RD. Pega tu token para empezar. Se comparte con tu cuenta si has entrado con Google.", color = Color(0xFFFBBF24), style = MaterialTheme.typography.bodySmall)
                     OutlinedTextField(value = rdInput, onValueChange = { rdInput = it }, label = { Text("Token de Real-Debrid") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Button(onClick = {
                         rdStatus = "Validando…"
@@ -946,26 +815,6 @@ fun SettingsScreen() {
                     Text("Consíguelo en real-debrid.com/apitoken", color = Muted, style = MaterialTheme.typography.labelSmall)
                 }
                 if (rdStatus.isNotBlank()) Text(rdStatus, color = Muted, style = MaterialTheme.typography.bodySmall)
-            }
-        }
-
-        // --- Velocidad y buffer ---
-        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Velocidad y buffer", fontWeight = FontWeight.Bold)
-                var down by remember { mutableStateOf(Prefs.downLimitKB.value.takeIf { it > 0 }?.toString() ?: "") }
-                var up by remember { mutableStateOf(Prefs.upLimitKB.value.takeIf { it > 0 }?.toString() ?: "") }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = down, onValueChange = { down = it.filter { c -> c.isDigit() } },
-                        label = { Text("Bajada KB/s (vacío = ∞)") }, singleLine = true, modifier = Modifier.weight(1f))
-                    OutlinedTextField(value = up, onValueChange = { up = it.filter { c -> c.isDigit() } },
-                        label = { Text("Subida KB/s") }, singleLine = true, modifier = Modifier.weight(1f))
-                }
-                Button(onClick = { Prefs.setLimits(down.toIntOrNull() ?: 0, up.toIntOrNull() ?: 0) }) { Text("Aplicar límites") }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = Prefs.autoCleanBuffer.value, onCheckedChange = { Prefs.setAutoCleanBuffer(it) })
-                    Text("Vaciar el buffer al abrir la app", style = MaterialTheme.typography.bodySmall)
-                }
             }
         }
 
@@ -988,20 +837,15 @@ fun SettingsScreen() {
             }
         }
 
-        // --- Salir ---
+        // --- Aplicación ---
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Aplicación", fontWeight = FontWeight.Bold)
-                Button(
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF87171)),
-                    onClick = {
-                        runCatching { TorrentEngine.stop() }
-                        runCatching { StreamServer.stop() }
-                        runCatching { ctx.stopService(Intent(ctx, DownloadService::class.java)) }
-                        (ctx as? android.app.Activity)?.finishAffinity()
-                        kotlin.system.exitProcess(0)
-                    }
-                ) { Text("Salir y cerrar la app") }
+                Text(
+                    "Al salir no queda nada corriendo: la app no tiene servicio en segundo plano ni motor de torrents. " +
+                        "Las descargas las gestiona el sistema, así que siguen aunque cierres la app.",
+                    color = Muted, style = MaterialTheme.typography.bodySmall
+                )
             }
         }
         Spacer(Modifier.height(24.dp))
@@ -1016,56 +860,47 @@ private fun FlowRowSimple(content: @Composable () -> Unit) {
 }
 
 @Composable
-fun DownloadsScreen(
-    downloads: List<TorrentEngine.Snapshot>,
-    rdDownloads: List<RdDownloads.Snap>,
-    onPlay: (String) -> Unit,
-    onPlayUrl: (String) -> Unit
-) {
+fun DownloadsScreen(rdDownloads: List<RdDownloads.Snap>, onPlayUrl: (String) -> Unit) {
     val ctx = LocalContext.current
     // Separa la ACTIVIDAD (descargando) de lo que ya está LISTO PARA VER
-    val torrentsReady = downloads.filter { it.progress >= 0.999f }
-    val torrentsActive = downloads.filter { it.progress < 0.999f }
-    val rdReady = rdDownloads.filter { it.done }
-    val rdActive = rdDownloads.filter { !it.done }
-    val nothing = downloads.isEmpty() && rdDownloads.isEmpty()
+    val ready = rdDownloads.filter { it.done }
+    val active = rdDownloads.filter { !it.done }
 
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
         item {
             Text("Descargas", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
-            // Espacio libre y tamaño del buffer (se recalcula al cambiar las descargas)
+            // Espacio libre en la carpeta donde escribe el DownloadManager
             var space by remember { mutableStateOf("") }
-            LaunchedEffect(downloads.size, downloads.sumOf { (it.progress * 100).toInt() } / 25) {
+            LaunchedEffect(rdDownloads.size) {
                 space = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     runCatching {
-                        val free = Prefs.downloadDirFile().usableSpace
-                        val buf = Prefs.bufferDirFile().walkTopDown().filter { it.isFile }.sumOf { it.length() }
-                        "Libre: ${Search.humanSize(free)} · Buffer: ${Search.humanSize(buf)}"
+                        val dir = ctx.getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES) ?: ctx.filesDir
+                        "Libre: ${Search.humanSize(dir.usableSpace)}"
                     }.getOrDefault("")
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(space, style = MaterialTheme.typography.labelSmall, color = Muted, modifier = Modifier.weight(1f))
-                TextButton(onClick = {
-                    Thread { runCatching { TorrentEngine.clearDir(Prefs.bufferDirFile()) } }.start()
-                }) { Text("Vaciar buffer") }
+            Text(space, style = MaterialTheme.typography.labelSmall, color = Muted)
+            if (rdDownloads.isEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Aún no hay descargas. Abre un título, busca fuentes y pulsa ⬇ Descargar.\n" +
+                        "Las gestiona el sistema: continúan aunque cierres la app.",
+                    color = Muted, style = MaterialTheme.typography.bodySmall
+                )
             }
-            if (nothing) Text("Aún no hay descargas. Abre un título y pulsa Ver o Descargar.", color = Muted, style = MaterialTheme.typography.bodySmall)
         }
 
         // --- Listas para ver ---
-        if (torrentsReady.isNotEmpty() || rdReady.isNotEmpty()) {
+        if (ready.isNotEmpty()) {
             item { Text("▶ Listas para ver", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color(0xFF34D399), modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)) }
-            items(rdReady.size) { i -> RdDownloadCard(rdReady[i], onPlayUrl = { onPlayUrl(RdDownloads.playUri(ctx, rdReady[i].id) ?: rdReady[i].localUri ?: "") }, onRemove = { RdDownloads.remove(ctx, rdReady[i].id) }) }
-            items(torrentsReady.size) { i -> DownloadCard(torrentsReady[i], onPlay) }
+            items(ready.size) { i -> RdDownloadCard(ready[i], onPlayUrl = { onPlayUrl(RdDownloads.playUri(ctx, ready[i].id) ?: ready[i].localUri ?: "") }, onRemove = { RdDownloads.remove(ctx, ready[i].id) }) }
         }
 
         // --- Descargando (actividad) ---
-        if (torrentsActive.isNotEmpty() || rdActive.isNotEmpty()) {
+        if (active.isNotEmpty()) {
             item { Text("⏳ Descargando", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp)) }
-            items(rdActive.size) { i -> RdDownloadCard(rdActive[i], onPlayUrl = { onPlayUrl(RdDownloads.playUri(ctx, rdActive[i].id) ?: rdActive[i].localUri ?: "") }, onRemove = { RdDownloads.remove(ctx, rdActive[i].id) }) }
-            items(torrentsActive.size) { i -> DownloadCard(torrentsActive[i], onPlay) }
+            items(active.size) { i -> RdDownloadCard(active[i], onPlayUrl = { onPlayUrl(RdDownloads.playUri(ctx, active[i].id) ?: active[i].localUri ?: "") }, onRemove = { RdDownloads.remove(ctx, active[i].id) }) }
         }
     }
 }
@@ -1099,27 +934,6 @@ fun RdDownloadCard(d: RdDownloads.Snap, onPlayUrl: () -> Unit, onRemove: () -> U
     }
 }
 
-@Composable
-fun DownloadCard(d: TorrentEngine.Snapshot, onPlay: (String) -> Unit) {
-    Card(Modifier.fillMaxWidth().padding(vertical = 6.dp), colors = CardDefaults.cardColors(containerColor = Surface1)) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(d.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            LinearProgressIndicator(progress = { d.progress }, modifier = Modifier.fillMaxWidth())
-            Text(
-                "${(d.progress * 100).toInt()}%  ·  ↓ ${Search.humanSize(d.downloadRate.toLong())}/s  ·  ${d.numPeers} peers",
-                style = MaterialTheme.typography.bodySmall, color = Muted
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (d.hasVideo) Button(onClick = { onPlay(d.infoHash) }) { Text("▶ Ver") }
-                OutlinedButton(onClick = {
-                    if (d.paused) TorrentEngine.resume(d.infoHash) else TorrentEngine.pause(d.infoHash)
-                }) { Text(if (d.paused) "Reanudar" else "Pausar") }
-                OutlinedButton(onClick = { TorrentEngine.remove(d.infoHash, deleteFiles = true); Prefs.removeSavedTorrentByHash(d.infoHash) }) { Text("Borrar") }
-            }
-        }
-    }
-}
-
 // Lista de enlaces (fuentes) reutilizable: se muestra bajo un episodio, bajo
 // el botón de temporada completa, o (en películas) bajo "Buscar fuentes".
 @OptIn(ExperimentalLayoutApi::class)
@@ -1131,10 +945,8 @@ fun SourcesSection(
     title: Tmdb.Title,
     ctx: android.content.Context,
     buildCtx: () -> PlayCtx,
-    onWatch: (String, PlayCtx) -> Unit,
-    onDownload: (String) -> Unit,
     onPlayUrl: (String, PlayCtx) -> Unit,
-    onPlayRd: (String, PlayCtx) -> Unit,
+    onCastMagnet: (String, PlayCtx) -> Unit,
     onOpenDownloads: () -> Unit
 ) {
     var linksExpanded by remember { mutableStateOf(true) }
@@ -1173,34 +985,49 @@ fun SourcesSection(
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(r.name, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text("${Lang.flag(r.lang)} ${Lang.label(r.lang)}" + (if (r.quality != "Unknown") "  ·  ${r.quality}" else "") + "  ·  ▲ ${r.seeders} seeders · ${Search.humanSize(r.sizeBytes)}", style = MaterialTheme.typography.labelSmall, color = Muted)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        // Con Real-Debrid configurado sus botones van PRIMERO
-                        if (RealDebrid.configured) {
-                            Button(
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF34D399)),
-                                // Abre el reproductor YA; el enlace RD se resuelve
-                                // allí mostrando el progreso (antes el botón parecía muerto)
-                                onClick = { onPlayRd(r.magnet, buildCtx()) }
-                            ) { Text("⚡ Ver RD") }
+                    if (RealDebrid.configured) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = {
+                                if (CastManager.connected) {
+                                    // Con TV conectada va directo a la TV; el
+                                    // CastManager muestra el progreso y elige la
+                                    // versión con audio compatible.
+                                    onCastMagnet(r.magnet, buildCtx())
+                                } else {
+                                    rdStatus = "⚡ Preparando en Real-Debrid…"
+                                    RealDebrid.streamMagnet(r.magnet) { url, _, err, progress ->
+                                        onMain {
+                                            when {
+                                                url != null -> { rdStatus = ""; onPlayUrl(url, buildCtx()) }
+                                                progress != null -> rdStatus = "Real-Debrid lo está preparando en sus servidores… ${progress}%. Vuelve a pulsar en un momento."
+                                                else -> rdStatus = err ?: "Error de Real-Debrid"
+                                            }
+                                        }
+                                    }
+                                }
+                            }) { Text(if (CastManager.connected) "📺 Ver en la TV" else "▶ Ver") }
                             OutlinedButton(onClick = {
-                                rdStatus = "⚡ Preparando descarga con Real-Debrid…"
+                                rdStatus = "⚡ Preparando la descarga…"
                                 RealDebrid.streamMagnet(r.magnet) { url, fname, err, progress ->
                                     onMain {
                                         when {
                                             url != null -> {
                                                 RdDownloads.enqueue(ctx, url, fname ?: title.title)
+                                                rdStatus = ""
                                                 onOpenDownloads()
                                             }
-                                            progress != null -> rdStatus = "Real-Debrid preparando… ${progress}% (reintenta en un momento)"
+                                            progress != null -> rdStatus = "Real-Debrid lo está preparando en sus servidores… ${progress}%. Vuelve a pulsar en un momento."
                                             else -> rdStatus = err ?: "Error de Real-Debrid"
                                         }
                                     }
                                 }
-                            }) { Text("⚡ Descargar RD") }
+                            }) { Text("⬇ Descargar") }
                         }
-                        // …y después los normales (torrent en el dispositivo)
-                        Button(onClick = { onWatch(r.magnet, buildCtx()) }) { Text("▶ Ver") }
-                        OutlinedButton(onClick = { onDownload(r.magnet) }) { Text("⬇ Descargar") }
+                    } else {
+                        Text(
+                            "Conecta Real-Debrid en Ajustes para ver o descargar.",
+                            color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
+                        )
                     }
                 }
             }
@@ -1211,7 +1038,13 @@ fun SourcesSection(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String, PlayCtx) -> Unit, onDownload: (String) -> Unit, onPlayUrl: (String, PlayCtx) -> Unit, onPlayRd: (String, PlayCtx) -> Unit, onOpenDownloads: () -> Unit) {
+fun DetailScreen(
+    title: Tmdb.Title,
+    onBack: () -> Unit,
+    onPlayUrl: (String, PlayCtx) -> Unit,
+    onCastMagnet: (String, PlayCtx) -> Unit,
+    onOpenDownloads: () -> Unit
+) {
     val ctx = LocalContext.current
     var detail by remember { mutableStateOf<Tmdb.Detail?>(null) }
     var sources by remember { mutableStateOf<List<Search.Result>>(emptyList()) }
@@ -1348,7 +1181,7 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String, PlayCt
                         enabled = !loadingSources, modifier = Modifier.fillMaxWidth()
                     ) { Text("Buscar temporada $sn completa") }
                     if (expandedEpisode == 0) {
-                        SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onWatch, onDownload, onPlayUrl, onPlayRd, onOpenDownloads)
+                        SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onPlayUrl, onCastMagnet, onOpenDownloads)
                     }
                     episodes.forEach { ep ->
                         Card(
@@ -1370,7 +1203,7 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String, PlayCt
                         }
                         // Enlaces JUSTO debajo del episodio seleccionado
                         if (expandedEpisode == ep.episode) {
-                            SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onWatch, onDownload, onPlayUrl, onPlayRd, onOpenDownloads)
+                            SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onPlayUrl, onCastMagnet, onOpenDownloads)
                         }
                     }
                 }
@@ -1378,7 +1211,7 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String, PlayCt
                 Button(onClick = { expandedEpisode = -1; dt?.let { loadSources(it) } }, enabled = dt != null && !loadingSources, modifier = Modifier.fillMaxWidth()) {
                     Text(if (loadingSources) "Buscando fuentes…" else "Buscar fuentes")
                 }
-                SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onWatch, onDownload, onPlayUrl, onPlayRd, onOpenDownloads)
+                SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onPlayUrl, onCastMagnet, onOpenDownloads)
             }
             Spacer(Modifier.height(24.dp))
         }
