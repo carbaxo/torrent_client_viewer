@@ -42,11 +42,16 @@ jobs:
       - name: Rename APK
         run: cp app/build/outputs/apk/debug/app-debug.apk TorrentBox.apk
 
+      # El artefacto es solo una comodidad: si la cuenta se queda sin cuota de
+      # almacenamiento de artefactos, NO debe impedir publicar la Release (que
+      # es de donde se descarga el APK y no consume esa cuota).
       - name: Upload APK as workflow artifact
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: TorrentBox-apk
           path: android-standalone/TorrentBox.apk
+          retention-days: 7
 
       # Borra el release/tag anterior para que la FECHA en GitHub se refresque
       # (al reutilizar el mismo tag, GitHub congela la fecha de publicación).

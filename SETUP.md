@@ -26,17 +26,21 @@ Hay una plantilla lista en `.env.example`. En un hosting (Render/Fly.io) se conf
 
 ---
 
-## 2. Instalar ffmpeg (opcional pero recomendado)
+## 2. Conectar Real-Debrid (obligatorio)
 
-Necesario para **⚙ Convertir** (reproducir mkv/avi en el navegador) y para **subtítulos embebidos**.
+Este proyecto **no lleva motor BitTorrent**: todo el vídeo llega por streaming
+directo desde los servidores de Real-Debrid. Sin token no se puede ver ni
+descargar nada.
 
-```bash
-sudo apt-get install ffmpeg      # Debian/Ubuntu
-brew install ffmpeg              # macOS
-# Windows: https://ffmpeg.org/download.html
-```
+1. Copia tu token de <https://real-debrid.com/apitoken>.
+2. Arranca la app, entra con tu usuario y ve a **Ajustes → Real-Debrid**.
+3. Pega el token y pulsa **Conectar**.
 
-Si usas el `Dockerfile` incluido, **ffmpeg ya viene dentro**.
+El token es **por cuenta**: se guarda en el servidor (nunca se expone en la API)
+y, si entras con Google, se sincroniza con la app de Windows y la de Android.
+
+**No hace falta ffmpeg**: el servidor no transcodifica nada, el navegador
+reproduce la URL de RD tal cual.
 
 ---
 
@@ -61,9 +65,8 @@ La primera vez, pulsa **Crear cuenta** para registrar tu usuario. Cada usuario t
 | `OMDB_API_KEY` | *(vacío)* | API key de OMDb (buscador) |
 | `TMDB_API_KEY` | *(vacío)* | API key de TMDB (catálogos) |
 | `TMDB_REGION` | `ES` | Región para los catálogos (proveedores por país) |
-| `DOWNLOAD_DIR` | `./downloads` | Carpeta de descargas |
-| `DATA_DIR` | `./data` | Usuarios, sesiones y estado de torrents |
-| `FFMPEG_PATH` | `ffmpeg` | Ruta al binario de ffmpeg |
+| `DOWNLOAD_DIR` | `./downloads` | Carpeta donde se guardan las descargas de Real-Debrid |
+| `DATA_DIR` | `./data` | Usuarios, sesiones, perfiles, favoritos e historial |
 | `SESSION_SECRET` | *(autogenerado)* | Secreto para firmar sesiones. **Defínelo en producción** para que las sesiones sobrevivan a redeploys |
 | `ALLOW_REGISTRATION` | `true` | Pon `false` para cerrar el registro tras crear tus cuentas |
 | `SECURE_COOKIE` | `false` | `true` si sirves por HTTPS en el mismo dominio |
@@ -78,14 +81,14 @@ La primera vez, pulsa **Crear cuenta** para registrar tu usuario. Cada usuario t
 ### 5.A Backend en Render (lo más sencillo)
 1. Sube este repo a GitHub (ya está en `carbaxo/torrent_client_viewer`).
 2. En <https://render.com> → **New → Web Service** → conecta el repo.
-3. Environment: **Docker** (usará el `Dockerfile`, que incluye ffmpeg).
+3. Environment: **Docker** (usará el `Dockerfile` incluido).
 4. En **Environment Variables** añade: `OMDB_API_KEY`, `TMDB_API_KEY`, `SESSION_SECRET` (invéntate uno largo), y `ALLOWED_ORIGINS=https://carbaxo.github.io`.
 5. Deploy. Anota la URL, p.ej. `https://torrent-client-viewer.onrender.com`.
 
 > Persistencia en Render: el disco es efímero en el plan free. Para conservar datos necesitas un **Disk** (de pago) montado en `DATA_DIR` y `DOWNLOAD_DIR`.
 
 ### 5.B Backend en Fly.io (gratis CON persistencia)
-El repo **ya incluye `fly.toml`** (con volumen persistente en `/data` e imagen `Dockerfile` con ffmpeg). Solo tienes que:
+El repo **ya incluye `fly.toml`** (con volumen persistente en `/data`). Solo tienes que:
 1. Instala flyctl. Edita `fly.toml` y cambia `app` por un nombre único tuyo.
 2. Crea el volumen persistente:
    ```bash
@@ -146,8 +149,8 @@ Notas:
 - El SDK de Firebase se sirve **autoalojado** desde `public/vendor/` (la CSP
   no permite CDNs externas). La config de `config.js` no es secreta.
 - El servidor verifica criptográficamente el ID token de Firebase
-  (`lib/firebaseAuth.js`) y emite su sesión de siempre: los torrents siguen
-  siendo por usuario.
+  (`lib/firebaseAuth.js`) y emite su sesión de siempre: la biblioteca y el
+  token de Real-Debrid siguen siendo por usuario.
 - Si sirves la app desde un dominio distinto de `localhost`, añádelo en
   **Authentication → Settings → Authorized domains**.
 - Sin `TCV_FIREBASE`/`FIREBASE_PROJECT_ID`, todo funciona igual con cuentas
@@ -174,37 +177,27 @@ npm run dist:portable# solo .exe portable (sin instalar)
   `Descargas/TorrentViewer`. Se pueden cambiar en Ajustes.
 - Las API keys (OMDb/TMDB/Firebase) se leen de las variables de entorno o del
   `.env` junto al ejecutable; el token de Real-Debrid se guarda por cuenta.
-- **ffmpeg**: la transcodificación y los subtítulos embebidos requieren ffmpeg
-  en el PATH. El MSI no lo incluye; instálalo aparte o añade `ffmpeg-static`
-  al empaquetado si lo necesitas (el resto de la app funciona sin él).
+- **No necesita ffmpeg**: el vídeo llega ya listo desde Real-Debrid.
 - El icono se genera con `node build/make-icon.mjs` (edítalo para cambiarlo).
 
-## 8. App para Android (cliente del servidor)
+## 8. App para Android y Android TV (nativa)
 
-⚠️ **Importante:** el motor de torrents (WebTorrent/Node) **no se ejecuta en
-Android**. La vía realista es una app que actúe de **cliente del backend** que
-corre en tu PC (o en un servidor): el PC descarga y sirve, el móvil ve el
-catálogo, lanza descargas y reproduce en streaming. Con Real-Debrid, el vídeo
-se reproduce por streaming directo desde sus servidores.
+En [`android-standalone/`](./android-standalone) hay una app **nativa e
+independiente**: no necesita este servidor ni tu PC. Habla directamente con
+TMDB, Torrentio/apibay y la API de Real-Debrid, y sincroniza perfiles,
+favoritos, historial y el token de RD con la misma cuenta de Google.
 
-El frontend ya soporta apuntar a un backend remoto:
-1. En **Ajustes → Servidor**, o en la pantalla de acceso, indica la URL del
-   backend (p.ej. `http://192.168.1.50:3000` en tu red, o una URL pública).
-2. En el servidor, define `ALLOWED_ORIGINS` con el origen de la app para
-   permitir CORS con credenciales.
+- Reproductor **ExoPlayer** (mkv/DTS/AC3 según los códecs del dispositivo),
+  subtítulos, siguiente episodio y **Chromecast**.
+- Descargas con el **DownloadManager del sistema**: continúan aunque cierres la
+  app y quedan disponibles sin conexión.
+- **El mismo APK se instala en una Android TV o Google TV** y aparece en su
+  launcher (el manifiesto ya declara `LEANBACK_LAUNCHER`). Reproduciendo en la
+  propia TV no hace falta castear nada.
 
-Para generar el APK (requiere **JDK 17** + **Android Studio / SDK**, que no
-vienen en este repo) se incluye configuración de Capacitor:
-
-```bash
-npm install -D @capacitor/cli @capacitor/core @capacitor/android
-npx cap add android      # crea el proyecto nativo android/
-npx cap sync
-npx cap open android     # compila/firma el APK desde Android Studio
-```
-
-`capacitor.config.json` empaqueta la carpeta `public/` como app; la URL del
-backend se configura dentro de la app en el primer arranque.
+No necesitas compilar: **GitHub Actions** publica el APK en la Release
+`android-latest`. Ver [`android-standalone/README.md`](./android-standalone/README.md)
+para los detalles y la configuración de Firebase (huella SHA-1).
 
 ---
 

@@ -1,10 +1,6 @@
-# Imagen lista para desplegar (incluye ffmpeg para transcodificar/subtítulos)
+# Imagen lista para desplegar. En modo Real-Debrid el servidor no transcodifica
+# nada (el vídeo va del CDN de RD al navegador), así que no hace falta ffmpeg.
 FROM node:20-slim
-
-# ffmpeg para transcodificación en vivo y extracción de subtítulos embebidos
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends ffmpeg \
-  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

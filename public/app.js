@@ -13,7 +13,7 @@ const api = (path, opts = {}) => fetch(API_BASE + path, {
   }
 })
 
-let CONFIG = { ffmpeg: false, search: false, catalogs: false, allowRegistration: true }
+let CONFIG = { search: false, catalogs: false, allowRegistration: true }
 let CURRENT_USER = null
 let LAST_RESULTS = []
 let QUALITY_FILTER = 'all'
@@ -24,8 +24,6 @@ let pollTimer = null
 let MY = { favorites: [], progress: [], settings: {} }
 let FAV_IDS = new Set()
 let LAST_CATALOGS = []
-let LAST_TORRENTS = []
-let PROGRESS_MAP = {}
 
 // Perfiles de la cuenta y contexto de navegación
 let PROFILES = []
@@ -176,16 +174,6 @@ function fmtBytes (bytes) {
   while (n >= 1024 && i < units.length - 1) { n /= 1024; i++ }
   return `${n.toFixed(n >= 10 || i === 0 ? 0 : 1)} ${units[i]}`
 }
-const fmtSpeed = (bps) => fmtBytes(bps) + '/s'
-function fmtEta (ms) {
-  if (!isFinite(ms) || ms <= 0) return '—'
-  const s = Math.round(ms / 1000)
-  if (s < 60) return `${s}s`
-  const m = Math.floor(s / 60); const rem = s % 60
-  if (m < 60) return `${m}m ${rem}s`
-  const h = Math.floor(m / 60)
-  return `${h}h ${m % 60}m`
-}
 // Segundos -> "1:23:45" o "23:45"
 function fmtTime (s) {
   s = Math.max(0, Math.round(s || 0))
@@ -202,7 +190,7 @@ function escapeHtml (str) {
 function $ (id) { return document.getElementById(id) }
 
 // ===================== Navegación (sidebar) =====================
-const VIEW_TITLES = { discover: 'Descubrir', search: 'Buscar', tv: 'TV', favorites: 'Favoritos', downloads: 'Descargas', library: 'Actividad de descargas', add: 'Añadir', settings: 'Ajustes', detail: 'Detalle', browse: 'Explorar' }
+const VIEW_TITLES = { discover: 'Descubrir', search: 'Buscar', favorites: 'Favoritos', downloads: 'Descargas', settings: 'Ajustes', detail: 'Detalle', browse: 'Explorar' }
 let CURRENT_VIEW = 'discover'
 
 function switchView (view) {
@@ -211,7 +199,6 @@ function switchView (view) {
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('hidden', v.id !== 'view-' + view))
   $('view-title').textContent = VIEW_TITLES[view] || ''
   if (view === 'favorites') renderFavoritesView()
-  if (view === 'tv') loadTvChannels()
   window.scrollTo({ top: 0 })
 }
 document.querySelectorAll('.nav-item').forEach((b) => b.addEventListener('click', () => switchView(b.dataset.view)))
@@ -341,9 +328,11 @@ async function selectProfile (profile) {
   applySettings()
   renderMyList()
   renderFavoritesView()
-  switchView(CONFIG.catalogs ? 'discover' : (KIDS() ? 'library' : 'search'))
+  switchView(CONFIG.catalogs ? 'discover' : (KIDS() ? 'downloads' : 'search'))
   render()
-  if (!pollTimer) pollTimer = setInterval(render, 1000)
+  // Sin torrents locales lo único que cambia es el progreso de las descargas
+  // de RD, así que no hace falta refrescar cada segundo.
+  if (!pollTimer) pollTimer = setInterval(render, 2500)
   if (CONFIG.catalogs) { loadCatalogs(); loadRecommendations(); loadGenres() }
   if (!KIDS()) { loadRdStatus(); loadServerDirs() }
   renderProfilesSettings()
@@ -563,6 +552,11 @@ async function loadConfig () {
     $('catalog-panel').classList.add('hidden')
     const navDiscover = document.querySelector('.nav-item[data-view="discover"]')
     if (navDiscover) navDiscover.classList.add('hidden')
+    // Sin catálogos no se puede entrar en Descubrir, así que "continuar viendo"
+    // se muda a Descargas para no quedar inaccesible.
+    const cont = $('continue-row')
+    const dl = $('view-downloads')
+    if (cont && dl) dl.insertBefore(cont, dl.firstChild)
   }
 }
 
@@ -639,7 +633,6 @@ $('logout-btn').addEventListener('click', async () => {
   MY = { favorites: [], progress: [], settings: {} }
   FAV_IDS = new Set()
   LAST_CATALOGS = []
-  PROGRESS_MAP = {}
   lastContinueHtml = ''
   document.body.classList.remove('kids-mode')
   $('search-results').innerHTML = ''
@@ -764,7 +757,7 @@ let DETAIL = null // { tmdbId, type, title, seasons?, season? }
 
 const fmtRuntime = (min) => min >= 60 ? `${Math.floor(min / 60)}h ${min % 60}min` : `${min}min`
 
-async function openDetail (d) {
+async function openDetail (d, resumeEp) {
   const m = /^(movie|series):(\d+)$/.exec(d.wid || '')
   if (!m) {
     // Sin id de TMDB (p.ej. búsqueda manual): cae a la búsqueda clásica.
@@ -795,8 +788,16 @@ async function openDetail (d) {
     DETAIL = { ...DETAIL, ...data, title: data.title || d.title }
     SEARCH_CONTEXT = { wid: d.wid, title: DETAIL.title }
     renderDetail(DETAIL)
-    if (type === 'movie') loadDetailSources({})
-    else if (type === 'series' && DETAIL.seasons && DETAIL.seasons.length) selectSeason(DETAIL.seasons[0].season)
+    if (type === 'movie') {
+      loadDetailSources({})
+    } else if (type === 'series' && DETAIL.seasons && DETAIL.seasons.length) {
+      // Al reanudar desde "continuar viendo" abrimos su temporada y episodio
+      const wanted = resumeEp && DETAIL.seasons.some((x) => x.season === resumeEp.season)
+        ? resumeEp.season
+        : DETAIL.seasons[0].season
+      await selectSeason(wanted)
+      if (resumeEp) loadDetailSources({ season: resumeEp.season, episode: resumeEp.episode })
+    }
   } catch (err) {
     $('detail-content').innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`
   }
@@ -1217,20 +1218,16 @@ function resultCardHtml (s, i) {
         <span class="badge seeders">▲ ${s.seeders} seeders</span>
       </div>
       <div class="result-actions">
-        <button class="btn-watch" data-magnet="${escapeHtml(s.url)}">▶ Ver</button>
-        <button class="btn-dl" data-magnet="${escapeHtml(s.url)}">⬇ Descargar</button>
-        ${RD.configured ? `<button class="btn-rd" data-magnet="${escapeHtml(s.url)}">⚡ Ver RD</button>
-        <button class="btn-rd-dl" data-magnet="${escapeHtml(s.url)}">⚡ Descargar RD</button>` : ''}
+        ${RD.configured
+          ? `<button class="btn-rd" data-magnet="${escapeHtml(s.url)}">▶ Ver</button>
+        <button class="btn-rd-dl" data-magnet="${escapeHtml(s.url)}">⬇ Descargar</button>`
+          : '<span class="badge warn">Conecta Real-Debrid en Ajustes para ver o descargar</span>'}
         <button class="btn-copy" data-magnet="${escapeHtml(s.url)}" title="Copiar magnet">📋</button>
       </div>
     </div>`
 }
 
 function wireResultActions (root) {
-  root.querySelectorAll('.btn-watch').forEach((b) =>
-    b.addEventListener('click', () => watchFromSearch(b.dataset.magnet, b)))
-  root.querySelectorAll('.btn-dl').forEach((b) =>
-    b.addEventListener('click', () => addMagnetFromSearch(b.dataset.magnet, b)))
   root.querySelectorAll('.btn-rd').forEach((b) =>
     b.addEventListener('click', () => rdWatch(b.dataset.magnet, b)))
   root.querySelectorAll('.btn-rd-dl').forEach((b) =>
@@ -1246,51 +1243,20 @@ function renderResults (streams) {
   wireResultActions(searchResults)
 }
 
-// "Ver": descarga al buffer temporal y abre el reproductor en cuanto hay
-// metadatos. El torrent se borra solo cuando lo termines de ver.
-async function watchFromSearch (magnet, btn) {
-  btn.disabled = true
-  const old = btn.textContent
-  btn.textContent = 'Preparando…'
-  try {
-    const res = await api('/api/torrents', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ magnet, mode: 'buffer', titleRef: SEARCH_CONTEXT ? SEARCH_CONTEXT.wid : null })
-    })
-    const t = await res.json()
-    if (!res.ok) throw new Error(t.error || 'Error')
-    const file = await waitForVideoFile(t.infoHash, 30000)
-    btn.disabled = false
-    btn.textContent = old
-    if (!file) {
-      toast('Aún obteniendo metadatos: en cuanto esté, podrás verlo desde Biblioteca.')
-      return
-    }
-    openPlayer(t.infoHash, file, false, null, t.titleRef || (SEARCH_CONTEXT && SEARCH_CONTEXT.wid))
-    PLAYING_EPISODE = EPISODE_CTX // para ofrecer "siguiente episodio" al acabar
-  } catch (err) {
-    btn.disabled = false
-    btn.textContent = old
-    toast('No se pudo preparar la reproducción: ' + err.message, true)
+// Contexto del título en curso, para guardar el progreso por título (igual que
+// la app Android). Sale de la ficha abierta y del episodio cuyas fuentes se
+// están viendo; en una búsqueda libre sin ficha no hay tmdbId y no se guarda.
+function currentPlayCtx () {
+  if (!DETAIL || !DETAIL.tmdbId) return null
+  const ep = EPISODE_CTX
+  return {
+    tmdbId: DETAIL.tmdbId,
+    type: DETAIL.type,
+    season: ep ? ep.season : -1,
+    episode: ep ? ep.episode : -1,
+    name: DETAIL.title,
+    poster: DETAIL.poster || null
   }
-}
-
-// Espera (con reintentos) a que el torrent tenga un archivo de vídeo
-async function waitForVideoFile (infoHash, timeoutMs) {
-  const t0 = Date.now()
-  while (Date.now() - t0 < timeoutMs) {
-    try {
-      const r = await api('/api/torrents/' + infoHash)
-      if (r.ok) {
-        const t = await r.json()
-        const f = (t.files || []).find((x) => x.isVideo)
-        if (f) return f
-      }
-    } catch {}
-    await new Promise((r) => setTimeout(r, 1500))
-  }
-  return null
 }
 
 // "⚡ RD": Real-Debrid convierte el magnet en un stream HTTPS directo
@@ -1308,7 +1274,7 @@ async function rdWatch (magnet, btn) {
       toast(`Real-Debrid lo está descargando en sus servidores (${Math.round(data.progress || 0)}%). Vuelve a pulsar ⚡ en un rato.`)
       return
     }
-    openPlayerDirect(data.url, data.filename)
+    openPlayerDirect(data.url, data.filename, null, currentPlayCtx())
     PLAYING_EPISODE = EPISODE_CTX // para ofrecer "siguiente episodio" al acabar
   } catch (err) {
     toast(err.message, true)
@@ -1326,7 +1292,9 @@ async function rdDownload (magnet, btn) {
   btn.textContent = '⚡ Preparando…'
   try {
     const res = await api('/api/rd/download', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ magnet })
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ magnet, title: currentPlayCtx() })
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || 'Error con Real-Debrid')
@@ -1359,162 +1327,19 @@ async function copyMagnet (magnet, btn) {
   }
 }
 
-async function addMagnetFromSearch (magnet, btn) {
-  btn.disabled = true
-  const old = btn.textContent
-  btn.textContent = 'Añadiendo…'
-  try {
-    const res = await api('/api/torrents', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ magnet, mode: 'download', titleRef: SEARCH_CONTEXT ? SEARCH_CONTEXT.wid : null })
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || 'Error')
-    btn.textContent = '✓ En biblioteca'
-    toast(`Añadido a tu biblioteca: ${data.name || 'torrent'}`)
-    render()
-  } catch (err) {
-    btn.disabled = false; btn.textContent = old
-    toast('No se pudo añadir: ' + err.message, true)
-  }
-}
-
-// ===================== Añadir manual =====================
-const magnetForm = $('magnet-form')
-const magnetInput = $('magnet-input')
-const uploadForm = $('upload-form')
-const torrentFile = $('torrent-file')
-const fileNameLabel = $('file-name')
-const addStatusEl = $('add-status')
-
-function addStatus (msg, isError = false) {
-  addStatusEl.textContent = msg
-  addStatusEl.classList.toggle('error', isError)
-}
-
-magnetForm.addEventListener('submit', async (e) => {
-  e.preventDefault()
-  const magnet = magnetInput.value.trim()
-  if (!magnet) return
-  addStatus('Añadiendo magnet…')
-  try {
-    const res = await api('/api/torrents', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ magnet })
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || 'Error')
-    magnetInput.value = ''
-    addStatus(`Añadido: ${data.name || 'torrent'}`)
-    render()
-  } catch (err) { addStatus(err.message, true) }
-})
-
-torrentFile.addEventListener('change', () => {
-  fileNameLabel.textContent = torrentFile.files[0] ? torrentFile.files[0].name : 'Elegir archivo .torrent…'
-})
-
-uploadForm.addEventListener('submit', async (e) => {
-  e.preventDefault()
-  const f = torrentFile.files[0]
-  if (!f) { addStatus('Selecciona un archivo .torrent primero.', true); return }
-  addStatus('Subiendo .torrent…')
-  const fd = new FormData(); fd.append('torrent', f)
-  try {
-    const res = await api('/api/torrents/upload', { method: 'POST', body: fd })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || 'Error')
-    torrentFile.value = ''; fileNameLabel.textContent = 'Elegir archivo .torrent…'
-    addStatus(`Añadido: ${data.name || 'torrent'}`)
-    render()
-  } catch (err) { addStatus(err.message, true) }
-})
-
-// ===================== Acciones de torrents =====================
-async function removeTorrent (infoHash) {
-  const withFiles = confirm('¿Eliminar también los archivos del disco?\n\nAceptar = borrar archivos · Cancelar = solo quitar de mi biblioteca')
-  try { await api(`/api/torrents/${infoHash}?files=${withFiles}`, { method: 'DELETE' }); render() } catch (err) { toast('No se pudo eliminar: ' + err.message, true) }
-}
-async function togglePause (infoHash, paused) {
-  try { await api(`/api/torrents/${infoHash}/${paused ? 'resume' : 'pause'}`, { method: 'POST' }); render() } catch (err) { toast('No se pudo cambiar el estado: ' + err.message, true) }
-}
-
-// ===================== Reproductor + subtítulos =====================
+// ===================== Reproductor =====================
 const overlay = $('player-overlay')
 const player = $('player')
 const playerTitle = $('player-title')
 const playerNote = $('player-note')
 const playerSubs = $('player-subs')
 
-let PLAYING = null // { infoHash, fileIndex, name } del vídeo en curso
+// Título en curso: { tmdbId, type, season, episode, name, poster }. El progreso
+// se guarda POR TÍTULO (no por torrent), igual que la app Android.
+let PLAYING = null
 let lastProgressSave = 0
 let EPISODE_CTX = null // episodio cuyas fuentes se están viendo en la ficha
 let PLAYING_EPISODE = null // episodio que se está reproduciendo (para "siguiente")
-
-async function openPlayer (torrentHash, file, transcode, resumeAt, titleRef) {
-  playerTitle.textContent = file.name
-  playerSubs.innerHTML = ''
-  clearTracks() // limpiar tracks previos
-  PLAYING_EPISODE = null // quien conozca el episodio lo fija tras abrir
-  $('player-next').classList.add('hidden')
-
-  PLAYING = { infoHash: torrentHash, fileIndex: file.index, name: file.name, titleId: titleRef || null }
-  lastProgressSave = Date.now()
-
-  // Reanudar donde se quedó (solo en streaming directo; la transcodificación
-  // en vivo no permite saltos). Ignora posiciones triviales o ya "vistas".
-  if (resumeAt == null && !transcode) {
-    const saved = MY.progress.find((p) => p.key === `${torrentHash}:${file.index}`)
-    if (saved && !saved.watched && saved.position > 20 &&
-        (!saved.duration || saved.position / saved.duration < 0.95)) {
-      resumeAt = saved.position
-    }
-  }
-  if (resumeAt != null && !transcode) {
-    const target = resumeAt
-    player.addEventListener('loadedmetadata', function seekOnce () {
-      player.removeEventListener('loadedmetadata', seekOnce)
-      try { player.currentTime = target } catch {}
-    })
-    toast(`Reanudando en ${fmtTime(resumeAt)}`)
-  }
-
-  player.src = API_BASE + (transcode ? file.transcodeUrl : file.streamUrl)
-  overlay.classList.remove('hidden')
-
-  // Subtítulos incluidos en el torrent (ficheros .srt/.vtt)
-  const subs = file.subtitleFiles || []
-  subs.forEach((s, i) => addTrack(`/subtitle/${torrentHash}/${s.index}`, s.name, i === 0))
-
-  // Subtítulos embebidos (mkv) vía ffprobe/ffmpeg
-  if (CONFIG.ffmpeg) {
-    try {
-      const info = await (await api(`/api/torrents/${torrentHash}/${file.index}/subinfo`)).json()
-      ;(info.embedded || []).forEach((t, i) =>
-        addTrack(`/subtitle-embedded/${torrentHash}/${file.index}/${t.index}`, `${t.title} (${t.lang})`, subs.length === 0 && i === 0))
-    } catch {}
-  }
-
-  if (transcode) playerNote.textContent = 'Convirtiendo con ffmpeg (H.264/AAC). No se puede adelantar durante la conversión.'
-  else if (!file.nativePlayable) playerNote.textContent = 'Formato no nativo: si no ves imagen, usa "⚙ Convertir". El archivo se descarga igualmente.'
-  else playerNote.textContent = 'Reproduciendo mientras se descarga. Puedes adelantar.'
-
-  player.play().catch(() => {})
-}
-
-function addTrack (path, label, isDefault) {
-  const track = document.createElement('track')
-  track.kind = 'subtitles'
-  track.label = label
-  track.src = API_BASE + path
-  if (isDefault) track.default = true
-  player.appendChild(track)
-  if (isDefault) setTimeout(() => { try { if (player.textTracks[0]) player.textTracks[0].mode = 'showing' } catch {} }, 300)
-}
-
-function clearTracks () {
-  Array.from(player.querySelectorAll('track')).forEach((t) => t.remove())
-}
 
 // Guarda la posición de reproducción en el servidor (throttled vía llamador)
 function saveProgress () {
@@ -1522,7 +1347,16 @@ function saveProgress () {
   const position = player.currentTime
   if (!position || position < 5) return
   const duration = isFinite(player.duration) ? player.duration : 0
-  const body = { infoHash: PLAYING.infoHash, fileIndex: PLAYING.fileIndex, name: PLAYING.name, position, duration, titleId: PLAYING.titleId }
+  const body = {
+    tmdbId: PLAYING.tmdbId,
+    type: PLAYING.type,
+    season: PLAYING.season,
+    episode: PLAYING.episode,
+    name: PLAYING.name,
+    poster: PLAYING.poster,
+    position,
+    duration
+  }
   api('/api/me/progress', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
   }).then((r) => (r.ok ? r.json() : null)).then((d) => {
@@ -1580,28 +1414,17 @@ $('player-next').addEventListener('click', async () => {
       throw new Error('No hay fuentes para el siguiente episodio.')
     }
     const stream = sortStreamsByLang(data.streams)[0] // la mejor fuente
-    // Con Real-Debrid: streaming directo; si no, torrent local en buffer
-    if (RD.configured) {
-      const r = await api('/api/rd/stream', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ magnet: stream.url })
-      })
-      const d = await r.json()
-      if (r.ok && d.ready) {
-        openPlayerDirect(d.url, `${next.title} · T${next.season} E${next.episode}`)
-        PLAYING_EPISODE = next
-        EPISODE_CTX = next
-        return
-      }
-    }
-    const r2 = await api('/api/torrents', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ magnet: stream.url, mode: 'buffer', titleRef: `series:${next.tmdbId}` })
+    if (!RD.configured) throw new Error('Conecta Real-Debrid en Ajustes para el siguiente episodio.')
+    const r = await api('/api/rd/stream', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ magnet: stream.url })
     })
-    const t = await r2.json()
-    if (!r2.ok) throw new Error(t.error || 'No se pudo añadir el episodio.')
-    const file = await waitForVideoFile(t.infoHash, 30000)
-    if (!file) { toast('Aún obteniendo metadatos: en cuanto esté, podrás verlo desde Actividad.'); return }
-    openPlayer(t.infoHash, file, false, null, t.titleRef)
+    const d = await r.json()
+    if (!r.ok) throw new Error(d.error || 'Error de Real-Debrid')
+    if (!d.ready) throw new Error(`Real-Debrid lo está preparando (${Math.round(d.progress || 0)}%). Inténtalo en un momento.`)
+    openPlayerDirect(d.url, `${next.title} · T${next.season} E${next.episode}`, null, {
+      tmdbId: next.tmdbId, type: 'series', season: next.season, episode: next.episode,
+      name: next.title, poster: next.poster
+    })
     PLAYING_EPISODE = next
     EPISODE_CTX = next
   } catch (err) {
@@ -1610,17 +1433,46 @@ $('player-next').addEventListener('click', async () => {
   }
 })
 
-// Reproducción de una URL directa (p.ej. streaming de Real-Debrid)
-function openPlayerDirect (url, title, note) {
+// Reproducción de la URL directa de Real-Debrid. `ctx` identifica el título
+// para guardar el progreso ("continuar viendo" y "visto").
+function openPlayerDirect (url, title, note, ctx) {
   playerTitle.textContent = title || 'Vídeo'
   playerSubs.innerHTML = ''
-  clearTracks()
-  PLAYING = null // sin seguimiento de progreso: no hay torrent local
   PLAYING_EPISODE = null // quien conozca el episodio lo fija tras abrir
   $('player-next').classList.add('hidden')
+
+  PLAYING = ctx && ctx.tmdbId > 0
+    ? {
+        tmdbId: ctx.tmdbId,
+        type: ctx.type === 'series' ? 'series' : 'movie',
+        season: ctx.season > 0 ? ctx.season : -1,
+        episode: ctx.episode > 0 ? ctx.episode : -1,
+        name: ctx.name || title || '',
+        poster: ctx.poster || null
+      }
+    : null
+  lastProgressSave = Date.now()
+
+  // Reanudar donde se quedó (ignora posiciones triviales o ya "vistas")
+  if (PLAYING) {
+    const key = PLAYING.type === 'series' && PLAYING.season > 0
+      ? `series:${PLAYING.tmdbId}:${PLAYING.season}:${PLAYING.episode > 0 ? PLAYING.episode : 1}`
+      : `movie:${PLAYING.tmdbId}`
+    const saved = MY.progress.find((p) => p.key === key)
+    if (saved && !saved.watched && saved.position > 20 &&
+        (!saved.duration || saved.position / saved.duration < 0.95)) {
+      const target = saved.position
+      player.addEventListener('loadedmetadata', function seekOnce () {
+        player.removeEventListener('loadedmetadata', seekOnce)
+        try { player.currentTime = target } catch {}
+      })
+      toast(`Reanudando en ${fmtTime(target)}`)
+    }
+  }
+
   player.src = url
   overlay.classList.remove('hidden')
-  playerNote.textContent = note || 'Streaming directo desde Real-Debrid.'
+  playerNote.textContent = note || 'Streaming directo desde Real-Debrid. Puedes adelantar.'
   player.play().catch(() => {})
 }
 
@@ -1630,79 +1482,64 @@ function closePlayer () {
   overlay.classList.add('hidden')
   player.pause()
   player.removeAttribute('src')
-  clearTracks()
   player.load()
 }
 $('player-close').addEventListener('click', closePlayer)
 overlay.addEventListener('click', (e) => { if (e.target === overlay) closePlayer() })
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !overlay.classList.contains('hidden')) closePlayer() })
 
-// ===================== Render de biblioteca =====================
-const listEl = $('torrent-list')
+// ===================== Render de descargas y "continuar viendo" ==========
 const globalStatsEl = $('global-stats')
 
 function render () {
   if (!CURRENT_USER) return
   api('/api/rd/downloads').then((r) => (r.ok ? r.json() : null)).then((d) => {
-    if (d && Array.isArray(d.downloads)) { RD_DOWNLOADS = d.downloads; renderRdDownloads() }
+    if (d && Array.isArray(d.downloads)) {
+      RD_DOWNLOADS = d.downloads
+      renderRdDownloads()
+      updateGlobalStats()
+    }
   }).catch(() => {})
-  api('/api/torrents').then((r) => r.ok ? r.json() : []).then((torrents) => {
-    if (!Array.isArray(torrents)) return
-    LAST_TORRENTS = torrents
-    PROGRESS_MAP = {}
-    for (const p of MY.progress) PROGRESS_MAP[p.key] = p
-    updateGlobalStats(torrents)
-    renderContinueRow(torrents)
-    renderDownloads(torrents)
-    if (!torrents.length) { listEl.innerHTML = '<p class="empty">Aún no hay descargas activas.<br>Usa <b>Descubrir</b> o <b>Buscar</b>, y pulsa <b>Ver</b> o <b>Descargar</b> en una fuente.</p>'; return }
-    listEl.innerHTML = torrents.map(cardHtml).join('')
-    listEl.querySelectorAll('[data-remove]').forEach((b) => b.addEventListener('click', () => removeTorrent(b.dataset.remove)))
-    listEl.querySelectorAll('[data-pause]').forEach((b) => b.addEventListener('click', () => togglePause(b.dataset.pause, b.dataset.paused === 'true')))
-    listEl.querySelectorAll('[data-play]').forEach((b) => b.addEventListener('click', () => {
-      const t = torrents.find((x) => x.infoHash === b.dataset.play)
-      const file = t && t.files[Number(b.dataset.fileindex)]
-      if (file) openPlayer(t.infoHash, file, b.dataset.mode === 'transcode', null, t.titleRef)
-    }))
-  }).catch(() => {})
+  renderContinueRow()
 }
 
-function updateGlobalStats (torrents) {
-  const down = torrents.reduce((a, t) => a + t.downloadSpeed, 0)
-  const up = torrents.reduce((a, t) => a + t.uploadSpeed, 0)
-  const active = torrents.filter((t) => !t.done && !t.paused).length
-  globalStatsEl.innerHTML = torrents.length
-    ? `<span class="stat-chip">↓ <b>${fmtSpeed(down)}</b></span>
-       <span class="stat-chip">↑ ${fmtSpeed(up)}</span>
-       <span class="stat-chip">${active} activos · ${torrents.length} total</span>`
+// El backend no expone velocidad instantánea de las descargas de RD, así que
+// mostramos solo cuántas hay en curso (y no una velocidad inventada).
+function updateGlobalStats () {
+  const active = RD_DOWNLOADS.filter((d) => d.status === 'downloading' || d.status === 'starting')
+  globalStatsEl.innerHTML = RD_DOWNLOADS.length
+    ? `<span class="stat-chip">${active.length} descargando · ${RD_DOWNLOADS.length} total</span>`
     : ''
   const badge = $('nav-lib-badge')
-  badge.textContent = active
-  badge.classList.toggle('hidden', active === 0)
+  badge.textContent = active.length
+  badge.classList.toggle('hidden', active.length === 0)
 }
 
 // ---- Continuar viendo ----
+// El progreso va por TÍTULO, así que reanudar abre la ficha del título (donde
+// se eligen las fuentes) en el episodio correcto, igual que la app Android.
 let lastContinueHtml = ''
 
-function renderContinueRow (torrents) {
+function renderContinueRow () {
   const el = $('continue-row')
+  if (!el) return
   const items = MY.progress
     .filter((p) => !p.watched && p.position > 20 && (!p.duration || p.position / p.duration < 0.95))
     .slice(0, 12)
   let html = ''
   if (items.length) {
     html = '<h3 class="row-title">Continuar viendo</h3><div class="continue-list">' + items.map((p) => {
-      const t = torrents.find((x) => x.infoHash === p.infoHash)
-      const available = !!(t && t.files[p.fileIndex])
       const pct = p.duration ? Math.min(100, Math.round(p.position / p.duration * 100)) : 0
+      const ep = p.season > 0 ? ` · T${p.season} E${p.episode || 1}` : ''
       return `
-        <div class="continue-card${available ? '' : ' missing'}">
+        <div class="continue-card">
           <div class="continue-info">
-            <span class="continue-name">${escapeHtml(p.name || 'Vídeo')}</span>
-            <span class="continue-meta">${fmtTime(p.position)}${p.duration ? ` / ${fmtTime(p.duration)} · ${pct}%` : ''}${available ? '' : ' · ya no está en tu biblioteca'}</span>
+            <span class="continue-name">${escapeHtml(p.name || 'Vídeo')}${ep}</span>
+            <span class="continue-meta">${fmtTime(p.position)}${p.duration ? ` / ${fmtTime(p.duration)} · ${pct}%` : ''}</span>
             <div class="continue-bar"><div style="width:${pct}%"></div></div>
           </div>
           <div class="continue-actions">
-            <button class="btn-play" data-resume="${escapeHtml(p.key)}" ${available ? '' : 'disabled'}>▶ Reanudar</button>
+            <button class="btn-play" data-resume="${escapeHtml(p.key)}">▶ Reanudar</button>
             <button class="btn-icon danger" data-forget="${escapeHtml(p.key)}" title="Quitar de continuar viendo">✕</button>
           </div>
         </div>`
@@ -1716,12 +1553,15 @@ function renderContinueRow (torrents) {
   }
 }
 
+// Reanudar: abre la ficha del título (y su episodio) para elegir fuente. El
+// reproductor salta solo a la posición guardada al empezar.
 function resumeFromProgress (key) {
   const p = MY.progress.find((x) => x.key === key)
-  const t = p && LAST_TORRENTS.find((x) => x.infoHash === p.infoHash)
-  const file = t && t.files[p.fileIndex]
-  if (!file) { toast('Ese vídeo ya no está en tu biblioteca.', true); return }
-  openPlayer(t.infoHash, file, false, p.position, p.titleId || t.titleRef)
+  if (!p) return
+  openDetail(
+    { wid: p.titleId || `${p.type}:${p.tmdbId}`, title: p.name, type: p.type },
+    p.season > 0 ? { season: p.season, episode: p.episode || 1 } : null
+  )
 }
 
 async function forgetProgress (key) {
@@ -1730,53 +1570,6 @@ async function forgetProgress (key) {
   cloudSave()
   try { await api('/api/me/progress/' + encodeURIComponent(key), { method: 'DELETE' }) } catch {}
   render()
-}
-
-// ---- Descargas (biblioteca offline) ----
-// Muestra las descargas permanentes con vídeos ya en disco, reproducibles
-// sin conexión. Los torrents en modo buffer (temporal) no aparecen aquí.
-function renderDownloads (torrents) {
-  const el = $('downloads-list')
-  const items = torrents
-    .filter((t) => t.mode !== 'buffer')
-    .map((t) => ({ t, videos: t.files.filter((f) => f.isVideo) }))
-    .filter((x) => x.videos.length)
-  if (!items.length) {
-    el.innerHTML = '<p class="empty">No tienes descargas todavía.<br>Abre un título y pulsa <b>⬇ Descargar</b> en una fuente para guardarlo y verlo sin conexión.</p>'
-    return
-  }
-  el.innerHTML = items.map(({ t, videos }) => {
-    const filesHtml = videos.map((f) => {
-      const offline = f.progress >= 1
-      const prog = PROGRESS_MAP[`${t.infoHash}:${f.index}`]
-      const watchedTag = prog && prog.watched ? '<span class="tag watched">✓ visto</span>' : ''
-      let btns = `<button class="btn-play" data-play="${t.infoHash}" data-fileindex="${f.index}" data-mode="stream" ${offline ? '' : 'disabled'}>▶ Ver</button>`
-      if (!f.nativePlayable && CONFIG.ffmpeg) {
-        btns += `<button class="btn-play alt" data-play="${t.infoHash}" data-fileindex="${f.index}" data-mode="transcode" ${offline ? '' : 'disabled'}>⚙ Convertir</button>`
-      }
-      return `<div class="file-row">
-        <span class="fname">${escapeHtml(f.name)} ${watchedTag}
-          ${offline ? '<span class="tag offline">✓ sin conexión</span>' : `<span class="tag">${(f.progress * 100).toFixed(0)}%</span>`}</span>
-        <span class="fmeta">${fmtBytes(f.length)}</span>${btns}</div>`
-    }).join('')
-    return `
-      <div class="torrent-card">
-        <div class="torrent-head">
-          <div class="torrent-name">${escapeHtml(t.name || 'Descarga')}${t.done ? '' : ` <span class="tag">descargando ${(t.progress * 100).toFixed(0)}%</span>`}</div>
-          <div class="torrent-actions">
-            <button class="btn-icon danger" data-remove="${t.infoHash}" title="Eliminar descarga">🗑</button>
-          </div>
-        </div>
-        <div class="files">${filesHtml}</div>
-      </div>`
-  }).join('')
-
-  el.querySelectorAll('[data-remove]').forEach((b) => b.addEventListener('click', () => removeTorrent(b.dataset.remove)))
-  el.querySelectorAll('[data-play]').forEach((b) => b.addEventListener('click', () => {
-    const t = torrents.find((x) => x.infoHash === b.dataset.play)
-    const file = t && t.files[Number(b.dataset.fileindex)]
-    if (file) openPlayer(t.infoHash, file, b.dataset.mode === 'transcode', null, t.titleRef)
-  }))
 }
 
 // ---- Descargas Real-Debrid (archivos bajados a disco desde enlaces RD) ----
@@ -1816,7 +1609,7 @@ function renderRdDownloads () {
     el.innerHTML = html
     el.querySelectorAll('[data-rd-play]').forEach((b) => b.addEventListener('click', () => {
       const d = RD_DOWNLOADS.find((x) => x.id === b.dataset.rdPlay)
-      if (d) openPlayerDirect(API_BASE + '/rd-file/' + d.id, d.name)
+      if (d) openPlayerDirect(API_BASE + '/rd-file/' + d.id, d.name, 'Archivo descargado en el servidor.', d.title)
     }))
     el.querySelectorAll('[data-rd-retry]').forEach((b) => b.addEventListener('click', async () => {
       try { await api('/api/rd/downloads/' + b.dataset.rdRetry + '/retry', { method: 'POST' }); render() } catch {}
@@ -1826,45 +1619,6 @@ function renderRdDownloads () {
       try { await api('/api/rd/downloads/' + b.dataset.rdRemove + '?files=' + withFiles, { method: 'DELETE' }); render() } catch {}
     }))
   }
-}
-
-function cardHtml (t) {
-  const pct = (t.progress * 100).toFixed(1)
-  const filesHtml = t.files.map((f) => {
-    const fpct = (f.progress * 100).toFixed(0)
-    let buttons = ''
-    if (f.isVideo) {
-      buttons += `<button class="btn-play" data-play="${t.infoHash}" data-fileindex="${f.index}" data-mode="stream">▶ Ver</button>`
-      if (!f.nativePlayable && CONFIG.ffmpeg) {
-        buttons += `<button class="btn-play alt" data-play="${t.infoHash}" data-fileindex="${f.index}" data-mode="transcode">⚙ Convertir</button>`
-      }
-    }
-    const prog = PROGRESS_MAP[`${t.infoHash}:${f.index}`]
-    const subTag = f.isSubtitle ? '<span class="tag">CC</span>' : ''
-    const watchedTag = prog && prog.watched ? '<span class="tag watched">✓ visto</span>' : ''
-    return `<div class="file-row"><span class="fname">${escapeHtml(f.name)} ${subTag}${watchedTag}</span><span class="fmeta">${fmtBytes(f.length)} · ${fpct}%</span>${buttons}</div>`
-  }).join('')
-
-  return `
-    <div class="torrent-card">
-      <div class="torrent-head">
-        <div class="torrent-name">${escapeHtml(t.name || 'Obteniendo metadatos…')}${t.mode === 'buffer' ? ' <span class="tag">⏳ temporal</span>' : ''}${t.paused ? ' <span class="tag">⏸ pausa</span>' : ''}</div>
-        <div class="torrent-actions">
-          <button class="btn-icon" data-pause="${t.infoHash}" data-paused="${t.paused}" title="${t.paused ? 'Reanudar' : 'Pausar'}">${t.paused ? '▶' : '⏸'}</button>
-          <button class="btn-icon danger" data-remove="${t.infoHash}" title="Eliminar">🗑</button>
-        </div>
-      </div>
-      <div class="progress-outer"><div class="progress-inner" style="width:${pct}%"></div></div>
-      <div class="stats">
-        <span><b>${pct}%</b></span>
-        <span>${fmtBytes(t.downloaded)} / ${fmtBytes(t.length)}</span>
-        <span>↓ <b>${fmtSpeed(t.downloadSpeed)}</b></span>
-        <span>↑ ${fmtSpeed(t.uploadSpeed)}</span>
-        <span>${t.numPeers} peers</span>
-        <span>${t.done ? '✅ completo' : (t.paused ? '⏸ pausado' : 'ETA: ' + fmtEta(t.timeRemaining))}</span>
-      </div>
-      ${t.files.length ? `<div class="files">${filesHtml}</div>` : ''}
-    </div>`
 }
 
 // ===================== Ajustes =====================
@@ -1955,7 +1709,6 @@ async function loadServerDirs () {
     if (!res.ok) return
     const d = await res.json()
     $('setting-download-dir').value = d.downloadDir || ''
-    $('setting-buffer-dir').value = d.bufferDir || ''
   } catch {}
 }
 
@@ -1967,16 +1720,12 @@ $('save-dirs-btn').addEventListener('click', async () => {
     const res = await api('/api/settings/server', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        downloadDir: $('setting-download-dir').value.trim(),
-        bufferDir: $('setting-buffer-dir').value.trim()
-      })
+      body: JSON.stringify({ downloadDir: $('setting-download-dir').value.trim() })
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || 'Error')
     $('setting-download-dir').value = data.downloadDir
-    $('setting-buffer-dir').value = data.bufferDir
-    statusEl.textContent = 'Carpetas guardadas. Se aplican a los torrents nuevos.'
+    statusEl.textContent = 'Carpeta guardada. Se aplica a las descargas nuevas.'
   } catch (err) {
     statusEl.classList.add('error')
     statusEl.textContent = err.message
@@ -2039,91 +1788,6 @@ function renderRdConfig () {
     })
   }
 }
-
-// ===================== TV (AceStream) =====================
-let TV_CHANNELS = []
-let TV_CAT_FILTER = 'all'
-let tvLoaded = false
-
-async function loadTvChannels () {
-  // Estado del engine local
-  api('/api/tv/engine').then((r) => (r.ok ? r.json() : null)).then((s) => {
-    const el = $('tv-engine')
-    if (!el) return
-    el.textContent = s && s.running
-      ? `✓ AceStream Engine detectado (v${s.version || '?'}).`
-      : 'AceStream no detectado en este equipo. Instálalo desde acestream.org para reproducir.'
-  }).catch(() => {})
-  if (tvLoaded) return
-  tvLoaded = true
-  $('tv-status').textContent = 'Cargando canales…'
-  try {
-    const res = await api('/api/tv/channels')
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || 'Error')
-    TV_CHANNELS = data.channels || []
-    $('tv-status').textContent = ''
-    renderTvFilters()
-    renderTvChannels()
-  } catch (err) {
-    tvLoaded = false
-    $('tv-status').textContent = err.message
-  }
-}
-
-function renderTvFilters () {
-  const cats = [...new Set(TV_CHANNELS.map((c) => c.category))].sort()
-  const el = $('tv-filters')
-  el.innerHTML = `<button class="chip${TV_CAT_FILTER === 'all' ? ' active' : ''}" data-cat="all">Todos</button>` +
-    cats.map((c) => `<button class="chip${TV_CAT_FILTER === c ? ' active' : ''}" data-cat="${escapeHtml(c)}">${escapeHtml(c)}</button>`).join('')
-  el.querySelectorAll('.chip').forEach((b) => b.addEventListener('click', () => {
-    TV_CAT_FILTER = b.dataset.cat
-    renderTvFilters(); renderTvChannels()
-  }))
-}
-
-function renderTvChannels () {
-  const el = $('tv-list')
-  const list = (TV_CAT_FILTER === 'all' ? TV_CHANNELS : TV_CHANNELS.filter((c) => c.category === TV_CAT_FILTER)).slice(0, 300)
-  if (!list.length) { el.innerHTML = '<p class="empty">Sin canales.</p>'; return }
-  el.innerHTML = list.map((c) => `
-    <div class="torrent-card tv-channel">
-      <div class="tv-meta">
-        <div class="tv-name">${escapeHtml(c.name)}</div>
-        <div class="tv-sub">${escapeHtml(c.category)} · ${escapeHtml(c.country)}</div>
-      </div>
-      <button class="btn-watch" data-ace="${escapeHtml(c.contentId)}">▶ Abrir</button>
-      <button class="btn-copy" data-acecopy="${escapeHtml(c.contentId)}" title="Copiar enlace">📋</button>
-    </div>`).join('')
-  el.querySelectorAll('[data-ace]').forEach((b) => b.addEventListener('click', () => openAceChannel(b.dataset.ace)))
-  el.querySelectorAll('[data-acecopy]').forEach((b) => b.addEventListener('click', () => copyMagnet('acestream://' + b.dataset.acecopy, b)))
-}
-
-// Abre el canal en la app de AceStream (protocolo acestream://). En Electron,
-// el gestor de ventanas lo deriva al sistema; en navegador, el SO decide.
-function openAceChannel (contentId) {
-  window.open('acestream://' + contentId, '_blank', 'noopener')
-  toast('Abriendo en AceStream… (debe estar instalado en el equipo)')
-}
-
-$('tv-search-form').addEventListener('submit', async (e) => {
-  e.preventDefault()
-  const q = $('tv-search-input').value.trim()
-  if (!q) return
-  $('tv-status').textContent = 'Buscando…'
-  try {
-    const res = await api('/api/tv/search?q=' + encodeURIComponent(q))
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || 'Error')
-    TV_CHANNELS = data.channels || []
-    TV_CAT_FILTER = 'all'
-    $('tv-status').textContent = TV_CHANNELS.length ? '' : 'Sin resultados.'
-    renderTvFilters(); renderTvChannels()
-  } catch (err) {
-    $('tv-status').textContent = 'Error: ' + err.message
-  }
-})
-$('tv-all-btn').addEventListener('click', () => { tvLoaded = false; TV_CAT_FILTER = 'all'; loadTvChannels() })
 
 // ===================== Init =====================
 initFirebase()
