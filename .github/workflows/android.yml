@@ -5,7 +5,9 @@ name: Build Android APK
 
 on:
   push:
-    branches: [main, master, claude/torrent-downloader-streaming-cqjddi, claude/native-app-vs-webapp-8guu5l, claude/chromecast-casting-playback-vwos5t]
+    # Una sola rama publica el APK en la Release android-latest: si compilan
+    # varias, la última en terminar sobrescribe el APK de las demás.
+    branches: [main, master, claude/torrent-downloader-streaming-cqjddi]
     paths:
       - 'android-standalone/**'
       - '.github/workflows/android.yml'
