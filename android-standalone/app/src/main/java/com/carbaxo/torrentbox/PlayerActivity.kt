@@ -72,7 +72,6 @@ class PlayerActivity : AppCompatActivity() {
         enableImmersive()
 
         val directUrl = intent.getStringExtra("url")
-        val infoHash = intent.getStringExtra("infoHash")
         tmdbId = intent.getIntExtra("tmdbId", -1)
         mediaType = intent.getStringExtra("type") ?: "movie"
         season = intent.getIntExtra("season", -1)
@@ -81,11 +80,10 @@ class PlayerActivity : AppCompatActivity() {
         poster = intent.getStringExtra("poster")
         val resumeMs = intent.getLongExtra("resumeMs", 0L)
 
-        currentUrl = when {
-            !directUrl.isNullOrBlank() -> directUrl
-            infoHash != null -> { StreamServer.ensureStarted(); StreamServer.urlFor(infoHash) }
-            else -> { finish(); return }
-        }
+        // Siempre una URL directa: streaming de Real-Debrid o un fichero ya
+        // descargado por el DownloadManager.
+        if (directUrl.isNullOrBlank()) { finish(); return }
+        currentUrl = directUrl
 
         val root = FrameLayout(this)
         playerView = PlayerView(this).apply {
@@ -191,28 +189,15 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     // ------------------- Chromecast -------------------
-    /** URL que la TV pueda alcanzar: el stream local se sirve por la IP de la WiFi. */
-    private fun castableUrl(u: String): String {
-        if (!u.contains("127.0.0.1")) return u
-        return runCatching {
-            @Suppress("DEPRECATION")
-            val wm = applicationContext.getSystemService(WIFI_SERVICE) as android.net.wifi.WifiManager
-            @Suppress("DEPRECATION")
-            val ip = wm.connectionInfo.ipAddress
-            if (ip == 0) u else u.replace(
-                "127.0.0.1",
-                String.format("%d.%d.%d.%d", ip and 0xff, ip shr 8 and 0xff, ip shr 16 and 0xff, ip shr 24 and 0xff)
-            )
-        }.getOrDefault(u)
-    }
-
+    // La URL de Real-Debrid es HTTPS pública, así que la TV la descarga ella
+    // misma directamente de los servidores de RD: el vídeo no pasa por el móvil.
     private fun switchToCast() {
         val cp = castPlayer ?: return
         val local = player ?: return
         val pos = local.currentPosition
         local.playWhenReady = false
         val item = MediaItem.Builder()
-            .setUri(castableUrl(currentUrl))
+            .setUri(currentUrl)
             .setMimeType(MimeTypes.VIDEO_MP4)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(titleName.ifBlank { "TorrentBox" }).build())
             .build()
@@ -344,8 +329,13 @@ class PlayerActivity : AppCompatActivity() {
         }
     }
 
-    /** Busca fuentes del episodio y reproduce la mejor (RD si está configurado; si no, torrent). */
+    /** Busca fuentes del episodio y reproduce la mejor vía Real-Debrid. */
     private fun trySources(imdbId: String, s: Int, e: Int, onDone: (Boolean) -> Unit) {
+        if (!RealDebrid.configured) {
+            showToast("Conecta Real-Debrid en Ajustes para el siguiente episodio")
+            onDone(true) // no seguimos probando temporadas: falta la configuración
+            return
+        }
         Torrentio.streams("series", imdbId, s, e) { list, _ ->
             val sorted = Search.sortByLang(list ?: emptyList(), Prefs.languageOrder)
             val best = sorted.firstOrNull()
@@ -353,27 +343,15 @@ class PlayerActivity : AppCompatActivity() {
             mainH.post {
                 onDone(true)
                 showToast("Cargando ${best.name.take(40)}…")
-                if (RealDebrid.configured) {
-                    RealDebrid.streamMagnet(best.magnet) { url, _, err, progress ->
-                        mainH.post {
-                            when {
-                                url != null -> switchTo(url, s, e)
-                                progress != null -> showToast("Real-Debrid… ${progress}%")
-                                else -> { showToast(err ?: "Error RD, probando torrent…"); startTorrent(best.magnet, s, e) }
-                            }
+                RealDebrid.streamMagnet(best.magnet) { url, _, err, progress ->
+                    mainH.post {
+                        when {
+                            url != null -> switchTo(url, s, e)
+                            progress != null -> showToast("Real-Debrid lo está preparando… ${progress}%")
+                            else -> showToast(err ?: "Error de Real-Debrid")
                         }
                     }
-                } else startTorrent(best.magnet, s, e)
-            }
-        }
-    }
-
-    private fun startTorrent(magnet: String, s: Int, e: Int) {
-        StreamServer.ensureStarted()
-        TorrentEngine.addMagnet(magnet, Prefs.bufferDirFile()) { d, err ->
-            mainH.post {
-                if (d == null || d.videoIndex < 0) showToast(err ?: "Sin vídeo en esa fuente")
-                else switchTo(StreamServer.urlFor(d.infoHash), s, e)
+                }
             }
         }
     }

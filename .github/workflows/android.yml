@@ -5,7 +5,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [main, master, claude/torrent-downloader-streaming-cqjddi]
+    branches: [main, master, claude/torrent-downloader-streaming-cqjddi, claude/native-app-vs-webapp-8guu5l]
     paths:
       - 'android-standalone/**'
       - '.github/workflows/android.yml'
@@ -65,7 +65,8 @@ jobs:
           name: TorrentBox (Android APK)
           make_latest: true
           body: |
-            APK autónomo de TorrentBox: descarga y reproduce torrents en el propio móvil.
+            APK de TorrentBox: streaming y descargas vía Real-Debrid, en el móvil y en la Android TV.
+            Requiere una cuenta de Real-Debrid (se configura en Ajustes).
             Descarga `TorrentBox.apk`, actívalo en Ajustes → "Instalar apps desconocidas" e instálalo.
             Build ${{ github.run_number }} — commit ${{ github.sha }}
           files: android-standalone/TorrentBox.apk
