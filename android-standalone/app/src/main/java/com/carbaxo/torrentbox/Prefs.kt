@@ -1,17 +1,16 @@
 package com.carbaxo.torrentbox
 
 import android.content.Context
-import android.net.Uri
-import android.os.Environment
-import android.provider.DocumentsContract
 import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
-import java.io.File
 
 /**
- * Preferencias locales del dispositivo (no sincronizadas): orden de idiomas
- * y carpetas de descarga/buffer. El orden de idiomas también puede venir de
- * la nube (settings del perfil); aquí se guarda la copia efectiva.
+ * Preferencias locales del dispositivo: orden de idiomas preferido para ordenar
+ * las fuentes. El orden también puede venir de la nube (settings del perfil);
+ * aquí se guarda la copia efectiva.
+ *
+ * En modo Real-Debrid no hay carpetas ni límites de velocidad que configurar:
+ * el streaming va directo desde los servidores de RD y las descargas las
+ * coloca el DownloadManager del sistema en la carpeta privada de la app.
  */
 object Prefs {
     private const val FILE = "tcv_prefs"
@@ -19,13 +18,6 @@ object Prefs {
 
     // Estado observable por Compose
     val languageOrder = mutableStateListOf<String>()
-    var downloadDir = mutableStateOf<String?>(null)
-    var bufferDir = mutableStateOf<String?>(null)
-    var downLimitKB = mutableStateOf(0)      // 0 = sin límite
-    var upLimitKB = mutableStateOf(0)
-    var autoCleanBuffer = mutableStateOf(true)
-    // Canales AceStream favoritos, "contentId|nombre"
-    val aceFavs = mutableStateListOf<String>()
 
     fun init(ctx: Context) {
         appCtx = ctx.applicationContext
@@ -34,13 +26,6 @@ object Prefs {
             ?.split(",")?.map { it.trim() }?.filter { Lang.byCode(it) != null }
             ?.takeIf { it.isNotEmpty() } ?: Lang.DEFAULT_ORDER
         languageOrder.clear(); languageOrder.addAll(order)
-        downloadDir.value = sp.getString("downloadDir", null) ?: defaultDownloadDir().absolutePath
-        bufferDir.value = sp.getString("bufferDir", null) ?: defaultBufferDir().absolutePath
-        downLimitKB.value = sp.getInt("downLimitKB", 0)
-        upLimitKB.value = sp.getInt("upLimitKB", 0)
-        autoCleanBuffer.value = sp.getBoolean("autoCleanBuffer", true)
-        aceFavs.clear()
-        sp.getString("aceFavs", null)?.split("\n")?.filter { it.contains("|") }?.let { aceFavs.addAll(it) }
     }
 
     private fun sp() = appCtx.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -55,132 +40,4 @@ object Prefs {
     /** Idioma principal en formato TMDB (para catálogos y fichas). */
     fun primaryTmdbLang(): String =
         Lang.byCode(languageOrder.firstOrNull() ?: "es-ES")?.tmdb ?: "es-ES"
-
-    // --- Carpetas ---
-    // En Android moderno solo se puede escribir sin permisos en las carpetas
-    // privadas de la app en cada volumen (memoria interna y tarjeta SD).
-    fun availableVolumes(): List<File> =
-        appCtx.getExternalFilesDirs(null).filterNotNull().map { File(it, "torrents").apply { mkdirs() } }
-
-    private fun defaultDownloadDir(): File =
-        File(appCtx.getExternalFilesDir(null) ?: appCtx.filesDir, "torrents").apply { mkdirs() }
-
-    private fun defaultBufferDir(): File =
-        File(appCtx.getExternalFilesDir(null) ?: appCtx.filesDir, "buffer").apply { mkdirs() }
-
-    fun setDownloadDir(path: String) {
-        File(path).mkdirs()
-        downloadDir.value = path
-        sp().edit().putString("downloadDir", path).apply()
-    }
-
-    fun setBufferDir(path: String) {
-        File(path).mkdirs()
-        bufferDir.value = path
-        sp().edit().putString("bufferDir", path).apply()
-    }
-
-    fun setLimits(downKB: Int, upKB: Int) {
-        downLimitKB.value = downKB.coerceAtLeast(0)
-        upLimitKB.value = upKB.coerceAtLeast(0)
-        sp().edit().putInt("downLimitKB", downLimitKB.value).putInt("upLimitKB", upLimitKB.value).apply()
-        TorrentEngine.setLimits(downLimitKB.value, upLimitKB.value)
-    }
-
-    fun setAutoCleanBuffer(v: Boolean) {
-        autoCleanBuffer.value = v
-        sp().edit().putBoolean("autoCleanBuffer", v).apply()
-    }
-
-    // --- Favoritos de AceStream ---
-    fun aceFavKey(id: String, name: String) = "$id|$name"
-    fun isAceFav(id: String) = aceFavs.any { it.startsWith("$id|") }
-    fun toggleAceFav(id: String, name: String) {
-        if (isAceFav(id)) aceFavs.removeAll { it.startsWith("$id|") }
-        else aceFavs.add(0, aceFavKey(id, name))
-        sp().edit().putString("aceFavs", aceFavs.joinToString("\n")).apply()
-    }
-
-    fun downloadDirFile(): File = File(downloadDir.value ?: defaultDownloadDir().absolutePath).apply { mkdirs() }
-    fun bufferDirFile(): File = File(bufferDir.value ?: defaultBufferDir().absolutePath).apply { mkdirs() }
-
-    // --- Torrents persistentes (descargas permanentes) ---
-    // Guarda "magnet\tsaveDir" por línea para poder reanudarlos al reabrir la
-    // app (libtorrent verifica en disco lo ya descargado). El buffer NO se
-    // persiste (es temporal y se limpia al arrancar).
-    fun savedTorrents(): List<Pair<String, String>> =
-        sp().getString("savedTorrents", null)
-            ?.split("\n")?.filter { it.contains("\t") }
-            ?.map { val i = it.indexOf('\t'); it.substring(0, i) to it.substring(i + 1) }
-            ?: emptyList()
-
-    fun addSavedTorrent(magnet: String, saveDir: String) {
-        if (magnet.isBlank()) return
-        val list = savedTorrents().filterNot { it.first == magnet }.toMutableList()
-        list.add(magnet to saveDir)
-        sp().edit().putString("savedTorrents", list.joinToString("\n") { "${it.first}\t${it.second}" }).apply()
-    }
-
-    fun removeSavedTorrent(magnet: String) {
-        val list = savedTorrents().filterNot { it.first == magnet }
-        sp().edit().putString("savedTorrents", list.joinToString("\n") { "${it.first}\t${it.second}" }).apply()
-    }
-
-    /** Olvida el torrent guardado cuyo magnet contiene ese infoHash. */
-    fun removeSavedTorrentByHash(infoHash: String) {
-        if (infoHash.isBlank()) return
-        val h = infoHash.lowercase()
-        val list = savedTorrents().filterNot { it.first.lowercase().contains(h) }
-        sp().edit().putString("savedTorrents", list.joinToString("\n") { "${it.first}\t${it.second}" }).apply()
-    }
-
-    /** Etiqueta corta y legible de una ruta (para mostrar en Ajustes). */
-    fun shortLabel(path: String?): String {
-        if (path.isNullOrBlank()) return "—"
-        val root = Environment.getExternalStorageDirectory()?.absolutePath
-        return when {
-            root != null && path.startsWith(root) -> "Almacenamiento" + path.removePrefix(root)
-            path.contains("/Android/data/") -> "App" + path.substringAfter("/files")
-            else -> path
-        }
-    }
-
-    /**
-     * Convierte el árbol elegido con el selector del sistema (SAF) en una RUTA
-     * real del sistema de ficheros, que es lo único que libtorrent sabe escribir.
-     * Devuelve la ruta si es escribible, o null si el sistema no permite escribir
-     * ahí sin permisos especiales (almacenamiento aislado de Android moderno).
-     */
-    fun resolveTreeUri(uri: Uri): String? {
-        val real = treeUriToPath(uri) ?: return null
-        return if (isWritable(real)) real else null
-    }
-
-    private fun treeUriToPath(uri: Uri): String? {
-        val docId = runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull() ?: return null
-        val split = docId.split(":", limit = 2)
-        val type = split.getOrNull(0) ?: return null
-        val rel = split.getOrNull(1) ?: ""
-        if (type.equals("primary", ignoreCase = true)) {
-            val base = Environment.getExternalStorageDirectory() ?: return null
-            return File(base, rel).absolutePath
-        }
-        // Volumen extraíble (SD): derivar la raíz desde getExternalFilesDirs
-        for (f in appCtx.getExternalFilesDirs(null).filterNotNull()) {
-            val p = f.absolutePath
-            val idx = p.indexOf("/Android/data")
-            if (idx > 0) {
-                val root = p.substring(0, idx)
-                if (root.contains(type)) return File(root, rel).absolutePath
-            }
-        }
-        return null
-    }
-
-    private fun isWritable(path: String): Boolean = runCatching {
-        val dir = File(path).apply { mkdirs() }
-        if (!dir.isDirectory) return false
-        val probe = File(dir, ".tcv_write_test")
-        probe.writeText("ok"); val ok = probe.exists(); probe.delete(); ok
-    }.getOrDefault(false)
 }

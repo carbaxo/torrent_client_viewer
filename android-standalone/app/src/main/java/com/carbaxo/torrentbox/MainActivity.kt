@@ -38,7 +38,6 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
-import java.io.File
 
 private val mainHandler = Handler(Looper.getMainLooper())
 private fun onMain(block: () -> Unit) = mainHandler.post(block)
@@ -50,38 +49,14 @@ private val Surface1 = Color(0xFF15141D)
 private val Muted = Color(0xFF8F8BA1)
 
 class MainActivity : ComponentActivity() {
-    private lateinit var saveRoot: File
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        saveRoot = File(getExternalFilesDir(null) ?: filesDir, "torrents").apply { mkdirs() }
 
         Prefs.init(this)
         WatchStore.init(this)
-        TorrentEngine.start()
-        TorrentEngine.setLimits(Prefs.downLimitKB.value, Prefs.upLimitKB.value)
-        // Reanuda las descargas permanentes de sesiones anteriores (libtorrent
-        // verifica en disco lo ya bajado). El buffer no se restaura (temporal).
-        Thread {
-            runCatching {
-                for ((magnet, dir) in Prefs.savedTorrents()) {
-                    TorrentEngine.addMagnet(magnet, File(dir)) { _, _ -> }
-                }
-            }
-        }.start()
-        DownloadService.start(this)
-        StreamServer.ensureStarted()
         RealDebrid.init(this)
         Update.check()
-        // Limpia el buffer de la sesión anterior (lo visto ya no sirve al reiniciar)
-        Thread {
-            runCatching {
-                if (Prefs.autoCleanBuffer.value) {
-                    val b = Prefs.bufferDirFile(); val dl = Prefs.downloadDirFile()
-                    if (b.absolutePath != dl.absolutePath) b.listFiles()?.forEach { it.deleteRecursively() }
-                }
-            }
-        }.start()
         // El token de Real-Debrid guardado en la nube (cuenta) se adopta aquí
         Sync.onRdToken = { t -> RealDebrid.adoptToken(t) }
         Sync.init(this)
@@ -97,24 +72,10 @@ class MainActivity : ComponentActivity() {
             ) {
                 Surface(Modifier.fillMaxSize(), color = Bg) {
                     AppScreen(
-                        saveRoot = saveRoot,
-                        initialMagnet = magnetFromIntent(intent),
-                        onPlay = { infoHash, c -> bringToFront(); startActivity(playerIntent(c).putExtra("infoHash", infoHash)) },
-                        onPlayUrl = { url, c -> bringToFront(); startActivity(playerIntent(c).putExtra("url", url)) }
+                        onPlayUrl = { url, c -> startActivity(playerIntent(c).putExtra("url", url)) }
                     )
                 }
             }
-        }
-    }
-
-    /**
-     * Vuelve a traer NUESTRA app al frente si otra (p.ej. AceStream, que se
-     * abre para arrancar su engine) se quedó por delante al llegar el stream.
-     */
-    private fun bringToFront() {
-        runCatching {
-            val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
-            am.appTasks.firstOrNull()?.moveToFront()
         }
     }
 
@@ -122,11 +83,6 @@ class MainActivity : ComponentActivity() {
         putExtra("tmdbId", c.tmdbId); putExtra("type", c.type)
         putExtra("season", c.season); putExtra("episode", c.episode)
         putExtra("name", c.name); putExtra("poster", c.poster); putExtra("resumeMs", c.resumeMs)
-    }
-
-    private fun magnetFromIntent(i: Intent?): String? {
-        val data = i?.data?.toString()
-        return if (data != null && data.startsWith("magnet:")) data else null
     }
 }
 
@@ -140,60 +96,37 @@ data class PlayCtx(
 private enum class Tab(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     DISCOVER("Descubrir", Icons.Filled.Explore),
     SEARCH("Buscar", Icons.Filled.Search),
-    TV("TV", Icons.Filled.LiveTv),
     DOWNLOADS("Descargas", Icons.Filled.Download),
     SETTINGS("Ajustes", Icons.Filled.Settings)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) -> Unit, onPlayUrl: (String, PlayCtx) -> Unit) {
+fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit) {
     var tab by remember { mutableStateOf(Tab.DISCOVER) }
     var detail by remember { mutableStateOf<Tmdb.Title?>(null) }
     var catalogType by remember { mutableStateOf("movie") }
-    val downloads = remember { mutableStateListOf<TorrentEngine.Snapshot>() }
     val rdDownloads = remember { mutableStateListOf<RdDownloads.Snap>() }
-    var pendingPlay by remember { mutableStateOf<Pair<String, PlayCtx>?>(null) }
     val ctx = LocalContext.current
 
-    // Modo infantil: el perfil activo marca kids. Oculta Buscar (búsqueda libre)
-    // y TV (AceStream); los catálogos se filtran a géneros familiares.
+    // Modo infantil: el perfil activo marca kids. Oculta Buscar (búsqueda libre);
+    // los catálogos se filtran a géneros familiares.
     val kids = Sync.activeProfile?.kids == true
     val visibleTabs = if (kids) listOf(Tab.DISCOVER, Tab.DOWNLOADS, Tab.SETTINGS) else Tab.values().toList()
     LaunchedEffect(kids) { if (kids && tab !in visibleTabs) tab = Tab.DISCOVER }
 
-    // Refresco de descargas (torrent + Real-Debrid) + auto-reproducción.
-    // El trabajo bloqueante (JNI/DownloadManager) va en IO; el estado se
-    // actualiza al volver al hilo principal (fin de withContext).
+    // Refresco del progreso de las descargas del DownloadManager. La consulta
+    // es bloqueante, así que va en IO; el estado se actualiza al volver al hilo
+    // principal (fin de withContext).
     LaunchedEffect(Unit) {
         while (true) {
-            val snaps = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { TorrentEngine.snapshots() }
             val rd = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 try { RdDownloads.snapshots(ctx) } catch (_: Throwable) { emptyList() }
             }
-            downloads.clear(); downloads.addAll(snaps)
             rdDownloads.clear(); rdDownloads.addAll(rd)
-            val p = pendingPlay
-            if (p != null) {
-                val s = snaps.find { it.infoHash == p.first && it.hasVideo }
-                if (s != null) { pendingPlay = null; onPlay(p.first, p.second) }
-            }
             kotlinx.coroutines.delay(1000)
         }
     }
-
-    // buffer=true (Ver) descarga a la carpeta temporal; false (Descargar) a la permanente
-    fun addMagnet(m: String, autoplay: Boolean, playCtx: PlayCtx = PlayCtx()) {
-        if (m.isBlank()) return
-        val dir = if (autoplay) Prefs.bufferDirFile() else Prefs.downloadDirFile()
-        // Solo persistimos las descargas permanentes (para reanudarlas al reabrir)
-        if (!autoplay) Prefs.addSavedTorrent(m.trim(), dir.absolutePath)
-        TorrentEngine.addMagnet(m.trim(), dir) { d, _ ->
-            if (autoplay && d != null) onMain { pendingPlay = d.infoHash to playCtx }
-        }
-    }
-
-    LaunchedEffect(initialMagnet) { if (!initialMagnet.isNullOrBlank()) addMagnet(initialMagnet, false) }
 
     // Avisos de episodios nuevos cuando llegan los favoritos de la nube
     LaunchedEffect(Sync.favorites.size) { if (Sync.favorites.isNotEmpty()) EpisodeAlerts.check(ctx) }
@@ -204,8 +137,6 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) 
         DetailScreen(
             title = d,
             onBack = { detail = null },
-            onWatch = { magnet, c -> addMagnet(magnet, true, c); tab = Tab.DOWNLOADS; detail = null },
-            onDownload = { magnet -> addMagnet(magnet, false); tab = Tab.DOWNLOADS; detail = null },
             onPlayUrl = { url, c -> onPlayUrl(url, c) },
             onOpenDownloads = { tab = Tab.DOWNLOADS; detail = null }
         )
@@ -234,8 +165,7 @@ fun AppScreen(saveRoot: File, initialMagnet: String?, onPlay: (String, PlayCtx) 
             when (tab) {
                 Tab.DISCOVER -> DiscoverScreen(catalogType, { catalogType = it }, kids = kids, onOpen = { detail = it })
                 Tab.SEARCH -> if (kids) DiscoverScreen(catalogType, { catalogType = it }, kids = true, onOpen = { detail = it }) else SearchScreen(onOpen = { detail = it })
-                Tab.TV -> if (!kids) AceScreen(onPlayUrl)
-                Tab.DOWNLOADS -> DownloadsScreen(downloads, rdDownloads, { h -> onPlay(h, PlayCtx()) }, { u -> onPlayUrl(u, PlayCtx()) })
+                Tab.DOWNLOADS -> DownloadsScreen(rdDownloads) { u -> onPlayUrl(u, PlayCtx()) }
                 Tab.SETTINGS -> SettingsScreen()
             }
         }
@@ -543,278 +473,6 @@ fun SearchScreen(onOpen: (Tmdb.Title) -> Unit) {
     }
 }
 
-/**
- * Pestaña TV: AceStream a pantalla completa (canales en directo y eventos).
- */
-@Composable
-fun AceScreen(onPlayUrl: (String, PlayCtx) -> Unit) {
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
-        item {
-            Text("TV en directo", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text("Canales y eventos vía AceStream (P2P)", style = MaterialTheme.typography.labelSmall, color = Muted)
-            Spacer(Modifier.height(10.dp))
-            AceStreamPanel(onPlayUrl)
-        }
-    }
-}
-
-
-/**
- * Panel de AceStream: busca en acestreamid.com (scraping), reproduce vía el
- * AceStream Engine sin salir de la app, permite pegar un enlace a mano y abre
- * la página del contenido como alternativa si el engine no resuelve.
- */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-fun AceStreamPanel(onPlayUrl: (String, PlayCtx) -> Unit) {
-    val ctx = LocalContext.current
-    var query by remember { mutableStateOf("") }
-    var manual by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf<List<AceStream.Result>>(emptyList()) }
-    var status by remember { mutableStateOf("") }
-    var expanded by remember { mutableStateOf(true) }
-    var page by remember { mutableStateOf(1) }
-    // Canales de search-ace.stream (playlist o búsqueda), por categoría + país
-    var channels by remember { mutableStateOf<List<AceStream.Channel>>(emptyList()) }
-    var selCategory by remember { mutableStateOf<String?>(null) }
-    var selCountry by remember { mutableStateOf<String?>(null) }
-    var chFilter by remember { mutableStateOf("") }
-    var loadingCh by remember { mutableStateOf(false) }
-    var aceQuery by remember { mutableStateOf("") }        // búsqueda de texto en search-ace.stream
-
-    // Reproducir GRATIS: se lo pasamos a la app de AceStream (su propio reproductor).
-    fun openInAce(contentId: String) {
-        if (!AceStream.openExternal(ctx, contentId))
-            status = "No hay ninguna app que abra enlaces acestream://. Instala «Ace Stream Media»."
-    }
-
-    // Reproducir DENTRO de TorrentBox: requiere AceStream Premium (el motor gratis
-    // bloquea la reproducción en reproductores externos como el nuestro).
-    fun playInApp(name: String, contentId: String) {
-        status = "Comprobando AceStream Engine…"
-        AceStream.ensureEngine(ctx, onStatus = { s -> onMain { status = s } }) { ok, err ->
-            onMain {
-                if (!ok) {
-                    status = (err ?: "Engine no disponible") + " Usa «Abrir en AceStream» (gratis)."
-                    return@onMain
-                }
-                status = "⚡ Resolviendo en el engine…"
-                AceStream.resolve(contentId) { url, rerr ->
-                    onMain {
-                        if (url != null) { status = ""; onPlayUrl(url, PlayCtx(name = name)) }
-                        else status = (rerr ?: "Reproducción integrada no disponible (requiere Premium).") + " Usa «Abrir en AceStream» (gratis)."
-                    }
-                }
-            }
-        }
-    }
-
-    // Carga la playlist de search-ace.stream (endpoint que sí es público) y la
-    // categoriza por categoría + país. Las categorías se filtran en local.
-    fun loadAceChannels() {
-        loadingCh = true; status = "Cargando canales…"
-        AceStream.loadPlaylist { list, err ->
-            onMain {
-                loadingCh = false
-                if (list == null) status = err ?: "Error"
-                else { channels = list; selCategory = null; selCountry = null; status = "${list.size} canales" }
-            }
-        }
-    }
-
-    // Búsqueda por texto en search-ace.stream (devuelve content_ids reproducibles)
-    fun aceSearch() {
-        if (aceQuery.isBlank()) { status = "Escribe algo para buscar"; return }
-        loadingCh = true; status = "Buscando “${aceQuery.trim()}”…"
-        AceStream.searchAceApi(aceQuery.trim()) { list, err ->
-            onMain {
-                loadingCh = false
-                if (list == null) status = err ?: "Error"
-                else { channels = list; selCategory = null; selCountry = null; status = if (list.isEmpty()) "Sin resultados" else "${list.size} resultados" }
-            }
-        }
-    }
-
-    // Con query vacía lista TODO el directorio; p es la "hoja" (página) pedida
-    fun load(p: Int) {
-        status = if (query.isBlank()) "Cargando directorio (página $p)…" else "Buscando en AceStream…"
-        AceStream.search(query.trim(), p) { list, err ->
-            onMain {
-                when {
-                    list == null -> status = err ?: "Error"
-                    list.isEmpty() -> status = err ?: "Sin resultados"
-                    else -> { results = list; page = p; status = "${list.size} canales/eventos · página $p" }
-                }
-            }
-        }
-    }
-
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(Modifier.fillMaxWidth().clickable { expanded = !expanded }, verticalAlignment = Alignment.CenterVertically) {
-                Text("📡 AceStream (canales y eventos)", style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, contentDescription = null)
-            }
-            if (expanded) {
-                // Canales favoritos (acceso rápido)
-                if (Prefs.aceFavs.isNotEmpty()) {
-                    Text("⭐ Favoritos", style = MaterialTheme.typography.labelMedium, color = Muted)
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(Prefs.aceFavs.size) { i ->
-                            val parts = Prefs.aceFavs[i].split("|", limit = 2)
-                            val fid = parts[0]; val fname = parts.getOrElse(1) { "Canal" }
-                            AssistChip(onClick = { openInAce(fid) }, label = { Text("▶ $fname") })
-                        }
-                    }
-                }
-                Text("Al pulsar ▶ se abre en la app de AceStream (gratis). La reproducción dentro de TorrentBox requiere AceStream Premium.",
-                    style = MaterialTheme.typography.labelSmall, color = Muted)
-                if (!AceStream.engineInstalled(ctx)) {
-                    Text("Requiere la app «Ace Stream Media» (gratis) — esa app YA incluye el engine. La reproducción es P2P dentro de tu app.",
-                        style = MaterialTheme.typography.labelSmall, color = Muted)
-                    OutlinedButton(onClick = { AceStream.openEngineInstall(ctx) }) { Text("Instalar Ace Stream Media") }
-                }
-
-                // ---- Canales de search-ace.stream (búsqueda + categorías) ----
-                HorizontalDivider(color = Muted.copy(alpha = 0.2f))
-                Text("Canales (search-ace.stream)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                OutlinedTextField(
-                    value = aceQuery, onValueChange = { aceQuery = it },
-                    label = { Text("Buscar canal (ej. Movistar, DAZN…)") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(enabled = !loadingCh && aceQuery.isNotBlank(), onClick = { aceSearch() }) { Text("Buscar") }
-                    OutlinedButton(enabled = !loadingCh, onClick = { loadAceChannels() }) {
-                        Text(if (channels.isEmpty()) "Ver todos por categoría/país" else "Recargar todos")
-                    }
-                }
-
-                if (channels.isNotEmpty()) {
-                    val categories = remember(channels) { channels.map { it.category }.distinct().sorted() }
-                    val countries = remember(channels) { channels.map { it.country }.distinct().sorted() }
-                    Text("Categoría", style = MaterialTheme.typography.labelMedium, color = Muted)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        FilterChip(selected = selCategory == null, onClick = { selCategory = null }, label = { Text("Todas") })
-                        categories.forEach { c ->
-                            FilterChip(selected = selCategory == c, onClick = { selCategory = if (selCategory == c) null else c }, label = { Text(c) })
-                        }
-                    }
-                    Text("País", style = MaterialTheme.typography.labelMedium, color = Muted)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        FilterChip(selected = selCountry == null, onClick = { selCountry = null }, label = { Text("Todos") })
-                        countries.forEach { c ->
-                            FilterChip(selected = selCountry == c, onClick = { selCountry = if (selCountry == c) null else c }, label = { Text(c) })
-                        }
-                    }
-                    OutlinedTextField(value = chFilter, onValueChange = { chFilter = it },
-                        label = { Text("Filtrar canal…") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    val shownCh = channels.filter {
-                        (selCategory == null || it.category == selCategory) &&
-                            (selCountry == null || it.country == selCountry) &&
-                            (chFilter.isBlank() || it.name.contains(chFilter, ignoreCase = true))
-                    }
-                    Text("${shownCh.size} canales", style = MaterialTheme.typography.labelSmall, color = Muted)
-                    shownCh.take(300).forEach { ch ->
-                        Row(
-                            Modifier.fillMaxWidth().clickable { if (!AceStream.openChannel(ctx, ch)) status = "No hay app de AceStream instalada." }.padding(vertical = 6.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(ch.name + (if (ch.isInfohash) "  ·(infohash)" else ""), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text("${ch.category}  ·  ${ch.country}", style = MaterialTheme.typography.labelSmall, color = Muted)
-                            }
-                            IconButton(onClick = { status = "Enlace: ${ch.rawUrl}" }) {
-                                Icon(Icons.Filled.Info, contentDescription = "Ver enlace", tint = Muted)
-                            }
-                            IconButton(onClick = { Prefs.toggleAceFav(ch.contentId, ch.name) }) {
-                                Icon(
-                                    if (Prefs.isAceFav(ch.contentId)) Icons.Filled.Star else Icons.Filled.StarBorder,
-                                    contentDescription = "Favorito",
-                                    tint = if (Prefs.isAceFav(ch.contentId)) Color(0xFFFBBF24) else Muted
-                                )
-                            }
-                            Text("📡", color = Accent)
-                        }
-                    }
-                    if (shownCh.size > 300) Text("Mostrando 300 de ${shownCh.size}. Usa los filtros.", style = MaterialTheme.typography.labelSmall, color = Muted)
-                }
-
-                // ---- Búsqueda en acestreamid.com ----
-                HorizontalDivider(color = Muted.copy(alpha = 0.2f))
-                Text("Buscar en acestreamid.com", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                OutlinedTextField(
-                    value = query, onValueChange = { query = it },
-                    label = { Text("Buscar canal / evento… (vacío = ver todos)") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Button(onClick = { results = emptyList(); load(1) }) {
-                    Text(if (query.isBlank()) "Ver todos los enlaces" else "Buscar en AceStream")
-                }
-
-                // Enlace / content-id manual
-                OutlinedTextField(
-                    value = manual, onValueChange = { manual = it },
-                    label = { Text("O pega un enlace acestream:// o content-id") }, singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        enabled = AceStream.extractContentId(manual) != null,
-                        onClick = {
-                            val id = AceStream.extractContentId(manual)
-                            if (id != null) openInAce(id) else status = "Enlace no válido."
-                        }
-                    ) { Text("▶ Reproducir enlace") }
-                    AceStream.extractContentId(manual)?.let { id ->
-                        OutlinedButton(onClick = { playInApp("AceStream", id) }) { Text("Aquí (Premium)") }
-                        OutlinedButton(onClick = { AceStream.openPage(ctx, id) }) { Text("Abrir página") }
-                    }
-                }
-
-                if (status.isNotBlank()) Text(status, color = Muted, style = MaterialTheme.typography.bodySmall)
-
-                results.forEach { r ->
-                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Bg)) {
-                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(r.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                IconButton(onClick = { Prefs.toggleAceFav(r.contentId, r.name) }) {
-                                    Icon(
-                                        if (Prefs.isAceFav(r.contentId)) Icons.Filled.Star else Icons.Filled.StarBorder,
-                                        contentDescription = "Favorito",
-                                        tint = if (Prefs.isAceFav(r.contentId)) Color(0xFFFBBF24) else Muted
-                                    )
-                                }
-                            }
-                            val votes = if (r.likes >= 0 || r.dislikes >= 0)
-                                "👍 ${r.likes.coerceAtLeast(0)} · 👎 ${r.dislikes.coerceAtLeast(0)} · " else ""
-                            Text(votes + r.contentId.take(12) + "…", style = MaterialTheme.typography.labelSmall, color = Muted)
-                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = { openInAce(r.contentId) }) { Text("▶ Reproducir") }
-                                OutlinedButton(onClick = { playInApp(r.name, r.contentId) }) { Text("Aquí (Premium)") }
-                                OutlinedButton(onClick = { AceStream.openPage(ctx, r.pageUrl) }) { Text("Página") }
-                            }
-                        }
-                    }
-                }
-                // Hojas (paginación) del directorio / búsqueda
-                if (results.isNotEmpty() || page > 1) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedButton(onClick = { load(page - 1) }, enabled = page > 1) { Text("◀ Anterior") }
-                        Text("Página $page", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = Muted)
-                        OutlinedButton(onClick = { load(page + 1) }, enabled = results.isNotEmpty()) { Text("Siguiente ▶") }
-                    }
-                }
-            }
-        }
-    }
-}
-
 @Composable
 fun SettingsScreen() {
     val ctx = LocalContext.current
@@ -931,57 +589,6 @@ fun SettingsScreen() {
             }
         }
 
-        // --- Carpetas de descarga ---
-        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Carpetas", fontWeight = FontWeight.Bold)
-                var folderStatus by remember { mutableStateOf("") }
-                // Selector de carpeta del sistema (SAF). Convertimos el árbol elegido
-                // a una ruta real; si Android no deja escribir ahí sin permisos, avisamos.
-                val pickDownload = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-                    if (uri == null) return@rememberLauncherForActivityResult
-                    runCatching { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
-                    val path = Prefs.resolveTreeUri(uri)
-                    if (path != null) { Prefs.setDownloadDir(path); folderStatus = "Descargas → ${Prefs.shortLabel(path)}" }
-                    else folderStatus = "Android no permite escribir en esa carpeta sin permisos especiales. Elige otra o usa las de la app."
-                }
-                val pickBuffer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-                    if (uri == null) return@rememberLauncherForActivityResult
-                    runCatching { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
-                    val path = Prefs.resolveTreeUri(uri)
-                    if (path != null) { Prefs.setBufferDir(path); folderStatus = "Buffer → ${Prefs.shortLabel(path)}" }
-                    else folderStatus = "Android no permite escribir en esa carpeta sin permisos especiales. Elige otra o usa las de la app."
-                }
-
-                val vols = remember { Prefs.availableVolumes() }
-                fun volLabel(i: Int) = if (i == 0) "Memoria interna (app)" else "Tarjeta SD / externa (app)"
-
-                Text("Descargas (permanente):", style = MaterialTheme.typography.labelMedium)
-                Text("Actual: ${Prefs.shortLabel(Prefs.downloadDir.value)}", style = MaterialTheme.typography.labelSmall, color = Muted)
-                vols.forEachIndexed { i, f ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = Prefs.downloadDir.value == f.absolutePath, onClick = { Prefs.setDownloadDir(f.absolutePath); folderStatus = "" })
-                        Text(volLabel(i), style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-                OutlinedButton(onClick = { pickDownload.launch(null) }) { Text("Elegir otra carpeta…") }
-
-                Spacer(Modifier.height(4.dp))
-                Text("Buffer (al pulsar “Ver”):", style = MaterialTheme.typography.labelMedium)
-                Text("Actual: ${Prefs.shortLabel(Prefs.bufferDir.value)}", style = MaterialTheme.typography.labelSmall, color = Muted)
-                vols.forEachIndexed { i, f ->
-                    val bf = File(f.parentFile, "buffer")
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = Prefs.bufferDir.value == bf.absolutePath, onClick = { Prefs.setBufferDir(bf.absolutePath); folderStatus = "" })
-                        Text(volLabel(i), style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-                OutlinedButton(onClick = { pickBuffer.launch(null) }) { Text("Elegir otra carpeta…") }
-
-                if (folderStatus.isNotBlank()) Text(folderStatus, color = Muted, style = MaterialTheme.typography.bodySmall)
-            }
-        }
-
         // --- Real-Debrid ---
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -990,7 +597,7 @@ fun SettingsScreen() {
                     Text("⚡ Conectado${RealDebrid.account?.let { " · $it" } ?: ""}", color = Color(0xFF34D399), style = MaterialTheme.typography.bodyMedium)
                     OutlinedButton(onClick = { RealDebrid.disconnect() }) { Text("Desconectar") }
                 } else {
-                    Text("Pega tu token para reproducir por streaming directo (sin descargar en el móvil). Se comparte con tu cuenta si has entrado con Google.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("⚠️ Real-Debrid es imprescindible: la app no descarga por BitTorrent, todo el vídeo llega por streaming directo desde los servidores de RD. Pega tu token para empezar. Se comparte con tu cuenta si has entrado con Google.", color = Color(0xFFFBBF24), style = MaterialTheme.typography.bodySmall)
                     OutlinedTextField(value = rdInput, onValueChange = { rdInput = it }, label = { Text("Token de Real-Debrid") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Button(onClick = {
                         rdStatus = "Validando…"
@@ -1005,26 +612,6 @@ fun SettingsScreen() {
                     Text("Consíguelo en real-debrid.com/apitoken", color = Muted, style = MaterialTheme.typography.labelSmall)
                 }
                 if (rdStatus.isNotBlank()) Text(rdStatus, color = Muted, style = MaterialTheme.typography.bodySmall)
-            }
-        }
-
-        // --- Velocidad y buffer ---
-        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Velocidad y buffer", fontWeight = FontWeight.Bold)
-                var down by remember { mutableStateOf(Prefs.downLimitKB.value.takeIf { it > 0 }?.toString() ?: "") }
-                var up by remember { mutableStateOf(Prefs.upLimitKB.value.takeIf { it > 0 }?.toString() ?: "") }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = down, onValueChange = { down = it.filter { c -> c.isDigit() } },
-                        label = { Text("Bajada KB/s (vacío = ∞)") }, singleLine = true, modifier = Modifier.weight(1f))
-                    OutlinedTextField(value = up, onValueChange = { up = it.filter { c -> c.isDigit() } },
-                        label = { Text("Subida KB/s") }, singleLine = true, modifier = Modifier.weight(1f))
-                }
-                Button(onClick = { Prefs.setLimits(down.toIntOrNull() ?: 0, up.toIntOrNull() ?: 0) }) { Text("Aplicar límites") }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = Prefs.autoCleanBuffer.value, onCheckedChange = { Prefs.setAutoCleanBuffer(it) })
-                    Text("Vaciar el buffer al abrir la app", style = MaterialTheme.typography.bodySmall)
-                }
             }
         }
 
@@ -1047,20 +634,15 @@ fun SettingsScreen() {
             }
         }
 
-        // --- Salir ---
+        // --- Aplicación ---
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Aplicación", fontWeight = FontWeight.Bold)
-                Button(
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF87171)),
-                    onClick = {
-                        runCatching { TorrentEngine.stop() }
-                        runCatching { StreamServer.stop() }
-                        runCatching { ctx.stopService(Intent(ctx, DownloadService::class.java)) }
-                        (ctx as? android.app.Activity)?.finishAffinity()
-                        kotlin.system.exitProcess(0)
-                    }
-                ) { Text("Salir y cerrar la app") }
+                Text(
+                    "Al salir no queda nada corriendo: la app no tiene servicio en segundo plano ni motor de torrents. " +
+                        "Las descargas las gestiona el sistema, así que siguen aunque cierres la app.",
+                    color = Muted, style = MaterialTheme.typography.bodySmall
+                )
             }
         }
         Spacer(Modifier.height(24.dp))
@@ -1075,56 +657,47 @@ private fun FlowRowSimple(content: @Composable () -> Unit) {
 }
 
 @Composable
-fun DownloadsScreen(
-    downloads: List<TorrentEngine.Snapshot>,
-    rdDownloads: List<RdDownloads.Snap>,
-    onPlay: (String) -> Unit,
-    onPlayUrl: (String) -> Unit
-) {
+fun DownloadsScreen(rdDownloads: List<RdDownloads.Snap>, onPlayUrl: (String) -> Unit) {
     val ctx = LocalContext.current
     // Separa la ACTIVIDAD (descargando) de lo que ya está LISTO PARA VER
-    val torrentsReady = downloads.filter { it.progress >= 0.999f }
-    val torrentsActive = downloads.filter { it.progress < 0.999f }
-    val rdReady = rdDownloads.filter { it.done }
-    val rdActive = rdDownloads.filter { !it.done }
-    val nothing = downloads.isEmpty() && rdDownloads.isEmpty()
+    val ready = rdDownloads.filter { it.done }
+    val active = rdDownloads.filter { !it.done }
 
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
         item {
             Text("Descargas", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
-            // Espacio libre y tamaño del buffer (se recalcula al cambiar las descargas)
+            // Espacio libre en la carpeta donde escribe el DownloadManager
             var space by remember { mutableStateOf("") }
-            LaunchedEffect(downloads.size, downloads.sumOf { (it.progress * 100).toInt() } / 25) {
+            LaunchedEffect(rdDownloads.size) {
                 space = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     runCatching {
-                        val free = Prefs.downloadDirFile().usableSpace
-                        val buf = Prefs.bufferDirFile().walkTopDown().filter { it.isFile }.sumOf { it.length() }
-                        "Libre: ${Search.humanSize(free)} · Buffer: ${Search.humanSize(buf)}"
+                        val dir = ctx.getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES) ?: ctx.filesDir
+                        "Libre: ${Search.humanSize(dir.usableSpace)}"
                     }.getOrDefault("")
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(space, style = MaterialTheme.typography.labelSmall, color = Muted, modifier = Modifier.weight(1f))
-                TextButton(onClick = {
-                    Thread { runCatching { TorrentEngine.clearDir(Prefs.bufferDirFile()) } }.start()
-                }) { Text("Vaciar buffer") }
+            Text(space, style = MaterialTheme.typography.labelSmall, color = Muted)
+            if (rdDownloads.isEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Aún no hay descargas. Abre un título, busca fuentes y pulsa ⬇ Descargar.\n" +
+                        "Las gestiona el sistema: continúan aunque cierres la app.",
+                    color = Muted, style = MaterialTheme.typography.bodySmall
+                )
             }
-            if (nothing) Text("Aún no hay descargas. Abre un título y pulsa Ver o Descargar.", color = Muted, style = MaterialTheme.typography.bodySmall)
         }
 
         // --- Listas para ver ---
-        if (torrentsReady.isNotEmpty() || rdReady.isNotEmpty()) {
+        if (ready.isNotEmpty()) {
             item { Text("▶ Listas para ver", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color(0xFF34D399), modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)) }
-            items(rdReady.size) { i -> RdDownloadCard(rdReady[i], onPlayUrl = { onPlayUrl(RdDownloads.playUri(ctx, rdReady[i].id) ?: rdReady[i].localUri ?: "") }, onRemove = { RdDownloads.remove(ctx, rdReady[i].id) }) }
-            items(torrentsReady.size) { i -> DownloadCard(torrentsReady[i], onPlay) }
+            items(ready.size) { i -> RdDownloadCard(ready[i], onPlayUrl = { onPlayUrl(RdDownloads.playUri(ctx, ready[i].id) ?: ready[i].localUri ?: "") }, onRemove = { RdDownloads.remove(ctx, ready[i].id) }) }
         }
 
         // --- Descargando (actividad) ---
-        if (torrentsActive.isNotEmpty() || rdActive.isNotEmpty()) {
+        if (active.isNotEmpty()) {
             item { Text("⏳ Descargando", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp)) }
-            items(rdActive.size) { i -> RdDownloadCard(rdActive[i], onPlayUrl = { onPlayUrl(RdDownloads.playUri(ctx, rdActive[i].id) ?: rdActive[i].localUri ?: "") }, onRemove = { RdDownloads.remove(ctx, rdActive[i].id) }) }
-            items(torrentsActive.size) { i -> DownloadCard(torrentsActive[i], onPlay) }
+            items(active.size) { i -> RdDownloadCard(active[i], onPlayUrl = { onPlayUrl(RdDownloads.playUri(ctx, active[i].id) ?: active[i].localUri ?: "") }, onRemove = { RdDownloads.remove(ctx, active[i].id) }) }
         }
     }
 }
@@ -1158,27 +731,6 @@ fun RdDownloadCard(d: RdDownloads.Snap, onPlayUrl: () -> Unit, onRemove: () -> U
     }
 }
 
-@Composable
-fun DownloadCard(d: TorrentEngine.Snapshot, onPlay: (String) -> Unit) {
-    Card(Modifier.fillMaxWidth().padding(vertical = 6.dp), colors = CardDefaults.cardColors(containerColor = Surface1)) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(d.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            LinearProgressIndicator(progress = { d.progress }, modifier = Modifier.fillMaxWidth())
-            Text(
-                "${(d.progress * 100).toInt()}%  ·  ↓ ${Search.humanSize(d.downloadRate.toLong())}/s  ·  ${d.numPeers} peers",
-                style = MaterialTheme.typography.bodySmall, color = Muted
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (d.hasVideo) Button(onClick = { onPlay(d.infoHash) }) { Text("▶ Ver") }
-                OutlinedButton(onClick = {
-                    if (d.paused) TorrentEngine.resume(d.infoHash) else TorrentEngine.pause(d.infoHash)
-                }) { Text(if (d.paused) "Reanudar" else "Pausar") }
-                OutlinedButton(onClick = { TorrentEngine.remove(d.infoHash, deleteFiles = true); Prefs.removeSavedTorrentByHash(d.infoHash) }) { Text("Borrar") }
-            }
-        }
-    }
-}
-
 // Lista de enlaces (fuentes) reutilizable: se muestra bajo un episodio, bajo
 // el botón de temporada completa, o (en películas) bajo "Buscar fuentes".
 @OptIn(ExperimentalLayoutApi::class)
@@ -1190,8 +742,6 @@ fun SourcesSection(
     title: Tmdb.Title,
     ctx: android.content.Context,
     buildCtx: () -> PlayCtx,
-    onWatch: (String, PlayCtx) -> Unit,
-    onDownload: (String) -> Unit,
     onPlayUrl: (String, PlayCtx) -> Unit,
     onOpenDownloads: () -> Unit
 ) {
@@ -1231,41 +781,42 @@ fun SourcesSection(
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(r.name, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text("${Lang.flag(r.lang)} ${Lang.label(r.lang)}" + (if (r.quality != "Unknown") "  ·  ${r.quality}" else "") + "  ·  ▲ ${r.seeders} seeders · ${Search.humanSize(r.sizeBytes)}", style = MaterialTheme.typography.labelSmall, color = Muted)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { onWatch(r.magnet, buildCtx()) }) { Text("▶ Ver") }
-                        OutlinedButton(onClick = { onDownload(r.magnet) }) { Text("⬇ Descargar") }
-                        if (RealDebrid.configured) {
-                            Button(
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF34D399)),
-                                onClick = {
-                                    rdStatus = "⚡ Preparando en Real-Debrid…"
-                                    RealDebrid.streamMagnet(r.magnet) { url, _, err, progress ->
-                                        onMain {
-                                            when {
-                                                url != null -> { rdStatus = ""; onPlayUrl(url, buildCtx()) }
-                                                progress != null -> rdStatus = "Real-Debrid preparando… ${progress}% (reintenta en un momento)"
-                                                else -> rdStatus = err ?: "Error de Real-Debrid"
-                                            }
+                    if (RealDebrid.configured) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = {
+                                rdStatus = "⚡ Preparando en Real-Debrid…"
+                                RealDebrid.streamMagnet(r.magnet) { url, _, err, progress ->
+                                    onMain {
+                                        when {
+                                            url != null -> { rdStatus = ""; onPlayUrl(url, buildCtx()) }
+                                            progress != null -> rdStatus = "Real-Debrid lo está preparando en sus servidores… ${progress}%. Vuelve a pulsar en un momento."
+                                            else -> rdStatus = err ?: "Error de Real-Debrid"
                                         }
                                     }
                                 }
-                            ) { Text("⚡ Ver RD") }
+                            }) { Text("▶ Ver") }
                             OutlinedButton(onClick = {
-                                rdStatus = "⚡ Preparando descarga con Real-Debrid…"
+                                rdStatus = "⚡ Preparando la descarga…"
                                 RealDebrid.streamMagnet(r.magnet) { url, fname, err, progress ->
                                     onMain {
                                         when {
                                             url != null -> {
                                                 RdDownloads.enqueue(ctx, url, fname ?: title.title)
+                                                rdStatus = ""
                                                 onOpenDownloads()
                                             }
-                                            progress != null -> rdStatus = "Real-Debrid preparando… ${progress}% (reintenta en un momento)"
+                                            progress != null -> rdStatus = "Real-Debrid lo está preparando en sus servidores… ${progress}%. Vuelve a pulsar en un momento."
                                             else -> rdStatus = err ?: "Error de Real-Debrid"
                                         }
                                     }
                                 }
-                            }) { Text("⚡ Descargar RD") }
+                            }) { Text("⬇ Descargar") }
                         }
+                    } else {
+                        Text(
+                            "Conecta Real-Debrid en Ajustes para ver o descargar.",
+                            color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
+                        )
                     }
                 }
             }
@@ -1276,7 +827,7 @@ fun SourcesSection(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String, PlayCtx) -> Unit, onDownload: (String) -> Unit, onPlayUrl: (String, PlayCtx) -> Unit, onOpenDownloads: () -> Unit) {
+fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onPlayUrl: (String, PlayCtx) -> Unit, onOpenDownloads: () -> Unit) {
     val ctx = LocalContext.current
     var detail by remember { mutableStateOf<Tmdb.Detail?>(null) }
     var sources by remember { mutableStateOf<List<Search.Result>>(emptyList()) }
@@ -1413,7 +964,7 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String, PlayCt
                         enabled = !loadingSources, modifier = Modifier.fillMaxWidth()
                     ) { Text("Buscar temporada $sn completa") }
                     if (expandedEpisode == 0) {
-                        SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onWatch, onDownload, onPlayUrl, onOpenDownloads)
+                        SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onPlayUrl, onOpenDownloads)
                     }
                     episodes.forEach { ep ->
                         Card(
@@ -1435,7 +986,7 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String, PlayCt
                         }
                         // Enlaces JUSTO debajo del episodio seleccionado
                         if (expandedEpisode == ep.episode) {
-                            SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onWatch, onDownload, onPlayUrl, onOpenDownloads)
+                            SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onPlayUrl, onOpenDownloads)
                         }
                     }
                 }
@@ -1443,7 +994,7 @@ fun DetailScreen(title: Tmdb.Title, onBack: () -> Unit, onWatch: (String, PlayCt
                 Button(onClick = { expandedEpisode = -1; dt?.let { loadSources(it) } }, enabled = dt != null && !loadingSources, modifier = Modifier.fillMaxWidth()) {
                     Text(if (loadingSources) "Buscando fuentes…" else "Buscar fuentes")
                 }
-                SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onWatch, onDownload, onPlayUrl, onOpenDownloads)
+                SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onPlayUrl, onOpenDownloads)
             }
             Spacer(Modifier.height(24.dp))
         }
