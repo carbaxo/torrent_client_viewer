@@ -94,8 +94,6 @@ dependencies {
     implementation("androidx.media3:media3-cast:1.4.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.mediarouter:mediarouter:1.7.0")
-    // SDK de Cast (CastOptionsProvider propio: receptor por defecto sin DRM)
-    implementation("com.google.android.gms:play-services-cast-framework:21.5.0")
 
     // Motor BitTorrent en el dispositivo (natives incluidos por ABI)
     implementation("org.libtorrent4j:libtorrent4j-android-arm64:2.1.0-31")

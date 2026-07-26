@@ -1,7 +1,6 @@
 package com.carbaxo.torrentbox
 
 import android.content.Context
-import com.google.android.gms.cast.CastMediaControlIntent
 import com.google.android.gms.cast.framework.CastOptions
 import com.google.android.gms.cast.framework.OptionsProvider
 import com.google.android.gms.cast.framework.SessionProvider
@@ -17,9 +16,12 @@ import com.google.android.gms.cast.framework.SessionProvider
  */
 class CastOptionsProvider : OptionsProvider {
 
+    /** ID del Default Media Receiver de Google (CastMediaControlIntent.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID). */
+    private val defaultReceiver = "CC1AD845"
+
     override fun getCastOptions(context: Context): CastOptions =
         CastOptions.Builder()
-            .setReceiverApplicationId(CastMediaControlIntent.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID)
+            .setReceiverApplicationId(defaultReceiver)
             // Al salir de la app se deja de emitir (si no, la TV se queda colgada)
             .setStopReceiverApplicationWhenEndingSession(true)
             // Recupera la sesión si la app vuelve al frente
