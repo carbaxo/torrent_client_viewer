@@ -31,10 +31,20 @@ No hace falta ffmpeg: el servidor no transcodifica (el vídeo va del CDN de RD a
 
 👉 **Configuración completa, API keys y despliegue gratuito (GitHub Pages + Render/Fly.io): ver [`SETUP.md`](./SETUP.md).**
 
+## Seguridad de Firebase
+
+Las reglas de Firestore están versionadas en [`firestore.rules`](./firestore.rules) — **no son un paso manual en la consola**. Sin ellas (o con la base de datos en modo de prueba) cualquiera podría leer los datos de todas las cuentas, incluido el token de Real-Debrid.
+
+```bash
+npx firebase deploy --only firestore:rules   # publicar
+npm run test:rules                           # comprobarlas contra el emulador
+```
+
 ## Tests
 
 ```bash
-npm test    # búsqueda, idioma, caché, auth, perfiles, progreso, Real-Debrid y descargas RD (sin red)
+npm test          # búsqueda, idioma, caché, auth, perfiles, progreso, Real-Debrid y descargas RD (sin red)
+npm run test:rules  # reglas de Firestore (arranca el emulador; requiere Java)
 ```
 
 ## Arquitectura
