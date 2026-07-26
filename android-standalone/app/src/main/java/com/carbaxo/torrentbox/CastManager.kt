@@ -31,7 +31,8 @@ import java.util.concurrent.TimeUnit
  * así que al enviar el archivo tal cual se ve la imagen pero NO se oye nada.
  * La solución es no enviar nunca el archivo original si se puede evitar: se pide
  * a Real-Debrid su versión **transcodificada a H.264 + AAC** y se prueba en
- * cadena, pasando al siguiente candidato en cuanto la TV falla:
+ * cadena, pasando al siguiente candidato en cuanto la TV falla O si se queda
+ * cargando sin arrancar (la TV no siempre informa del error):
  *
  *   1. HLS de Real-Debrid          (m3u8, H.264 + AAC)  <- audio garantizado
  *   2. MP4 convertido por RD       (video/mp4,  AAC)    <- audio garantizado
@@ -75,6 +76,14 @@ object CastManager {
     private var candidateIdx = 0
     private var startMs = 0L
 
+    /**
+     * Vigilante de arranque. La TV no siempre avisa de un error: con formatos que
+     * no digiere (MKV es el caso típico) o con un archivo muy pesado se queda
+     * "cargando" indefinidamente y sin ese aviso la cadena de respaldo no
+     * avanzaba nunca. Si en unos segundos no ha empezado, se pasa al siguiente.
+     */
+    private var watchdog: Runnable? = null
+
     private val mainH = Handler(Looper.getMainLooper())
     private val http = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS).readTimeout(8, TimeUnit.SECONDS).build()
@@ -109,8 +118,11 @@ object CastManager {
                 cp.addListener(object : Player.Listener {
                     override fun onPlayerError(error: PlaybackException) = nextCandidate(error)
                     override fun onPlaybackStateChanged(state: Int) {
-                        // Ya reproduce: quita el "Enviando a la TV…"
-                        if (state == Player.STATE_READY) status = ""
+                        // Ya reproduce: quita el aviso y desarma el vigilante
+                        if (state == Player.STATE_READY) {
+                            cancelWatchdog()
+                            status = ""
+                        }
                     }
                 })
             }
@@ -161,6 +173,7 @@ object CastManager {
 
     /** Para de emitir (la TV vuelve a su pantalla de inicio). */
     fun stop() {
+        cancelWatchdog()
         runCatching { player?.stop() }
         candidates = emptyList()
         status = ""
@@ -272,16 +285,48 @@ object CastManager {
         cp.setMediaItem(item, startMs)
         cp.prepare()
         cp.playWhenReady = true
+        // Las versiones convertidas pueden tardar (RD las genera al vuelo); el
+        // archivo original, si va a ir, arranca rápido.
+        armWatchdog(if (c.converted) 20_000L else 12_000L)
     }
 
-    private fun nextCandidate(error: PlaybackException) {
+    private fun armWatchdog(afterMs: Long) {
+        cancelWatchdog()
+        val r = Runnable {
+            watchdog = null
+            val cp = player ?: return@Runnable
+            val started = runCatching { cp.playbackState == Player.STATE_READY }.getOrDefault(false)
+            if (!started) advance("La TV se queda cargando")
+        }
+        watchdog = r
+        mainH.postDelayed(r, afterMs)
+    }
+
+    private fun cancelWatchdog() {
+        watchdog?.let { mainH.removeCallbacks(it) }
+        watchdog = null
+    }
+
+    private fun nextCandidate(error: PlaybackException) =
+        advance("La TV dio error (${error.errorCodeName})")
+
+    /** Pasa al siguiente candidato, o explica que ya no queda ninguno. */
+    private fun advance(reason: String) {
+        cancelWatchdog()
         val next = candidateIdx + 1
         if (next < candidates.size) {
+            status = "$reason; probando ${candidates[next].label}…"
             loadCandidate(next)
-        } else {
-            candidates = emptyList()
-            status = "La TV no pudo reproducir este archivo (${error.errorCodeName}). Prueba otra fuente."
+            return
         }
+        // Se mira ANTES de vaciar la lista: si lo último que se probó era el
+        // archivo original, el culpable casi siempre es su formato.
+        val wasOriginal = candidates.getOrNull(candidateIdx)?.converted == false
+        candidates = emptyList()
+        status = "$reason y no queda otra versión que probar. " + if (wasOriginal)
+            "Suele ser el formato: un Chromecast no reproduce MKV ni audio Dolby/DTS. " +
+                "Prueba otra fuente (mejor MP4) o dale a ver en el móvil."
+        else "Prueba otra fuente o dale a ver en el móvil."
     }
 
     /** Lo que se está emitiendo lleva audio convertido (sonará seguro). */
