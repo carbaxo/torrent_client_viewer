@@ -24,16 +24,17 @@ servidor propio. Funciona en **móvil y en Android TV**.
 - 📺 **Chromecast**: se elige la TV en la barra superior (antes de abrir nada) y
   luego cada título va a esa TV; envía la versión con **audio AAC** convertida
   por Real-Debrid para que suene (el Chromecast no decodifica Dolby/DTS).
-- Buscador con **tres motores**, con un chip por motor en cada ficha (como las
-  pestañas de addons de Stremio) y orden por idioma preferido:
-  - **Torrentio** (por IMDb id, con todos los proveedores incluidos los españoles)
-  - **Peerflix** — el mismo addon que usa Stremio (Dontorrent, MejorTorrent,
-    Wolfmax4k, Popcorntime, Bitsearch); se puede apuntar a tu propia URL de
-    `config.peerflix.mov` desde Ajustes → Buscadores
-  - **Pirate Bay** (apibay, por texto: se busca con el título original y con el
-    traducido, porque muchos torrents españoles llevan el título en español)
-  Los enlaces se cargan solos al abrir la ficha, sin pulsar nada, y el único
-  filtro es el motor: no se filtra por calidad para no esconder enlaces.
+- Buscador con **dos motores**, los mismos addons que usa Stremio, con un chip
+  por motor en cada ficha y los enlaces **ordenados Peerflix → Torrentio**:
+  - **Peerflix** (Dontorrent, MejorTorrent, Wolfmax4k, Popcorntime, Bitsearch):
+    es donde están las versiones en español. Se puede apuntar a tu propia URL de
+    `config.peerflix.mov` desde **Ajustes → Buscadores**.
+  - **Torrentio** con todos los proveedores (incluidos MejorTorrent, Wolfmax4k y
+    Cinecalidad), no solo los de por defecto.
+  Los dos buscan **por IMDb id**, así que en series hay que elegir episodio (no
+  hay búsqueda de "temporada completa": los packs salen entre los resultados del
+  episodio). Los enlaces se cargan solos al abrir la ficha y el **único filtro es
+  el motor**: no se filtra por calidad, para no esconder enlaces.
 - **Perfiles** (crear/editar/borrar) con **modo infantil** (solo catálogos
   familiares), sincronizados con tu cuenta de Google.
 - 🔔 Avisos de episodios nuevos de tus series favoritas y auto-actualización.

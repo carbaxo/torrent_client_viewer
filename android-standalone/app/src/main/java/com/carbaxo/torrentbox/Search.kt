@@ -1,12 +1,7 @@
 package com.carbaxo.torrentbox
 
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.json.JSONArray
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 
-/** Búsqueda de torrents directa (apibay / The Pirate Bay). Sin backend ni API key. */
+/** Modelo de un enlace y utilidades compartidas por los motores de búsqueda. */
 object Search {
     data class Result(
         val name: String,
@@ -22,7 +17,7 @@ object Search {
         /** ¿Lo devolvió este motor? (un enlace puede venir de los dos). */
         fun fromEngine(e: String) = e == Search.ENGINE_ALL || engine.contains(e)
 
-        /** Etiqueta para la tarjeta: "Peerflix", "Torrentio+Pirate Bay"… */
+        /** Etiqueta para la tarjeta: "Peerflix", "Torrentio", "Peerflix+Torrentio". */
         val engineLabel: String
             get() = engine.split('+').filter { it.isNotBlank() }
                 .joinToString("+") { e -> Search.engineName(e) }
@@ -30,14 +25,12 @@ object Search {
 
     const val ENGINE_TORRENTIO = "torrentio"
     const val ENGINE_PEERFLIX = "peerflix"   // addon de Stremio (webs españolas)
-    const val ENGINE_TPB = "tpb"             // apibay / The Pirate Bay (por texto)
     const val ENGINE_ALL = "all"
 
     /** Nombre bonito de un motor para los chips y las insignias. */
     fun engineName(e: String): String = when (e) {
         ENGINE_TORRENTIO -> "Torrentio"
         ENGINE_PEERFLIX -> "Peerflix"
-        ENGINE_TPB -> "Pirate Bay"
         ENGINE_ALL -> "Todos"
         else -> e.replaceFirstChar { it.uppercase() }
     }
@@ -47,7 +40,7 @@ object Search {
         (a.split('+') + b.split('+')).filter { it.isNotBlank() }.distinct().sorted().joinToString("+")
 
     /** Orden de preferencia de los motores al listar los enlaces. */
-    private val ENGINE_ORDER = listOf(ENGINE_PEERFLIX, ENGINE_TORRENTIO, ENGINE_TPB)
+    private val ENGINE_ORDER = listOf(ENGINE_PEERFLIX, ENGINE_TORRENTIO)
 
     /**
      * Posición del motor en ese orden. Si un torrent lo devuelven varios, cuenta
@@ -59,8 +52,8 @@ object Search {
             ?: ENGINE_ORDER.size
 
     /**
-     * Orden de la lista de enlaces: primero por MOTOR (Peerflix → Torrentio →
-     * Pirate Bay), luego por el idioma preferido y, a igualdad, por seeders.
+     * Orden de la lista de enlaces: primero por MOTOR (Peerflix → Torrentio),
+     * luego por el idioma preferido y, a igualdad, por seeders.
      */
     fun sortByEngineAndLang(list: List<Result>, order: List<String>): List<Result> =
         list.sortedWith(
@@ -98,57 +91,11 @@ object Search {
         "udp://open.stealth.si:80/announce"
     )
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .build()
-    private val io = Executors.newCachedThreadPool()
-
     fun buildMagnet(infoHash: String, name: String): String {
         val sb = StringBuilder("magnet:?xt=urn:btih:").append(infoHash)
         sb.append("&dn=").append(java.net.URLEncoder.encode(name, "UTF-8"))
         for (tr in TRACKERS) sb.append("&tr=").append(java.net.URLEncoder.encode(tr, "UTF-8"))
         return sb.toString()
-    }
-
-    fun search(query: String, onResult: (List<Result>?, String?) -> Unit) {
-        io.submit {
-            try {
-                val url = "https://apibay.org/q.php?q=" + java.net.URLEncoder.encode(query, "UTF-8")
-                val req = Request.Builder().url(url).header("User-Agent", "TorrentBox").build()
-                client.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) return@submit onResult(null, "Error del buscador (${resp.code}).")
-                    val body = resp.body?.string() ?: "[]"
-                    val arr = JSONArray(body)
-                    val out = ArrayList<Result>()
-                    for (i in 0 until arr.length()) {
-                        val o = arr.getJSONObject(i)
-                        val hash = o.optString("info_hash", "")
-                        val seeders = o.optString("seeders", "0").toIntOrNull() ?: 0
-                        // Los de 0 seeders NO se descartan: con Real-Debrid puede
-                        // estar en caché y verse igual (Stremio también los lista).
-                        if (hash.isBlank() || hash.matches(Regex("^0+$"))) continue
-                        val name = o.optString("name", hash)
-                        out.add(
-                            Result(
-                                name = name,
-                                infoHash = hash.lowercase(),
-                                seeders = seeders,
-                                sizeBytes = o.optString("size", "0").toLongOrNull() ?: 0,
-                                magnet = buildMagnet(hash.lowercase(), name),
-                                lang = Lang.detectFromTitle(name),
-                                quality = quality(name),
-                                engine = ENGINE_TPB
-                            )
-                        )
-                    }
-                    out.sortByDescending { it.seeders }
-                    onResult(out.take(30), null)
-                }
-            } catch (e: Throwable) {
-                onResult(null, e.message ?: "Error de red en la búsqueda.")
-            }
-        }
     }
 
     fun humanSize(bytes: Long): String {

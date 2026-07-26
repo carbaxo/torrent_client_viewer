@@ -9,7 +9,7 @@ import java.util.concurrent.TimeUnit
 /**
  * Fuentes vía Torrentio (lo mismo que usa Stremio): agrega muchos indexadores
  * y añade BANDERAS de idioma en el título, así que la detección de idioma es
- * mucho mejor que con apibay. Necesita el IMDb id del título (TMDB lo da).
+ * fiable. Necesita el IMDb id del título (TMDB lo da).
  *
  *   película:  https://torrentio.strem.fun/stream/movie/tt1234567.json
  *   serie:     https://torrentio.strem.fun/stream/series/tt1234567:1:5.json

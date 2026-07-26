@@ -10,7 +10,7 @@ import java.util.concurrent.TimeUnit
  * Addon **Peerflix** de Stremio: el mismo que usa la app de Stremio, así que
  * devuelve los mismos enlaces. Indexa sobre todo webs españolas (Dontorrent,
  * MejorTorrent, Wolfmax4k, Popcorntime, Bitsearch), que no están en The Pirate
- * Bay — por eso buscando solo en apibay faltaban.
+ * Bay ni en Torrentio por defecto — por eso antes faltaban.
  *
  * Protocolo estándar de addon de Stremio, igual que Torrentio:
  *   película:  https://peerflix.mov/stream/movie/tt1234567.json

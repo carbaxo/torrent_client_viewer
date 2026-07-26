@@ -362,15 +362,10 @@ class PlayerActivity : AppCompatActivity() {
             }
         }
         // Mismo motor que el episodio que se estaba viendo (como Stremio)
-        val onlyFrom = { eng: String -> srcEngine.contains(eng) && srcEngine.split('+').size == 1 }
-        when {
-            onlyFrom(Search.ENGINE_PEERFLIX) ->
-                Peerflix.streams("series", imdbId, s, e) { l, _ -> handle(l) }
-            onlyFrom(Search.ENGINE_TPB) && srcQuery.isNotBlank() ->
-                Search.search(Search.episodeQuery(srcQuery, s, e)) { l, _ -> handle(l) }
-            else ->
-                Torrentio.streams("series", imdbId, s, e) { l, _ -> handle(l) }
-        }
+        val onlyPeerflix = srcEngine.contains(Search.ENGINE_PEERFLIX) &&
+            !srcEngine.contains(Search.ENGINE_TORRENTIO)
+        if (onlyPeerflix) Peerflix.streams("series", imdbId, s, e) { l, _ -> handle(l) }
+        else Torrentio.streams("series", imdbId, s, e) { l, _ -> handle(l) }
     }
 
     /** Resuelve el enlace elegido en Real-Debrid y lo pone en marcha. */

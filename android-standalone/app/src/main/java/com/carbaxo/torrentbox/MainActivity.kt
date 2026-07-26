@@ -833,8 +833,8 @@ fun SettingsScreen() {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Buscadores", fontWeight = FontWeight.Bold)
                 Text(
-                    "Se consultan Torrentio, Peerflix (el mismo addon que Stremio: Dontorrent, " +
-                        "MejorTorrent, Wolfmax4k…) y Pirate Bay.",
+                    "Se consultan Peerflix (el mismo addon que Stremio: Dontorrent, " +
+                        "MejorTorrent, Wolfmax4k, Popcorntime…) y Torrentio.",
                     color = Muted, style = MaterialTheme.typography.bodySmall
                 )
                 var pf by remember { mutableStateOf(Prefs.peerflixUrl) }
@@ -1000,7 +1000,7 @@ fun SourcesSection(
     Column(Modifier.padding(top = 4.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         // Un chip por motor, como las pestañas de addons de Stremio
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            val engines = listOf(Search.ENGINE_PEERFLIX, Search.ENGINE_TORRENTIO, Search.ENGINE_TPB)
+            val engines = listOf(Search.ENGINE_PEERFLIX, Search.ENGINE_TORRENTIO)
             (listOf(Search.ENGINE_ALL) + engines).forEach { key ->
                 val n = if (key == Search.ENGINE_ALL) sources.size else sources.count { it.fromEngine(key) }
                 // Los motores sin resultados no se muestran (salvo el elegido)
@@ -1145,27 +1145,24 @@ fun DetailScreen(
         Tmdb.episodes(title.tmdbId, s) { list, _ -> onMain { episodes = list ?: emptyList() } }
     }
 
-    // Busca fuentes en Torrentio (banderas de idioma) + Peerflix (apibay) a la
-    // vez, combina, deduplica por infoHash (gana más seeders) y ordena por el
-    // idioma preferido. La combinación se hace en el hilo principal (onMain).
-    fun runSearch(
-        query: String, label: String, season: Int? = null, episode: Int? = null,
-        /** Segunda búsqueda por texto (el título traducido): muchos torrents
-         *  españoles se llaman "Monstruos contra alienígenas", no "Monsters vs
-         *  Aliens", y buscando solo el título original no salían. */
-        altQuery: String? = null
-    ) {
+    // Busca en Peerflix (addon de Stremio) y en Torrentio a la vez, por IMDb id;
+    // combina, deduplica por infoHash (gana el de más seeders) y ordena por
+    // motor e idioma. La combinación se hace en el hilo principal (onMain).
+    fun runSearch(label: String, season: Int? = null, episode: Int? = null) {
         loadingSources = true; sources = emptyList(); sourcesLabel = label
         ctxSeason = season ?: -1; ctxEpisode = episode ?: -1
         val id = imdbId
-        val useTorrentio = id != null && (title.type == "movie" || episode != null)
-        val alt = altQuery?.trim()?.takeIf { it.isNotBlank() && !it.equals(query.trim(), true) }
-        // El addon Peerflix busca por IMDb id, igual que Torrentio
-        val usePeerflix = useTorrentio
+        // Los dos motores buscan por IMDb id: hace falta tenerlo, y en series
+        // hace falta el episodio concreto.
+        val usable = id != null && (title.type == "movie" || episode != null)
+        if (!usable) {
+            loadingSources = false
+            status = if (id == null) "No se pudo identificar el título (sin IMDb id)"
+            else "Elige un episodio para ver sus enlaces"
+            return
+        }
         val acc = mutableListOf<Search.Result>()
-        // Torrentio + Peerflix + Pirate Bay + la búsqueda con el título traducido
-        var remaining = (if (useTorrentio) 1 else 0) + (if (usePeerflix) 1 else 0) +
-            1 + (if (alt != null) 1 else 0)
+        var remaining = 2   // Peerflix + Torrentio
         var lastErr: String? = null
         fun part(list: List<Search.Result>?, err: String?) = onMain {
             if (list != null) acc.addAll(list) else lastErr = err
@@ -1185,13 +1182,10 @@ fun DetailScreen(
                 if (sources.isEmpty()) status = lastErr ?: "Sin fuentes"
             }
         }
-        if (useTorrentio) Torrentio.streams(title.type, id!!, season, episode) { l, e -> part(l, e) }
-        if (usePeerflix) Peerflix.streams(title.type, id!!, season, episode) { l, e -> part(l, e) }
-        Search.search(query) { l, e -> part(l, e) }
-        if (alt != null) Search.search(alt) { l, e -> part(l, e) }
+        Peerflix.streams(title.type, id!!, season, episode) { l, e -> part(l, e) }
+        Torrentio.streams(title.type, id, season, episode) { l, e -> part(l, e) }
     }
-    fun loadSources(dt: Tmdb.Detail) =
-        runSearch(dt.originalTitle, dt.title, altQuery = dt.title)
+    fun loadSources(dt: Tmdb.Detail) = runSearch(dt.title)
 
     // Los enlaces salen SOLOS al abrir la ficha (como Stremio). Se espera un
     // momento al id de IMDb: sin el, Torrentio no se puede consultar.
@@ -1216,11 +1210,7 @@ fun DetailScreen(
         val ep = episodes.firstOrNull { !WatchStore.isWatchedEpisode(title.tmdbId, sn, it.episode) }
             ?: episodes.first()
         expandedEpisode = ep.episode
-        runSearch(
-            Search.episodeQuery(dt.originalTitle, sn, ep.episode),
-            "${dt.title} · T${sn}E${ep.episode} · ${ep.name}", sn, ep.episode,
-            altQuery = Search.episodeQuery(dt.title, sn, ep.episode)
-        )
+        runSearch("${dt.title} · T${sn}E${ep.episode} · ${ep.name}", sn, ep.episode)
     }
 
     // Contexto para el reproductor (marcar visto + reanudar) según lo buscado
@@ -1284,29 +1274,13 @@ fun DetailScreen(
                     }
                 }
                 selSeason?.let { sn ->
-                    OutlinedButton(
-                        onClick = {
-                            expandedEpisode = 0
-                            runSearch(
-                                "${dt.originalTitle} " + "S%02d".format(sn),
-                                "${dt.title} · Temporada $sn completa", sn, null,
-                                altQuery = "${dt.title} " + "S%02d".format(sn)
-                            )
-                        },
-                        enabled = !loadingSources, modifier = Modifier.fillMaxWidth()
-                    ) { Text("Buscar temporada $sn completa") }
-                    if (expandedEpisode == 0) {
-                        SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onPlayUrl, onCastMagnet, onOpenDownloads)
-                    }
+                    // Sin "temporada completa": Peerflix y Torrentio dan enlaces
+                    // por episodio (los packs de temporada salen entre ellos).
                     episodes.forEach { ep ->
                         Card(
                             Modifier.fillMaxWidth().clickable {
                                 expandedEpisode = ep.episode
-                                runSearch(
-                                    Search.episodeQuery(dt.originalTitle, sn, ep.episode),
-                                    "${dt.title} · T${sn}E${ep.episode} · ${ep.name}", sn, ep.episode,
-                                    altQuery = Search.episodeQuery(dt.title, sn, ep.episode)
-                                )
+                                runSearch("${dt.title} · T${sn}E${ep.episode} · ${ep.name}", sn, ep.episode)
                             },
                             colors = CardDefaults.cardColors(containerColor = Surface1)
                         ) {
