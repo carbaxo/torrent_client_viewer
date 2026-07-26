@@ -15,8 +15,26 @@ object Search {
         val sizeBytes: Long,
         val magnet: String,
         val lang: String? = null,  // código de idioma detectado (Lang), o null
-        val quality: String = "Unknown" // 4K/1080p/720p/480p/SD/Unknown
-    )
+        val quality: String = "Unknown", // 4K/1080p/720p/480p/SD/Unknown
+        /** Motor que lo devolvió: TORRENTIO, PEERFLIX, o los dos unidos con "+". */
+        val engine: String = ""
+    ) {
+        /** ¿Lo devolvió este motor? (un enlace puede venir de los dos). */
+        fun fromEngine(e: String) = e == ENGINE_ALL || engine.contains(e)
+
+        /** Etiqueta para la tarjeta: "Torrentio", "Peerflix" o "Torrentio+Peerflix". */
+        val engineLabel: String
+            get() = engine.split('+').filter { it.isNotBlank() }
+                .joinToString("+") { it.replaceFirstChar { c -> c.uppercase() } }
+    }
+
+    const val ENGINE_TORRENTIO = "torrentio"
+    const val ENGINE_PEERFLIX = "peerflix"
+    const val ENGINE_ALL = "all"
+
+    /** Une los motores de dos resultados con el mismo infoHash. */
+    fun mergeEngines(a: String, b: String): String =
+        (a.split('+') + b.split('+')).filter { it.isNotBlank() }.distinct().sorted().joinToString("+")
 
     /** Ordena por prioridad de idioma del usuario y, a igualdad, por seeders. */
     fun sortByLang(list: List<Result>, order: List<String>): List<Result> =
@@ -74,7 +92,9 @@ object Search {
                         val o = arr.getJSONObject(i)
                         val hash = o.optString("info_hash", "")
                         val seeders = o.optString("seeders", "0").toIntOrNull() ?: 0
-                        if (hash.isBlank() || hash.matches(Regex("^0+$")) || seeders <= 0) continue
+                        // Los de 0 seeders NO se descartan: con Real-Debrid puede
+                        // estar en caché y verse igual (Stremio también los lista).
+                        if (hash.isBlank() || hash.matches(Regex("^0+$"))) continue
                         val name = o.optString("name", hash)
                         out.add(
                             Result(
@@ -84,7 +104,8 @@ object Search {
                                 sizeBytes = o.optString("size", "0").toLongOrNull() ?: 0,
                                 magnet = buildMagnet(hash.lowercase(), name),
                                 lang = Lang.detectFromTitle(name),
-                                quality = quality(name)
+                                quality = quality(name),
+                                engine = ENGINE_PEERFLIX
                             )
                         )
                     }

@@ -1,7 +1,10 @@
 package com.carbaxo.torrentbox
 
 import android.content.Context
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 
 /**
  * Preferencias locales del dispositivo: orden de idiomas preferido para ordenar
@@ -19,6 +22,13 @@ object Prefs {
     // Estado observable por Compose
     val languageOrder = mutableStateListOf<String>()
 
+    /**
+     * Motor de búsqueda elegido en la ficha (Todos / Torrentio / Peerflix). Se
+     * recuerda entre títulos y lo reutiliza el siguiente episodio, como Stremio.
+     */
+    var engine by mutableStateOf(Search.ENGINE_ALL)
+        private set
+
     fun init(ctx: Context) {
         appCtx = ctx.applicationContext
         val sp = appCtx.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -26,6 +36,12 @@ object Prefs {
             ?.split(",")?.map { it.trim() }?.filter { Lang.byCode(it) != null }
             ?.takeIf { it.isNotEmpty() } ?: Lang.DEFAULT_ORDER
         languageOrder.clear(); languageOrder.addAll(order)
+        engine = sp.getString("engine", Search.ENGINE_ALL) ?: Search.ENGINE_ALL
+    }
+
+    fun setEngine(e: String) {
+        engine = e
+        sp().edit().putString("engine", e).apply()
     }
 
     private fun sp() = appCtx.getSharedPreferences(FILE, Context.MODE_PRIVATE)

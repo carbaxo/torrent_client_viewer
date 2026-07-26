@@ -91,6 +91,8 @@ class MainActivity : AppCompatActivity() {
         putExtra("tmdbId", c.tmdbId); putExtra("type", c.type)
         putExtra("season", c.season); putExtra("episode", c.episode)
         putExtra("name", c.name); putExtra("poster", c.poster); putExtra("resumeMs", c.resumeMs)
+        putExtra("engine", c.engine); putExtra("quality", c.quality)
+        putExtra("lang", c.lang); putExtra("query", c.query)
     }
 }
 
@@ -98,8 +100,16 @@ class MainActivity : AppCompatActivity() {
 data class PlayCtx(
     val tmdbId: Int = -1, val type: String = "movie",
     val season: Int = -1, val episode: Int = -1,
-    val name: String = "", val poster: String? = null, val resumeMs: Long = 0L
-)
+    val name: String = "", val poster: String? = null, val resumeMs: Long = 0L,
+    // Con que se esta viendo, para que el SIGUIENTE EPISODIO use lo mismo
+    // (motor, calidad e idioma), como hace Stremio.
+    val engine: String = "", val quality: String = "", val lang: String? = null,
+    /** Titulo original: hace falta para buscar por texto en Peerflix. */
+    val query: String = ""
+) {
+    /** Anota de qué enlace viene la reproducción (motor, calidad, idioma). */
+    fun withSource(r: Search.Result) = copy(engine = r.engine, quality = r.quality, lang = r.lang)
+}
 
 private enum class Tab(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     DISCOVER("Descubrir", Icons.Filled.Explore),
@@ -952,15 +962,37 @@ fun SourcesSection(
     var linksExpanded by remember { mutableStateOf(true) }
     var rdStatus by remember { mutableStateOf("") }
     var qualityFilter by remember { mutableStateOf("all") }
+    // Motor elegido (Todos / Torrentio / Peerflix), recordado entre titulos
+    val engineFilter = Prefs.engine
 
     // Calidades presentes en los resultados (para los chips de filtro)
     val qualities = remember(sources) {
         listOf("4K", "1080p", "720p", "480p", "SD").filter { q -> sources.any { it.quality == q } }
     }
-    val shown = if (qualityFilter == "all") sources else sources.filter { it.quality == qualityFilter }
+    val byEngine = sources.filter { it.fromEngine(engineFilter) }
+    val shown = if (qualityFilter == "all") byEngine else byEngine.filter { it.quality == qualityFilter }
 
     Column(Modifier.padding(top = 4.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        // Selector de motor, al estilo de Stremio (visible tambien mientras carga)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(
+                Search.ENGINE_ALL to "Todos",
+                Search.ENGINE_TORRENTIO to "Torrentio",
+                Search.ENGINE_PEERFLIX to "Peerflix"
+            ).forEach { (key, label) ->
+                val n = if (key == Search.ENGINE_ALL) sources.size else sources.count { it.fromEngine(key) }
+                FilterChip(
+                    selected = engineFilter == key,
+                    onClick = { Prefs.setEngine(key) },
+                    label = { Text(if (sources.isEmpty()) label else "$label ($n)") }
+                )
+            }
+        }
         if (loading) Text("Buscando fuentes…", color = Muted, style = MaterialTheme.typography.bodySmall)
+        if (sources.isNotEmpty() && shown.isEmpty()) Text(
+            "Sin enlaces de este motor para este titulo; prueba \"Todos\".",
+            color = Color(0xFFFBBF24), style = MaterialTheme.typography.bodySmall
+        )
         if (sources.isNotEmpty()) {
             Row(Modifier.fillMaxWidth().clickable { linksExpanded = !linksExpanded }, verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -984,7 +1016,13 @@ fun SourcesSection(
             Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(r.name, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text("${Lang.flag(r.lang)} ${Lang.label(r.lang)}" + (if (r.quality != "Unknown") "  ·  ${r.quality}" else "") + "  ·  ▲ ${r.seeders} seeders · ${Search.humanSize(r.sizeBytes)}", style = MaterialTheme.typography.labelSmall, color = Muted)
+                    Text(
+                        (if (r.engineLabel.isNotBlank()) "⚙ ${r.engineLabel}  ·  " else "") +
+                            "${Lang.flag(r.lang)} ${Lang.label(r.lang)}" +
+                            (if (r.quality != "Unknown") "  ·  ${r.quality}" else "") +
+                            "  ·  ▲ ${r.seeders} seeders · ${Search.humanSize(r.sizeBytes)}",
+                        style = MaterialTheme.typography.labelSmall, color = Muted
+                    )
                     if (RealDebrid.configured) {
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = {
@@ -992,13 +1030,13 @@ fun SourcesSection(
                                     // Con TV conectada va directo a la TV; el
                                     // CastManager muestra el progreso y elige la
                                     // versión con audio compatible.
-                                    onCastMagnet(r.magnet, buildCtx())
+                                    onCastMagnet(r.magnet, buildCtx().withSource(r))
                                 } else {
                                     rdStatus = "⚡ Preparando en Real-Debrid…"
                                     RealDebrid.streamMagnet(r.magnet) { url, _, err, progress ->
                                         onMain {
                                             when {
-                                                url != null -> { rdStatus = ""; onPlayUrl(url, buildCtx()) }
+                                                url != null -> { rdStatus = ""; onPlayUrl(url, buildCtx().withSource(r)) }
                                                 progress != null -> rdStatus = "Real-Debrid lo está preparando en sus servidores… ${progress}%. Vuelve a pulsar en un momento."
                                                 else -> rdStatus = err ?: "Error de Real-Debrid"
                                             }
@@ -1101,10 +1139,15 @@ fun DetailScreen(
         fun part(list: List<Search.Result>?, err: String?) = onMain {
             if (list != null) acc.addAll(list) else lastErr = err
             if (--remaining <= 0) {
+                // Un mismo torrent puede venir de los dos motores: se queda el
+                // que trae mas seeders, pero recordando que lo dieron ambos (asi
+                // sigue apareciendo en las dos pestanas).
                 val byHash = LinkedHashMap<String, Search.Result>()
                 for (r in acc) {
                     val prev = byHash[r.infoHash]
-                    if (prev == null || r.seeders > prev.seeders) byHash[r.infoHash] = r
+                    byHash[r.infoHash] = if (prev == null) r
+                    else (if (r.seeders > prev.seeders) r else prev)
+                        .copy(engine = Search.mergeEngines(prev.engine, r.engine))
                 }
                 loadingSources = false
                 sources = Search.sortByLang(byHash.values.toList(), Prefs.languageOrder)
@@ -1116,13 +1159,46 @@ fun DetailScreen(
     }
     fun loadSources(dt: Tmdb.Detail) = runSearch(dt.originalTitle, dt.title)
 
+    // Los enlaces salen SOLOS al abrir la ficha (como Stremio). Se espera un
+    // momento al id de IMDb: sin el, Torrentio no se puede consultar.
+    var autoSearched by remember { mutableStateOf(false) }
+    LaunchedEffect(detail?.tmdbId, imdbId) {
+        val dt = detail ?: return@LaunchedEffect
+        if (dt.type == "series" || autoSearched) return@LaunchedEffect
+        if (imdbId == null) kotlinx.coroutines.delay(1500)
+        if (autoSearched) return@LaunchedEffect
+        autoSearched = true
+        loadSources(dt)
+    }
+
+    // Serie: al entrar en una temporada se abre solo el primer episodio sin ver
+    // y se cargan sus enlaces.
+    LaunchedEffect(selSeason, episodes.size, imdbId) {
+        val dt = detail ?: return@LaunchedEffect
+        val sn = selSeason ?: return@LaunchedEffect
+        if (dt.type != "series" || episodes.isEmpty() || expandedEpisode != -1) return@LaunchedEffect
+        if (imdbId == null) kotlinx.coroutines.delay(1500)
+        if (expandedEpisode != -1) return@LaunchedEffect
+        val ep = episodes.firstOrNull { !WatchStore.isWatchedEpisode(title.tmdbId, sn, it.episode) }
+            ?: episodes.first()
+        expandedEpisode = ep.episode
+        runSearch(
+            Search.episodeQuery(dt.originalTitle, sn, ep.episode),
+            "${dt.title} · T${sn}E${ep.episode} · ${ep.name}", sn, ep.episode
+        )
+    }
+
     // Contexto para el reproductor (marcar visto + reanudar) según lo buscado
     fun buildCtx(): PlayCtx {
         val s = ctxSeason.takeIf { it > 0 }
         val e = ctxEpisode.takeIf { it > 0 }
         val key = if (title.type == "series" && s != null) "series:${title.tmdbId}:$s:${e ?: 1}" else "movie:${title.tmdbId}"
         val resumeMs = WatchStore.progressFor(key)?.let { if (!it.watched) (it.position * 1000).toLong() else 0L } ?: 0L
-        return PlayCtx(title.tmdbId, title.type, s ?: -1, e ?: -1, title.title, title.poster, resumeMs)
+        return PlayCtx(
+            title.tmdbId, title.type, s ?: -1, e ?: -1, title.title, title.poster, resumeMs,
+            // El título original es el que busca Peerflix (por texto)
+            query = detail?.originalTitle ?: title.title
+        )
     }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
@@ -1208,8 +1284,17 @@ fun DetailScreen(
                     }
                 }
             } else {
-                Button(onClick = { expandedEpisode = -1; dt?.let { loadSources(it) } }, enabled = dt != null && !loadingSources, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (loadingSources) "Buscando fuentes…" else "Buscar fuentes")
+                // Los enlaces se cargan solos; esto es solo para reintentar
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (loadingSources) "Buscando fuentes…" else "Enlaces",
+                        style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (!loadingSources && dt != null) Text(
+                        "🔄 Recargar", color = Accent, style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.clickable { expandedEpisode = -1; loadSources(dt) }
+                    )
                 }
                 SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onPlayUrl, onCastMagnet, onOpenDownloads)
             }

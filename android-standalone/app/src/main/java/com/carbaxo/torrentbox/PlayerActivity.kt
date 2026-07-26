@@ -53,6 +53,13 @@ class PlayerActivity : AppCompatActivity() {
     private val speeds = floatArrayOf(1f, 1.25f, 1.5f, 2f, 0.5f, 0.75f)
     private var speedIdx = 0
 
+    // Con qué se está viendo, para que el SIGUIENTE EPISODIO use lo mismo
+    // (mismo motor y misma calidad/idioma), igual que hace Stremio.
+    private var srcEngine = ""
+    private var srcQuality = ""
+    private var srcLang: String? = null
+    private var srcQuery = ""     // título original, para buscar en Peerflix
+
     // Selector de subtítulos externos (.srt/.vtt/.ass)
     private val pickSubtitle = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -73,6 +80,10 @@ class PlayerActivity : AppCompatActivity() {
         episode = intent.getIntExtra("episode", -1)
         titleName = intent.getStringExtra("name") ?: ""
         poster = intent.getStringExtra("poster")
+        srcEngine = intent.getStringExtra("engine") ?: ""
+        srcQuality = intent.getStringExtra("quality") ?: ""
+        srcLang = intent.getStringExtra("lang")
+        srcQuery = intent.getStringExtra("query") ?: ""
         val resumeMs = intent.getLongExtra("resumeMs", 0L)
 
         // Siempre una URL directa: streaming de Real-Debrid o un fichero ya
@@ -198,7 +209,13 @@ class PlayerActivity : AppCompatActivity() {
         local.playWhenReady = false
         playerView.player = cp   // el mando del reproductor controla la TV
         showToast("📺 Enviando a la TV…", 2500)
-        CastManager.castUrl(currentUrl, PlayCtx(tmdbId, mediaType, season, episode, titleName, poster, pos))
+        CastManager.castUrl(
+            currentUrl,
+            PlayCtx(
+                tmdbId, mediaType, season, episode, titleName, poster, pos,
+                engine = srcEngine, quality = srcQuality, lang = srcLang, query = srcQuery
+            )
+        )
         // Estado/avisos del CastManager (p. ej. si no hay versión convertida)
         mainH.postDelayed({
             if (CastManager.warning.isNotBlank()) showToast(CastManager.warning, 7000)
@@ -337,10 +354,18 @@ class PlayerActivity : AppCompatActivity() {
             onDone(true) // no seguimos probando temporadas: falta la configuración
             return
         }
-        Torrentio.streams("series", imdbId, s, e) { list, _ ->
-            val sorted = Search.sortByLang(list ?: emptyList(), Prefs.languageOrder)
-            val best = sorted.firstOrNull()
-            if (best == null) { mainH.post { onDone(false) }; return@streams }
+        // Mismo motor que el episodio actual (si venía de Peerflix, se busca por
+        // texto; si venía de Torrentio o no se sabe, se usa Torrentio).
+        val usePeerflixOnly = srcEngine.contains(Search.ENGINE_PEERFLIX) &&
+            !srcEngine.contains(Search.ENGINE_TORRENTIO)
+        val fetch: ((List<Search.Result>?, String?) -> Unit) -> Unit = { cb ->
+            if (usePeerflixOnly && srcQuery.isNotBlank())
+                Search.search(Search.episodeQuery(srcQuery, s, e)) { l, err -> cb(l, err) }
+            else Torrentio.streams("series", imdbId, s, e) { l, err -> cb(l, err) }
+        }
+        fetch { list, _ ->
+            val best = pickSameKind(list ?: emptyList())
+            if (best == null) { mainH.post { onDone(false) }; return@fetch }
             mainH.post {
                 onDone(true)
                 showToast("Cargando ${best.name.take(40)}…")
@@ -357,13 +382,37 @@ class PlayerActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Elige el enlace más parecido al que se está viendo: primero el mismo motor,
+     * luego la misma calidad (1080p, 4K…) y el mismo idioma; si no hay nada
+     * igual, se va relajando hasta quedarse con el mejor por idioma y seeders.
+     */
+    private fun pickSameKind(list: List<Search.Result>): Search.Result? {
+        if (list.isEmpty()) return null
+        val byLang = Search.sortByLang(list, Prefs.languageOrder)
+        val sameEngine = byLang.filter { srcEngine.isBlank() || it.fromEngine(srcEngine.split('+').first()) }
+            .ifEmpty { byLang }
+        val q = srcQuality.takeIf { it.isNotBlank() && it != "Unknown" }
+        val l = srcLang
+        return sameEngine.firstOrNull { r -> q != null && r.quality == q && l != null && r.lang == l }
+            ?: sameEngine.firstOrNull { r -> q != null && r.quality == q }
+            ?: sameEngine.firstOrNull { r -> l != null && r.lang == l }
+            ?: sameEngine.first()
+    }
+
     /** Cambia el reproductor al nuevo episodio, actualizando el contexto de progreso. */
     private fun switchTo(url: String, s: Int, e: Int) {
         season = s; episode = e
         currentUrl = url
         if (isCasting()) {
             // Sigue en la TV, con su versión de audio compatible
-            CastManager.castUrl(url, PlayCtx(tmdbId, mediaType, s, e, titleName, poster, 0L))
+            CastManager.castUrl(
+                url,
+                PlayCtx(
+                    tmdbId, mediaType, s, e, titleName, poster, 0L,
+                    engine = srcEngine, quality = srcQuality, lang = srcLang, query = srcQuery
+                )
+            )
         } else {
             val p = player ?: return
             p.setMediaItem(MediaItem.fromUri(url))
