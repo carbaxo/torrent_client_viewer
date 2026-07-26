@@ -154,9 +154,18 @@ object CastManager {
         resolveRd(magnet, 0)
     }
 
-    /** Emite una URL ya resuelta (streaming de RD o descarga local). */
+    /** Emite una URL ya resuelta de Real-Debrid (tiene que ser http/https). */
     fun castUrl(url: String, ctx: PlayCtx) {
         begin(ctx)
+        // Un fichero ya descargado vive SOLO en el móvil (content://): la TV no
+        // puede ir a buscarlo, así que se dice en claro en vez de enviarlo y
+        // dejar que la TV se quede cargando.
+        if (!url.startsWith("http", ignoreCase = true)) {
+            status = "Esto ya está descargado en el móvil y la TV no puede acceder a su " +
+                "almacenamiento. Para verlo en la TV, emite desde la ficha de la película " +
+                "(sin descargar) o dale a ver aquí en el móvil."
+            return
+        }
         buildLadder(url)
     }
 
