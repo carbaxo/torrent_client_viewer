@@ -15,6 +15,7 @@ App web multiusuario para **buscar películas y series y verlas por streaming di
 - 🔎 **Buscador con 2 motores**: **Torrentio** (IMDb vía OMDb **o TMDB**) y **Peerflix** (apibay/TPB), con filtros de calidad (4K/1080p/720p/SD), **idioma de la fuente** (banderas) ordenado por tu preferencia, y selección de temporada/episodio.
 - ⏭️ **Siguiente episodio** automático en el reproductor y 🔔 **avisos de episodios nuevos** de tus series favoritas.
 - 📱 **Responsive** (móvil y escritorio), tema oscuro.
+- 📥 **Ofrece descargar el APK**: al entrar desde Android sale un aviso (descartable) para instalar la app nativa, y en **Ajustes** hay siempre un enlace. Se configura con `window.TCV_APK_URL` en `public/config.js`.
 
 ## Puesta en marcha rápida
 

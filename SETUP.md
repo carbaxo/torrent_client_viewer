@@ -199,6 +199,23 @@ No necesitas compilar: **GitHub Actions** publica el APK en la Release
 `android-latest`. Ver [`android-standalone/README.md`](./android-standalone/README.md)
 para los detalles y la configuración de Firebase (huella SHA-1).
 
+### La web ofrece el APK
+
+Al entrar en la web desde Android aparece un aviso (descartable, se recuerda en
+`localStorage`) para instalar la app nativa, y en **Ajustes** hay siempre un
+enlace de descarga. La URL se configura en **`public/config.js`**:
+
+```js
+window.TCV_APK_URL = 'https://github.com/carbaxo/torrent_client_viewer/releases/download/android-latest/TorrentBox.apk'
+```
+
+Déjalo vacío (`''`) para no ofrecer la app en ninguna parte.
+
+> ⚠️ **Con el repositorio privado, ese enlace solo funciona para quien esté
+> logueado en GitHub con acceso al repo**; a cualquier otro le dará 404. Si
+> quieres que sea descargable por todos, haz público el repo o sube el APK a un
+> sitio público (tu propio servidor, otro repo…) y pon aquí esa URL.
+
 ---
 
 ## 9. Notas de seguridad

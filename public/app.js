@@ -545,6 +545,49 @@ function saveSettings (patch) {
   cloudSave()
 }
 
+// ===================== App nativa (APK de Android) =====================
+// La app nativa da mejor experiencia que el navegador (MKV con DTS/AC3,
+// Chromecast, descargas en segundo plano y offline), así que la ofrecemos:
+// un banner en Android (descartable) y una tarjeta fija en Ajustes.
+const APK_URL = (window.TCV_APK_URL || '').trim()
+const APK_DISMISSED_KEY = 'tcv_apk_banner_dismissed'
+
+// Android sí, pero no un iPad/iPhone (que a veces se anuncian raro) ni la app
+// de Electron, donde ofrecer un APK no tiene sentido.
+function isAndroidBrowser () {
+  const ua = navigator.userAgent || ''
+  if (/Electron/i.test(ua)) return false
+  return /Android/i.test(ua)
+}
+
+function setupApkOffer () {
+  const panel = $('apk-panel')
+  const banner = $('apk-banner')
+  if (!APK_URL) {
+    // Sin URL configurada no ofrecemos nada (ni banner ni tarjeta)
+    if (panel) panel.classList.add('hidden')
+    return
+  }
+  const link = $('apk-link')
+  if (link) link.href = APK_URL
+
+  if (!banner) return
+  const bannerLink = $('apk-banner-link')
+  if (bannerLink) bannerLink.href = APK_URL
+
+  let dismissed = false
+  try { dismissed = localStorage.getItem(APK_DISMISSED_KEY) === '1' } catch {}
+  if (isAndroidBrowser() && !dismissed) banner.classList.remove('hidden')
+
+  const close = $('apk-banner-close')
+  if (close) {
+    close.addEventListener('click', () => {
+      banner.classList.add('hidden')
+      try { localStorage.setItem(APK_DISMISSED_KEY, '1') } catch {}
+    })
+  }
+}
+
 async function loadConfig () {
   try { CONFIG = await (await api('/api/config')).json() } catch {}
   // Ajusta UI según capacidades
@@ -1792,4 +1835,5 @@ function renderRdConfig () {
 // ===================== Init =====================
 initFirebase()
 toggleSeasonFields()
+setupApkOffer()
 checkSession()

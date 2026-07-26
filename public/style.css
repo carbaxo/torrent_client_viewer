@@ -177,6 +177,20 @@ main { max-width: 1200px; margin: 0 auto; padding: 24px 28px 60px; }
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
 .panel-title { margin: 0 0 14px; font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); }
 
+/* ---------- Aviso de la app nativa (Android) ---------- */
+.apk-banner {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  margin-bottom: 18px; padding: 14px 16px;
+  background: var(--accent-soft);
+  border: 1px solid rgba(123, 91, 245, .4);
+  border-radius: var(--radius);
+}
+.apk-banner-text { display: flex; flex-direction: column; gap: 4px; flex: 1 1 260px; min-width: 0; }
+.apk-banner-text b { font-size: .95rem; }
+.apk-banner-text span { font-size: .85rem; color: var(--muted); line-height: 1.45; }
+.apk-banner-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.apk-banner-actions .btn-primary { text-decoration: none; white-space: nowrap; }
+
 /* ---------- Formularios ---------- */
 .add-form { display: flex; gap: 10px; flex-wrap: wrap; }
 input[type="text"], input[type="password"], input[type="number"], select {
