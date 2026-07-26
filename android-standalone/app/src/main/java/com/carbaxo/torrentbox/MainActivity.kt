@@ -978,7 +978,7 @@ fun SourcesSection(
                 val n = if (key == Search.ENGINE_ALL) sources.size else sources.count { it.fromEngine(key) }
                 FilterChip(
                     selected = engineFilter == key,
-                    onClick = { Prefs.setEngine(key) },
+                    onClick = { Prefs.selectEngine(key) },
                     label = { Text(if (sources.isEmpty()) label else "$label ($n)") }
                 )
             }

@@ -39,7 +39,11 @@ object Prefs {
         engine = sp.getString("engine", Search.ENGINE_ALL) ?: Search.ENGINE_ALL
     }
 
-    fun setEngine(e: String) {
+    /**
+     * Cambia el motor elegido y lo recuerda. No puede llamarse "setEngine":
+     * la propiedad `engine` ya genera ese setter en la JVM y chocarían.
+     */
+    fun selectEngine(e: String) {
         engine = e
         sp().edit().putString("engine", e).apply()
     }
