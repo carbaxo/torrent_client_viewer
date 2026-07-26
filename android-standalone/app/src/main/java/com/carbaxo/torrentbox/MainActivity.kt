@@ -873,11 +873,41 @@ fun SettingsScreen() {
                     Text("⬆️ Hay una versión nueva: build ${up.build}", color = Color(0xFF34D399), fontWeight = FontWeight.Bold)
                     Button(onClick = { Update.downloadAndInstall(ctx) }) { Text("Descargar e instalar") }
                 } else {
-                    Text(if (Update.checked) "Estás en la última versión." else "…",
-                        style = MaterialTheme.typography.bodySmall, color = Muted)
+                    // Solo se puede afirmar que está al día si la consulta salió bien
+                    Text(
+                        when {
+                            !Update.checked -> "Comprobando…"
+                            Update.status.isBlank() -> "Estás en la última versión."
+                            else -> "No se pudo comprobar."
+                        },
+                        style = MaterialTheme.typography.bodySmall, color = Muted
+                    )
                     OutlinedButton(onClick = { Update.check() }) { Text("Buscar actualización") }
                 }
-                if (Update.status.isNotBlank()) Text(Update.status, color = Muted, style = MaterialTheme.typography.bodySmall)
+                if (Update.status.isNotBlank()) Text(
+                    Update.status, color = Color(0xFFFBBF24), style = MaterialTheme.typography.bodySmall
+                )
+
+                // Token de GitHub: el repositorio es privado y sin él la API de
+                // Releases responde 404, así que la app no podía saber si había
+                // versión nueva ni descargarla.
+                var gh by remember { mutableStateOf(Prefs.githubToken) }
+                OutlinedTextField(
+                    value = gh, onValueChange = { gh = it },
+                    label = { Text("Token de GitHub (para actualizar)") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { Prefs.saveGithubToken(gh); Update.check() }) { Text("Guardar y comprobar") }
+                    if (Prefs.githubToken.isNotBlank()) {
+                        OutlinedButton(onClick = { Prefs.saveGithubToken(""); gh = "" }) { Text("Borrar") }
+                    }
+                }
+                Text(
+                    "Créalo en github.com/settings/personal-access-tokens con acceso solo a " +
+                        "este repositorio y permiso «Contents: Read-only». Se guarda cifrado en el móvil.",
+                    color = Muted, style = MaterialTheme.typography.labelSmall
+                )
             }
         }
 

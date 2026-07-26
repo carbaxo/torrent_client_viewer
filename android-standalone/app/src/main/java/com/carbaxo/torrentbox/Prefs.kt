@@ -37,6 +37,40 @@ object Prefs {
     var peerflixUrl by mutableStateOf("")
         private set
 
+    /**
+     * Token de GitHub (solo lectura) para la auto-actualización. Hace falta
+     * porque el repositorio es PRIVADO: sin él, la API de Releases responde 404
+     * y la app no puede saber si hay una versión nueva. Se guarda cifrado.
+     */
+    var githubToken by mutableStateOf("")
+        private set
+
+    private var secure: android.content.SharedPreferences? = null
+
+    /** Almacén cifrado; si el Keystore del fabricante falla, reserva a normal. */
+    private fun secureStore(): android.content.SharedPreferences {
+        secure?.let { return it }
+        val app = appCtx
+        val sp = try {
+            val master = androidx.security.crypto.MasterKey.Builder(app)
+                .setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM).build()
+            androidx.security.crypto.EncryptedSharedPreferences.create(
+                app, "torrentbox_secure_prefs", master,
+                androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+        } catch (_: Throwable) {
+            app.getSharedPreferences("torrentbox_secure_fallback", Context.MODE_PRIVATE)
+        }
+        secure = sp
+        return sp
+    }
+
+    fun saveGithubToken(t: String) {
+        githubToken = t.trim()
+        secureStore().edit().putString("ghToken", githubToken).apply()
+    }
+
     fun init(ctx: Context) {
         appCtx = ctx.applicationContext
         val sp = appCtx.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -46,6 +80,7 @@ object Prefs {
         languageOrder.clear(); languageOrder.addAll(order)
         engine = sp.getString("engine", Search.ENGINE_ALL) ?: Search.ENGINE_ALL
         peerflixUrl = sp.getString("peerflixUrl", "") ?: ""
+        githubToken = runCatching { secureStore().getString("ghToken", "") ?: "" }.getOrDefault("")
     }
 
     fun savePeerflixUrl(u: String) {

@@ -19,7 +19,8 @@ import java.util.concurrent.TimeUnit
  * que el propio (BuildConfig.CI_BUILD) descarga el APK y lanza el instalador.
  */
 object Update {
-    data class Info(val build: Int, val url: String)
+    /** url = enlace público; assetApiUrl = el de la API (necesario si el repo es privado). */
+    data class Info(val build: Int, val url: String, val assetApiUrl: String = "")
 
     private const val RELEASE_API =
         "https://api.github.com/repos/carbaxo/torrent_client_viewer/releases/tags/android-latest"
@@ -30,6 +31,11 @@ object Update {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
+    // Para descargar el APK de un repo privado hay que seguir la redirección a
+    // mano: el enlace firmado al que apunta rechaza la cabecera Authorization.
+    private val noRedirect = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS)
+        .followRedirects(false).build()
     private val io = Executors.newSingleThreadExecutor()
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
     private fun onMain(b: () -> Unit) { main.post(b) }
@@ -43,20 +49,36 @@ object Update {
     fun check() {
         io.submit {
             try {
-                val req = Request.Builder().url(RELEASE_API)
+                val tok = Prefs.githubToken
+                val b = Request.Builder().url(RELEASE_API)
                     .header("User-Agent", "TorrentBox")
-                    .header("Accept", "application/vnd.github+json").build()
-                client.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) return@submit onMain { checked = true; status = "" }
+                    .header("Accept", "application/vnd.github+json")
+                if (tok.isNotBlank()) b.header("Authorization", "Bearer $tok")
+                client.newCall(b.build()).execute().use { resp ->
+                    if (!resp.isSuccessful) {
+                        // Antes cualquier fallo se traducía en "estás en la última
+                        // versión", que era mentira: el repo es privado y sin token
+                        // la API responde 404.
+                        val msg = when (resp.code) {
+                            401, 403, 404 ->
+                                if (tok.isBlank()) "No se puede consultar la Release: el repositorio es privado. " +
+                                    "Pega abajo un token de GitHub con permiso de lectura."
+                                else "El token de GitHub no vale o no tiene permiso de lectura del repositorio (HTTP ${resp.code})."
+                            else -> "No se pudo comprobar (HTTP ${resp.code})."
+                        }
+                        return@submit onMain { checked = true; available = null; status = msg }
+                    }
                     val d = JSONObject(resp.body?.string() ?: "{}")
                     val remoteBuild = Regex("Build (\\d+)").find(d.optString("body"))?.groupValues?.get(1)?.toIntOrNull() ?: 0
                     var url: String? = null
+                    var apiUrl = ""
                     var apkEpoch = 0L
                     d.optJSONArray("assets")?.let { arr ->
                         for (i in 0 until arr.length()) {
                             val a = arr.getJSONObject(i)
                             if (a.optString("name") == "TorrentBox.apk") {
                                 url = a.optString("browser_download_url")
+                                apiUrl = a.optString("url")
                                 apkEpoch = parseIso(a.optString("updated_at"))
                             }
                         }
@@ -67,14 +89,44 @@ object Update {
                     val newerByBuild = remoteBuild > 0 && remoteBuild > BuildConfig.CI_BUILD
                     onMain {
                         checked = true
+                        status = ""
                         available = if ((newerByDate || newerByBuild) && url != null)
-                            Info(if (remoteBuild > 0) remoteBuild else BuildConfig.CI_BUILD + 1, url!!) else null
+                            Info(
+                                if (remoteBuild > 0) remoteBuild else BuildConfig.CI_BUILD + 1,
+                                url!!, apiUrl
+                            ) else null
                     }
                 }
-            } catch (_: Throwable) {
-                onMain { checked = true }
+            } catch (e: Throwable) {
+                onMain { checked = true; status = "No se pudo comprobar: ${e.message ?: "error de red"}" }
             }
         }
+    }
+
+    /**
+     * Abre el APK de la Release. Con repo privado hay que pedirlo a la API del
+     * asset con el token y seguir la redirección a mano, porque el enlace
+     * firmado de destino falla si se le manda la cabecera Authorization.
+     */
+    private fun openAsset(info: Info): okhttp3.Response {
+        val tok = Prefs.githubToken
+        if (tok.isBlank() || info.assetApiUrl.isBlank()) {
+            return client.newCall(
+                Request.Builder().url(info.url).header("User-Agent", "TorrentBox").build()
+            ).execute()
+        }
+        val first = noRedirect.newCall(
+            Request.Builder().url(info.assetApiUrl)
+                .header("User-Agent", "TorrentBox")
+                .header("Accept", "application/octet-stream")
+                .header("Authorization", "Bearer $tok").build()
+        ).execute()
+        val loc = first.header("Location")
+        if (loc == null) return first          // ya es el fichero (o un error)
+        first.close()
+        return client.newCall(
+            Request.Builder().url(loc).header("User-Agent", "TorrentBox").build()
+        ).execute()
     }
 
     /** ISO-8601 de GitHub ("2026-07-04T19:16:25Z") a epoch ms; 0 si falla. */
@@ -96,8 +148,7 @@ object Update {
             try {
                 val dir = File(app.filesDir, "apk").apply { mkdirs() }
                 val f = File(dir, "TorrentBox.apk")
-                val req = Request.Builder().url(info.url).header("User-Agent", "TorrentBox").build()
-                client.newCall(req).execute().use { resp ->
+                openAsset(info).use { resp ->
                     if (!resp.isSuccessful) throw RuntimeException("HTTP ${resp.code}")
                     val body = resp.body ?: throw RuntimeException("Respuesta vacía")
                     body.byteStream().use { input ->
