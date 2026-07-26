@@ -28,7 +28,6 @@ object Peerflix {
     private val io = Executors.newCachedThreadPool()
 
     private val SEEDERS = Regex("👤\\s*(\\d+)")
-    private val SIZE = Regex("💾\\s*([\\d.,]+)\\s*(GB|MB|TB)", RegexOption.IGNORE_CASE)
 
     /** Base del addon: la de Ajustes si la hay, y si no la pública. */
     private fun base(): String {
@@ -68,7 +67,7 @@ object Peerflix {
                                 name = filename,
                                 infoHash = hash.lowercase(),
                                 seeders = SEEDERS.find(title)?.groupValues?.get(1)?.toIntOrNull() ?: 0,
-                                sizeBytes = Torrentio.sizeToBytes(SIZE.find(title)),
+                                sizeBytes = Torrentio.streamSize(s, title),
                                 magnet = Search.buildMagnet(hash.lowercase(), filename),
                                 lang = Lang.detectFromTitle(combined),
                                 quality = Search.quality(combined),

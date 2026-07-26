@@ -35,17 +35,31 @@ object Torrentio {
     private val io = Executors.newCachedThreadPool()
 
     private val SEEDERS = Regex("👤\\s*(\\d+)")
-    private val SIZE = Regex("💾\\s*([\\d.]+)\\s*(GB|MB|TB)", RegexOption.IGNORE_CASE)
+    // "💾 4.38 GB", "💾 696,71 MB" y variantes sin emoji
+    private val SIZE = Regex("([\\d]+[.,]?[\\d]*)\\s*(TB|GB|MB|GiB|MiB)\\b", RegexOption.IGNORE_CASE)
 
     fun sizeToBytes(m: MatchResult?): Long {
         if (m == null) return 0
-        val v = m.groupValues[1].toDoubleOrNull() ?: return 0
+        val v = m.groupValues[1].replace(',', '.').toDoubleOrNull() ?: return 0
         return when (m.groupValues[2].uppercase()) {
             "TB" -> (v * 1024 * 1024 * 1024 * 1024).toLong()
-            "GB" -> (v * 1024 * 1024 * 1024).toLong()
-            "MB" -> (v * 1024 * 1024).toLong()
+            "GB", "GIB" -> (v * 1024 * 1024 * 1024).toLong()
+            "MB", "MIB" -> (v * 1024 * 1024).toLong()
             else -> 0
         }
+    }
+
+    /**
+     * Tamaño de un stream de addon: primero el dato exacto que trae el propio
+     * addon (behaviorHints.videoSize, en bytes) y, si no está, lo que ponga el
+     * texto ("💾 4.38 GB"). Compartido con Peerflix.
+     */
+    fun streamSize(stream: JSONObject, title: String): Long {
+        val hinted = stream.optJSONObject("behaviorHints")?.optLong("videoSize", 0L) ?: 0L
+        if (hinted > 0) return hinted
+        val direct = stream.optLong("size", 0L)
+        if (direct > 0) return direct
+        return sizeToBytes(SIZE.find(title))
     }
 
     /**
@@ -87,7 +101,7 @@ object Torrentio {
                 // 👤 0 seeders NO se descarta: con Real-Debrid puede estar en
                 // caché y reproducirse igual (Stremio también los muestra).
                 val seeders = SEEDERS.find(title)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                val sizeBytes = sizeToBytes(SIZE.find(title))
+                val sizeBytes = streamSize(s, title)
                 out.add(
                     Search.Result(
                         name = filename,

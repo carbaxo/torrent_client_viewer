@@ -33,8 +33,14 @@ servidor propio. Funciona en **móvil y en Android TV**.
     Cinecalidad), no solo los de por defecto.
   Los dos buscan **por IMDb id**, así que en series hay que elegir episodio (no
   hay búsqueda de "temporada completa": los packs salen entre los resultados del
-  episodio). Los enlaces se cargan solos al abrir la ficha y el **único filtro es
-  el motor**: no se filtra por calidad, para no esconder enlaces.
+  episodio). Los enlaces se cargan solos al abrir la ficha.
+- **Filtros de calidad** (4K/1080p/720p/480p/SD) con el número de enlaces de cada
+  una, y un chip **"Otras"** para los que no se puede identificar: así ninguno
+  queda escondido. La detección entiende también las formas de las webs españolas
+  (`[MicroHD][1080 px]`, `1920x1080`), que antes caían en "desconocida".
+- **Tamaño de cada enlace** tomado del dato exacto del addon
+  (`behaviorHints.videoSize`) y, si no lo trae, del texto (`💾 4.38 GB`). Si el
+  addon no lo da, simplemente no se muestra.
 - **Perfiles** (crear/editar/borrar) con **modo infantil** (solo catálogos
   familiares), sincronizados con tu cuenta de Google.
 - 🔔 Avisos de episodios nuevos de tus series favoritas y auto-actualización.

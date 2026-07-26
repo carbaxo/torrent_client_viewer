@@ -1028,7 +1028,15 @@ fun SourcesSection(
     // El ÚNICO filtro es el motor: filtrar por calidad escondía enlaces (los
     // que no llevan la etiqueta en el nombre, muchos mkv, quedaban fuera).
     val engineFilter = Prefs.engine
-    val shown = sources.filter { it.fromEngine(engineFilter) }
+    // Filtro de calidad, local a esta pantalla. Las que no se identifican van al
+    // chip "Otras": así se pueden ver siempre (antes desaparecían sin más).
+    var qualityFilter by remember { mutableStateOf("all") }
+    val byEngine = sources.filter { it.fromEngine(engineFilter) }
+    val shown = when (qualityFilter) {
+        "all" -> byEngine
+        Search.QUALITY_OTHER -> byEngine.filter { it.quality == Search.QUALITY_OTHER }
+        else -> byEngine.filter { it.quality == qualityFilter }
+    }
 
     // Estado de la ventana flotante "Cargando…" / "Preparando la descarga"
     var prep by remember { mutableStateOf<Prep?>(null) }
@@ -1086,9 +1094,36 @@ fun SourcesSection(
                 }
             }
         }
+        // Chips de calidad (solo las presentes en los enlaces de este motor)
+        if (byEngine.isNotEmpty()) {
+            val present = Search.QUALITIES.filter { q -> byEngine.any { it.quality == q } } +
+                (if (byEngine.any { it.quality == Search.QUALITY_OTHER }) listOf(Search.QUALITY_OTHER) else emptyList())
+            if (present.size > 1) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = qualityFilter == "all",
+                        onClick = { qualityFilter = "all" },
+                        label = { Text("Todas") }
+                    )
+                    present.forEach { q ->
+                        FilterChip(
+                            selected = qualityFilter == q,
+                            onClick = { qualityFilter = q },
+                            label = {
+                                Text(
+                                    (if (q == Search.QUALITY_OTHER) "Otras" else q) +
+                                        " (${byEngine.count { it.quality == q }})"
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+        }
         if (loading) Text("Buscando fuentes…", color = Muted, style = MaterialTheme.typography.bodySmall)
         if (sources.isNotEmpty() && shown.isEmpty()) Text(
-            "Sin enlaces de este motor para este titulo; prueba \"Todos\".",
+            if (byEngine.isEmpty()) "Sin enlaces de este motor para este título; prueba \"Todos\"."
+            else "Ningún enlace con esa calidad; prueba \"Todas\".",
             color = Color(0xFFFBBF24), style = MaterialTheme.typography.bodySmall
         )
         if (sources.isNotEmpty()) {
@@ -1106,10 +1141,14 @@ fun SourcesSection(
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(r.name, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(
-                        (if (r.engineLabel.isNotBlank()) "⚙ ${r.engineLabel}  ·  " else "") +
-                            "${Lang.flag(r.lang)} ${Lang.label(r.lang)}" +
-                            (if (r.quality != "Unknown") "  ·  ${r.quality}" else "") +
-                            "  ·  ▲ ${r.seeders} seeders · ${Search.humanSize(r.sizeBytes)}",
+                        buildList {
+                            if (r.engineLabel.isNotBlank()) add("⚙ ${r.engineLabel}")
+                            add("${Lang.flag(r.lang)} ${Lang.label(r.lang)}")
+                            if (r.quality != Search.QUALITY_OTHER) add(r.quality)
+                            add("▲ ${r.seeders} seeders")
+                            // El tamaño no siempre lo da el addon: si no, no se pone
+                            if (r.sizeBytes > 0) add("💾 ${Search.humanSize(r.sizeBytes)}")
+                        }.joinToString("  ·  "),
                         style = MaterialTheme.typography.labelSmall, color = Muted
                     )
                     if (RealDebrid.configured) {
@@ -1242,8 +1281,13 @@ fun DetailScreen(
                 for (r in acc) {
                     val prev = byHash[r.infoHash]
                     byHash[r.infoHash] = if (prev == null) r
-                    else (if (r.seeders > prev.seeders) r else prev)
-                        .copy(engine = Search.mergeEngines(prev.engine, r.engine))
+                    else (if (r.seeders > prev.seeders) r else prev).copy(
+                        engine = Search.mergeEngines(prev.engine, r.engine),
+                        // si uno de los dos trae el tamaño, se conserva
+                        sizeBytes = maxOf(prev.sizeBytes, r.sizeBytes),
+                        // y la calidad que se haya podido identificar
+                        quality = if (prev.quality != Search.QUALITY_OTHER) prev.quality else r.quality
+                    )
                 }
                 loadingSources = false
                 sources = Search.sortByEngineAndLang(byHash.values.toList(), Prefs.languageOrder)

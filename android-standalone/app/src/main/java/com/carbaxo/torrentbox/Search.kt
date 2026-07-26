@@ -67,17 +67,29 @@ object Search {
         list.sortedWith(compareBy<Result> { Lang.rank(it.lang, order) }.thenByDescending { it.seeders })
 
     /** Calidad a partir del nombre del torrent (mismas etiquetas que la web). */
+    /**
+     * Calidad a partir del nombre. Reconoce también las formas que usan las webs
+     * españolas ("[MicroHD][1080 px]", "1920x1080"), que antes quedaban como
+     * desconocidas y desaparecían al filtrar. Lo que no se puede identificar se
+     * queda como Unknown y se muestra en el chip "Otras": nunca se esconde.
+     */
     fun quality(name: String): String {
         val n = name.lowercase()
         return when {
-            Regex("\\b(4k|2160p|uhd)\\b").containsMatchIn(n) -> "4K"
-            Regex("\\b(1080p|fhd)\\b").containsMatchIn(n) -> "1080p"
-            Regex("\\b(720p|hdtv|hd)\\b").containsMatchIn(n) -> "720p"
-            Regex("\\b480p\\b").containsMatchIn(n) -> "480p"
-            Regex("\\b(sd|dvdrip|cam|ts|360p)\\b").containsMatchIn(n) -> "SD"
+            Regex("\\b(4k|2160\\s?p?x?|uhd)\\b").containsMatchIn(n) || n.contains("3840x2160") -> "4K"
+            Regex("\\b1080\\s?(p|px)?\\b").containsMatchIn(n) || n.contains("1920x1080") ||
+                Regex("\\b(fhd|fullhd|full hd)\\b").containsMatchIn(n) -> "1080p"
+            Regex("\\b720\\s?(p|px)?\\b").containsMatchIn(n) || n.contains("1280x720") ||
+                Regex("\\bhdtv\\b").containsMatchIn(n) -> "720p"
+            Regex("\\b480\\s?(p|px)?\\b").containsMatchIn(n) || n.contains("854x480") -> "480p"
+            Regex("\\b(sd|dvdrip|dvdscr|cam|telesync|ts|360p|240p)\\b").containsMatchIn(n) -> "SD"
             else -> "Unknown"
         }
     }
+
+    /** Calidades en el orden en que se muestran los chips. */
+    val QUALITIES = listOf("4K", "1080p", "720p", "480p", "SD")
+    const val QUALITY_OTHER = "Unknown"
 
     /** Construye la query para un episodio concreto: "Título S01E02". */
     fun episodeQuery(title: String, season: Int, episode: Int): String =
