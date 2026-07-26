@@ -354,10 +354,6 @@ class PlayerActivity : AppCompatActivity() {
             onDone(true) // no seguimos probando temporadas: falta la configuración
             return
         }
-        // Mismo motor que el episodio actual (si venía de Peerflix, se busca por
-        // texto; si venía de Torrentio o no se sabe, se usa Torrentio).
-        val usePeerflixOnly = srcEngine.contains(Search.ENGINE_PEERFLIX) &&
-            !srcEngine.contains(Search.ENGINE_TORRENTIO)
         val handle: (List<Search.Result>?) -> Unit = { list ->
             val best = pickSameKind(list ?: emptyList())
             mainH.post {
@@ -365,10 +361,16 @@ class PlayerActivity : AppCompatActivity() {
                 else { onDone(true); playEpisode(best, s, e) }
             }
         }
-        if (usePeerflixOnly && srcQuery.isNotBlank())
-            Search.search(Search.episodeQuery(srcQuery, s, e)) { l, _ -> handle(l) }
-        else
-            Torrentio.streams("series", imdbId, s, e) { l, _ -> handle(l) }
+        // Mismo motor que el episodio que se estaba viendo (como Stremio)
+        val onlyFrom = { eng: String -> srcEngine.contains(eng) && srcEngine.split('+').size == 1 }
+        when {
+            onlyFrom(Search.ENGINE_PEERFLIX) ->
+                Peerflix.streams("series", imdbId, s, e) { l, _ -> handle(l) }
+            onlyFrom(Search.ENGINE_TPB) && srcQuery.isNotBlank() ->
+                Search.search(Search.episodeQuery(srcQuery, s, e)) { l, _ -> handle(l) }
+            else ->
+                Torrentio.streams("series", imdbId, s, e) { l, _ -> handle(l) }
+        }
     }
 
     /** Resuelve el enlace elegido en Real-Debrid y lo pone en marcha. */

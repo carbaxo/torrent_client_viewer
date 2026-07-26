@@ -22,15 +22,25 @@ object Search {
         /** ¿Lo devolvió este motor? (un enlace puede venir de los dos). */
         fun fromEngine(e: String) = e == Search.ENGINE_ALL || engine.contains(e)
 
-        /** Etiqueta para la tarjeta: "Torrentio", "Peerflix" o "Torrentio+Peerflix". */
+        /** Etiqueta para la tarjeta: "Peerflix", "Torrentio+Pirate Bay"… */
         val engineLabel: String
             get() = engine.split('+').filter { it.isNotBlank() }
-                .joinToString("+") { name -> name.replaceFirstChar { c -> c.uppercase() } }
+                .joinToString("+") { e -> Search.engineName(e) }
     }
 
     const val ENGINE_TORRENTIO = "torrentio"
-    const val ENGINE_PEERFLIX = "peerflix"
+    const val ENGINE_PEERFLIX = "peerflix"   // addon de Stremio (webs españolas)
+    const val ENGINE_TPB = "tpb"             // apibay / The Pirate Bay (por texto)
     const val ENGINE_ALL = "all"
+
+    /** Nombre bonito de un motor para los chips y las insignias. */
+    fun engineName(e: String): String = when (e) {
+        ENGINE_TORRENTIO -> "Torrentio"
+        ENGINE_PEERFLIX -> "Peerflix"
+        ENGINE_TPB -> "Pirate Bay"
+        ENGINE_ALL -> "Todos"
+        else -> e.replaceFirstChar { it.uppercase() }
+    }
 
     /** Une los motores de dos resultados con el mismo infoHash. */
     fun mergeEngines(a: String, b: String): String =
@@ -105,7 +115,7 @@ object Search {
                                 magnet = buildMagnet(hash.lowercase(), name),
                                 lang = Lang.detectFromTitle(name),
                                 quality = quality(name),
-                                engine = ENGINE_PEERFLIX
+                                engine = ENGINE_TPB
                             )
                         )
                     }

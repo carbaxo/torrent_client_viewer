@@ -828,6 +828,36 @@ fun SettingsScreen() {
             }
         }
 
+        // --- Motores de búsqueda ---
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Buscadores", fontWeight = FontWeight.Bold)
+                Text(
+                    "Se consultan Torrentio, Peerflix (el mismo addon que Stremio: Dontorrent, " +
+                        "MejorTorrent, Wolfmax4k…) y Pirate Bay.",
+                    color = Muted, style = MaterialTheme.typography.bodySmall
+                )
+                var pf by remember { mutableStateOf(Prefs.peerflixUrl) }
+                OutlinedTextField(
+                    value = pf, onValueChange = { pf = it },
+                    label = { Text("URL propia de Peerflix (opcional)") },
+                    placeholder = { Text(Peerflix.DEFAULT_BASE) },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { Prefs.savePeerflixUrl(pf) }) { Text("Guardar") }
+                    if (Prefs.peerflixUrl.isNotBlank()) {
+                        OutlinedButton(onClick = { Prefs.savePeerflixUrl(""); pf = "" }) { Text("Usar la pública") }
+                    }
+                }
+                Text(
+                    "Si configuras tu Peerflix en config.peerflix.mov (por ejemplo con tu " +
+                        "Real-Debrid), pega aquí la URL que te dé. Vacío = la pública.",
+                    color = Muted, style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
+
         // --- Actualizaciones ---
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -968,19 +998,23 @@ fun SourcesSection(
     val shown = sources.filter { it.fromEngine(engineFilter) }
 
     Column(Modifier.padding(top = 4.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        // Selector de motor, al estilo de Stremio (visible tambien mientras carga)
+        // Un chip por motor, como las pestañas de addons de Stremio
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(
-                Search.ENGINE_ALL to "Todos",
-                Search.ENGINE_TORRENTIO to "Torrentio",
-                Search.ENGINE_PEERFLIX to "Peerflix"
-            ).forEach { (key, label) ->
+            val engines = listOf(Search.ENGINE_TORRENTIO, Search.ENGINE_PEERFLIX, Search.ENGINE_TPB)
+            (listOf(Search.ENGINE_ALL) + engines).forEach { key ->
                 val n = if (key == Search.ENGINE_ALL) sources.size else sources.count { it.fromEngine(key) }
-                FilterChip(
-                    selected = engineFilter == key,
-                    onClick = { Prefs.selectEngine(key) },
-                    label = { Text(if (sources.isEmpty()) label else "$label ($n)") }
-                )
+                // Los motores sin resultados no se muestran (salvo el elegido)
+                if (key == Search.ENGINE_ALL || n > 0 || engineFilter == key) {
+                    FilterChip(
+                        selected = engineFilter == key,
+                        onClick = { Prefs.selectEngine(key) },
+                        label = {
+                            Text(
+                                Search.engineName(key) + if (sources.isEmpty()) "" else " ($n)"
+                            )
+                        }
+                    )
+                }
             }
         }
         if (loading) Text("Buscando fuentes…", color = Muted, style = MaterialTheme.typography.bodySmall)
@@ -1126,9 +1160,12 @@ fun DetailScreen(
         val id = imdbId
         val useTorrentio = id != null && (title.type == "movie" || episode != null)
         val alt = altQuery?.trim()?.takeIf { it.isNotBlank() && !it.equals(query.trim(), true) }
+        // El addon Peerflix busca por IMDb id, igual que Torrentio
+        val usePeerflix = useTorrentio
         val acc = mutableListOf<Search.Result>()
-        // Torrentio + Peerflix (apibay) + la búsqueda con el título traducido
-        var remaining = (if (useTorrentio) 1 else 0) + 1 + (if (alt != null) 1 else 0)
+        // Torrentio + Peerflix + Pirate Bay + la búsqueda con el título traducido
+        var remaining = (if (useTorrentio) 1 else 0) + (if (usePeerflix) 1 else 0) +
+            1 + (if (alt != null) 1 else 0)
         var lastErr: String? = null
         fun part(list: List<Search.Result>?, err: String?) = onMain {
             if (list != null) acc.addAll(list) else lastErr = err
@@ -1149,6 +1186,7 @@ fun DetailScreen(
             }
         }
         if (useTorrentio) Torrentio.streams(title.type, id!!, season, episode) { l, e -> part(l, e) }
+        if (usePeerflix) Peerflix.streams(title.type, id!!, season, episode) { l, e -> part(l, e) }
         Search.search(query) { l, e -> part(l, e) }
         if (alt != null) Search.search(alt) { l, e -> part(l, e) }
     }

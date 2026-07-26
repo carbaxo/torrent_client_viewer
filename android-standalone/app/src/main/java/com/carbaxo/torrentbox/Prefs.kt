@@ -29,6 +29,14 @@ object Prefs {
     var engine by mutableStateOf(Search.ENGINE_ALL)
         private set
 
+    /**
+     * URL propia del addon Peerflix. Vacío = se usa la pública
+     * (https://peerflix.mov). Si el usuario configura el suyo en
+     * config.peerflix.mov (p. ej. con su Real-Debrid), pega aquí esa URL.
+     */
+    var peerflixUrl by mutableStateOf("")
+        private set
+
     fun init(ctx: Context) {
         appCtx = ctx.applicationContext
         val sp = appCtx.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -37,6 +45,12 @@ object Prefs {
             ?.takeIf { it.isNotEmpty() } ?: Lang.DEFAULT_ORDER
         languageOrder.clear(); languageOrder.addAll(order)
         engine = sp.getString("engine", Search.ENGINE_ALL) ?: Search.ENGINE_ALL
+        peerflixUrl = sp.getString("peerflixUrl", "") ?: ""
+    }
+
+    fun savePeerflixUrl(u: String) {
+        peerflixUrl = u.trim()
+        sp().edit().putString("peerflixUrl", peerflixUrl).apply()
     }
 
     /**
