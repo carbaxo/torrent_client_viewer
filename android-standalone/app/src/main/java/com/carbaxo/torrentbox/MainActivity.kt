@@ -832,6 +832,40 @@ fun SettingsScreen() {
             }
         }
 
+        // --- Descargas ---
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Descargas", fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Descargar con datos móviles", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            if (Prefs.downloadOverMobile) "Activado: baja también sin WiFi (y en roaming)."
+                            else "Desactivado: las descargas esperan a tener WiFi.",
+                            color = Muted, style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                    Switch(
+                        checked = Prefs.downloadOverMobile,
+                        onCheckedChange = { Prefs.saveDownloadOverMobile(it) }
+                    )
+                }
+                if (Prefs.downloadOverMobile && RdDownloads.dataSaverBlocks(ctx)) {
+                    Text(
+                        "⚠️ El «Ahorro de datos» de Android está activo y bloquea las descargas " +
+                            "con datos móviles aunque la app las permita. Desactívalo, o excluye " +
+                            "TorrentBox en Ajustes de Android → Red → Ahorro de datos → Datos sin restricción.",
+                        color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
+                    )
+                }
+                Text(
+                    "El cambio afecta a las descargas NUEVAS: el sistema conserva la condición " +
+                        "de red con la que se encoló cada una.",
+                    color = Muted, style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
+
         // --- Motores de búsqueda ---
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -955,6 +989,16 @@ fun DownloadsScreen(rdDownloads: List<RdDownloads.Snap>, onPlayUrl: (String) -> 
                 }
             }
             Text(space, style = MaterialTheme.typography.labelSmall, color = Muted)
+            // Si el sistema bloquea los datos en segundo plano, la descarga se
+            // queda parada sin explicacion: mejor decirlo aqui.
+            if (active.isNotEmpty() && RdDownloads.dataSaverBlocks(ctx)) {
+                Text(
+                    "⚠️ El «Ahorro de datos» de Android puede tener parada la descarga con " +
+                        "datos móviles. Excluye TorrentBox en Ajustes de Android → Red → " +
+                        "Ahorro de datos, o conéctate a WiFi.",
+                    color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
+                )
+            }
             if (rdDownloads.isEmpty()) {
                 Spacer(Modifier.height(6.dp))
                 Text(

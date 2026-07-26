@@ -42,19 +42,33 @@ object RdDownloads {
         return if (n.contains('.')) n else "$n.mp4"
     }
 
-    /** Encola la descarga del enlace directo de RD. */
+    /**
+     * Encola la descarga del enlace directo de RD. Por defecto se permite con
+     * DATOS MÓVILES y en roaming; se puede desactivar en Ajustes → Descargas.
+     */
     fun enqueue(ctx: Context, url: String, name: String) {
         val fname = safeName(name)
+        val mobile = Prefs.downloadOverMobile
         val req = DownloadManager.Request(Uri.parse(url))
             .setTitle(name)
             .setDescription("Descarga vía Real-Debrid")
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setDestinationInExternalFilesDir(ctx, Environment.DIRECTORY_MOVIES, fname)
-            .setAllowedOverMetered(true)
-            .setAllowedOverRoaming(true)
+            .setAllowedOverMetered(mobile)
+            .setAllowedOverRoaming(mobile)
         val id = dm(ctx).enqueue(req)
         saveIds(ctx, ids(ctx) + (id to name))
     }
+
+    /**
+     * El "Ahorro de datos" de Android está activo y esta app no está excluida.
+     * Es la causa habitual de que una descarga se quede parada con datos
+     * móviles aunque la app sí los permita: lo bloquea el sistema, no nosotros.
+     */
+    fun dataSaverBlocks(ctx: Context): Boolean = runCatching {
+        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        cm.restrictBackgroundStatus == android.net.ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED
+    }.getOrDefault(false)
 
     fun snapshots(ctx: Context): List<Snap> {
         val out = ArrayList<Snap>()

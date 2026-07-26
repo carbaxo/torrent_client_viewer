@@ -45,6 +45,18 @@ object Prefs {
     var githubToken by mutableStateOf("")
         private set
 
+    /**
+     * Descargar también con datos móviles (y en roaming). Activado por defecto:
+     * si se desactiva, el DownloadManager espera a tener WiFi.
+     */
+    var downloadOverMobile by mutableStateOf(true)
+        private set
+
+    fun saveDownloadOverMobile(on: Boolean) {
+        downloadOverMobile = on
+        sp().edit().putBoolean("dlOverMobile", on).apply()
+    }
+
     private var secure: android.content.SharedPreferences? = null
 
     /** Almacén cifrado; si el Keystore del fabricante falla, reserva a normal. */
@@ -81,6 +93,7 @@ object Prefs {
         engine = sp.getString("engine", Search.ENGINE_ALL) ?: Search.ENGINE_ALL
         peerflixUrl = sp.getString("peerflixUrl", "") ?: ""
         githubToken = runCatching { secureStore().getString("ghToken", "") ?: "" }.getOrDefault("")
+        downloadOverMobile = sp.getBoolean("dlOverMobile", true)
     }
 
     fun savePeerflixUrl(u: String) {
