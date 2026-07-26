@@ -10,12 +10,11 @@ import net from 'node:net'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged
 
-// Datos del usuario (torrents, sesiones, userdata) en la carpeta estándar de
-// la plataforma; las descargas/buffer, en la carpeta de descargas del sistema.
+// Datos del usuario (sesiones, perfiles, historial) en la carpeta estándar de
+// la plataforma; las descargas de Real-Debrid, en Descargas del sistema.
 const userData = app.getPath('userData')
 process.env.DATA_DIR = process.env.DATA_DIR || path.join(userData, 'data')
 process.env.DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || path.join(app.getPath('downloads'), 'TorrentViewer')
-process.env.BUFFER_DIR = process.env.BUFFER_DIR || path.join(userData, 'buffer')
 // Sesión estable entre reinicios (si el usuario no definió una)
 process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'electron-' + app.getPath('userData')
 // Proyecto de Firebase (mismo que public/config.js; el projectId NO es secreto)

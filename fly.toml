@@ -1,4 +1,4 @@
-# Configuración de Fly.io para el BACKEND Node (con volumen persistente).
+# Configuración de Fly.io para el BACKEND Node (modo Real-Debrid).
 #
 # Pasos:
 #   1) fly launch --no-deploy        (o edita 'app' con un nombre único tuyo)
@@ -13,16 +13,18 @@ app = "torrent-client-viewer"       # <-- cámbialo por un nombre único
 primary_region = "mad"              # Madrid; ajusta a tu zona
 
 [build]
-  dockerfile = "Dockerfile"          # imagen con Node + ffmpeg
+  dockerfile = "Dockerfile"
 
 [env]
   PORT = "3000"
-  DATA_DIR = "/data"                 # usuarios, sesiones y estado de torrents
-  DOWNLOAD_DIR = "/data/downloads"   # archivos descargados (en el volumen)
+  DATA_DIR = "/data"                 # usuarios, sesiones, perfiles e historial
+  DOWNLOAD_DIR = "/data/downloads"   # solo si usas "Descargar" (archivo en el servidor)
   TMDB_REGION = "ES"
   SECURE_COOKIE = "true"             # Fly sirve por HTTPS
 
-# Volumen persistente montado en /data (sobrevive a reinicios/redeploys)
+# Volumen persistente montado en /data (sobrevive a reinicios/redeploys).
+# En modo Real-Debrid guarda poco: cuentas, perfiles, favoritos e historial.
+# Solo necesitas espacio de verdad si usas "Descargar" a disco del servidor.
 [[mounts]]
   source = "data"
   destination = "/data"
@@ -30,13 +32,14 @@ primary_region = "mad"              # Madrid; ajusta a tu zona
 [http_service]
   internal_port = 3000
   force_https = true
-  # auto_stop apaga la máquina en reposo (ahorra recursos gratis) pero PAUSA
-  # las descargas activas. Pon min_machines_running = 1 si quieres que siga
-  # descargando aunque no haya nadie conectado.
+  # El streaming va directo del CDN de Real-Debrid al navegador, así que la
+  # máquina puede dormirse sin cortar la reproducción: solo se despierta para
+  # buscar y para resolver magnets con RD. Ponlo a 1 si usas "Descargar" a
+  # disco y quieres que continúe sin nadie conectado.
   auto_stop_machines = "stop"
   auto_start_machines = true
   min_machines_running = 0
 
 [[vm]]
   size = "shared-cpu-1x"
-  memory = "512mb"                   # sube a 1gb si transcodificas mucho con ffmpeg
+  memory = "256mb"                   # sin motor BitTorrent ni ffmpeg basta con poco

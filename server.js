@@ -3,32 +3,23 @@ loadEnv() // carga .env si existe (antes de leer process.env)
 
 import express from 'express'
 import cors from 'cors'
-import multer from 'multer'
-import WebTorrent from 'webtorrent'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
-import { createStore } from './lib/store.js'
-import { createSearch, SearchError, isValidMagnet, isValidInfoHash } from './lib/search.js'
-import { detectFfmpeg, transcodeToMp4 } from './lib/transcode.js'
-import { isSubtitle, srtToVtt, extractEmbeddedVtt, probeSubtitleTracks } from './lib/subtitles.js'
+import { createSearch, SearchError, isValidMagnet } from './lib/search.js'
 import { createAuth, AuthError } from './lib/auth.js'
 import { createCatalog } from './lib/catalog.js'
 import { createUserData, DEFAULT_AVATARS } from './lib/userdata.js'
 import { createFirebaseVerifier, FirebaseAuthError } from './lib/firebaseAuth.js'
 import { createRealDebrid, RdError } from './lib/realdebrid.js'
 import { createRdDownloads } from './lib/rddownloads.js'
-import { createAceStream } from './lib/acestream.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const PORT = process.env.PORT || 3000
 const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR || path.join(__dirname, 'downloads')
-const BUFFER_DIR = process.env.BUFFER_DIR || path.join(__dirname, 'buffer')
-const UPLOAD_DIR = path.join(__dirname, 'uploads')
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data')
-const TORRENT_META_DIR = path.join(DATA_DIR, 'torrents')
 const OMDB_API_KEY = process.env.OMDB_API_KEY || ''
 const TMDB_API_KEY = process.env.TMDB_API_KEY || ''
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || ''
@@ -39,18 +30,15 @@ const SECURE_COOKIE = process.env.SECURE_COOKIE === 'true'
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean)
 const CROSS_SITE = ALLOWED_ORIGINS.length > 0
 
-for (const dir of [DOWNLOAD_DIR, BUFFER_DIR, UPLOAD_DIR, DATA_DIR, TORRENT_META_DIR]) {
+for (const dir of [DOWNLOAD_DIR, DATA_DIR]) {
   fs.mkdirSync(dir, { recursive: true })
 }
 
-const metaPath = (infoHash) => path.join(TORRENT_META_DIR, `${infoHash}.torrent`)
-
-// --- Ajustes del servidor (carpetas), editables desde la UI --------------
+// --- Ajustes del servidor (carpeta de descargas), editable desde la UI ----
 const SERVER_SETTINGS_FILE = path.join(DATA_DIR, 'server-settings.json')
 let serverSettings = {}
 try { serverSettings = JSON.parse(fs.readFileSync(SERVER_SETTINGS_FILE, 'utf8')) || {} } catch {}
 const activeDownloadDir = () => serverSettings.downloadDir || DOWNLOAD_DIR
-const activeBufferDir = () => serverSettings.bufferDir || BUFFER_DIR
 
 function saveServerSettings (patch) {
   serverSettings = { ...serverSettings, ...patch }
@@ -68,9 +56,6 @@ function ensureDir (p) {
 
 const app = express()
 app.set('trust proxy', 1)
-// maxConns más alto acelera la descarga al permitir más peers por torrent
-const client = new WebTorrent({ maxConns: 100 })
-const store = createStore(path.join(DATA_DIR, 'torrents.json'))
 const userData = createUserData(path.join(DATA_DIR, 'userdata.json'))
 const search = createSearch({ omdbKey: OMDB_API_KEY, tmdbKey: TMDB_API_KEY, cache: new Map() })
 const catalog = createCatalog({ tmdbKey: TMDB_API_KEY, region: TMDB_REGION, cache: new Map() })
@@ -85,19 +70,6 @@ const auth = createAuth({
 const firebaseVerifier = createFirebaseVerifier({ projectId: FIREBASE_PROJECT_ID })
 const realDebrid = createRealDebrid({})
 const rdDownloads = createRdDownloads({ file: path.join(DATA_DIR, 'rd-downloads.json') })
-const aceStream = createAceStream({})
-// Caché en memoria de la playlist (cambia poco; TTL 30 min)
-let acePlaylistCache = { at: 0, data: null }
-
-let ffmpegAvailable = false
-detectFfmpeg().then((ok) => {
-  ffmpegAvailable = ok
-  console.log(ok ? '[ffmpeg] disponible: transcodificación y subtítulos embebidos activados' : '[ffmpeg] no encontrado')
-})
-
-client.on('error', (err) => console.error('[webtorrent] error:', err.message))
-
-const upload = multer({ dest: UPLOAD_DIR, limits: { fileSize: 5 * 1024 * 1024, files: 1 } })
 
 // --- Middleware ---------------------------------------------------------
 
@@ -150,13 +122,8 @@ function makeRateLimiter (max, windowMs, message) {
 const searchLimiter = makeRateLimiter(20, 60 * 1000, 'Demasiadas búsquedas. Espera un momento.')
 const authLimiter = makeRateLimiter(10, 60 * 1000, 'Demasiados intentos. Espera un minuto.')
 
-// --- Helpers de torrents ------------------------------------------------
+// --- MIME de los vídeos descargados con Real-Debrid ----------------------
 
-const VIDEO_EXT = new Set([
-  '.mp4', '.m4v', '.webm', '.ogv', '.ogg', '.mkv', '.avi',
-  '.mov', '.wmv', '.flv', '.mpg', '.mpeg', '.ts', '.3gp'
-])
-const NATIVE_PLAYABLE = new Set(['.mp4', '.m4v', '.webm', '.ogv', '.ogg'])
 const MIME = {
   '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.webm': 'video/webm',
   '.ogv': 'video/ogg', '.ogg': 'video/ogg', '.mkv': 'video/x-matroska',
@@ -165,123 +132,23 @@ const MIME = {
   '.ts': 'video/mp2t', '.3gp': 'video/3gpp'
 }
 const ext = (name) => path.extname(name).toLowerCase()
-const isVideo = (name) => VIDEO_EXT.has(ext(name))
 
-function serializeTorrent (torrent) {
-  const entry = store.all().find((e) => e.infoHash === torrent.infoHash)
-  const subFiles = torrent.files
-    .map((f, index) => ({ index, name: f.name }))
-    .filter((f) => isSubtitle(f.name))
-
-  const files = torrent.files.map((file, index) => ({
-    index,
-    name: file.name,
-    length: file.length,
-    downloaded: file.downloaded,
-    progress: file.progress,
-    isVideo: isVideo(file.name),
-    isSubtitle: isSubtitle(file.name),
-    nativePlayable: NATIVE_PLAYABLE.has(ext(file.name)),
-    streamUrl: `/stream/${torrent.infoHash}/${index}`,
-    transcodeUrl: `/transcode/${torrent.infoHash}/${index}`,
-    subtitleFiles: isVideo(file.name) ? subFiles : []
-  }))
-
+// Título al que pertenece una descarga, para guardar el progreso al verla:
+// { tmdbId, type, season, episode, name, poster }. Se sanea porque viene del
+// cliente y se guarda tal cual en disco.
+function sanitizeTitleRef (t) {
+  if (!t || typeof t !== 'object' || Array.isArray(t)) return null
+  const tmdbId = Number(t.tmdbId)
+  if (!Number.isInteger(tmdbId) || tmdbId <= 0) return null
+  const int = (v) => (Number.isInteger(Number(v)) && Number(v) > 0 ? Number(v) : -1)
   return {
-    infoHash: torrent.infoHash,
-    name: torrent.name,
-    magnetURI: torrent.magnetURI,
-    length: torrent.length,
-    downloaded: torrent.downloaded,
-    uploaded: torrent.uploaded,
-    progress: torrent.progress,
-    downloadSpeed: torrent.downloadSpeed,
-    uploadSpeed: torrent.uploadSpeed,
-    numPeers: torrent.numPeers,
-    timeRemaining: torrent.timeRemaining,
-    done: torrent.done,
-    paused: torrent.paused,
-    ready: torrent.ready,
-    path: torrent.path,
-    mode: entry?.mode || 'download',
-    titleRef: entry?.titleRef || null,
-    files
+    tmdbId,
+    type: t.type === 'series' ? 'series' : 'movie',
+    season: int(t.season),
+    episode: int(t.episode),
+    name: String(t.name || '').slice(0, 300),
+    poster: String(t.poster || '').slice(0, 500) || null
   }
-}
-
-// Guarda el torrent en el almacén persistente (idempotente) y le asigna
-// propietario. Si hay metadatos, guarda el .torrent para reanudar offline.
-function persistTorrent (torrent, userId, extra = {}) {
-  if (!torrent || !torrent.infoHash) return
-  const prev = store.all().find((e) => e.infoHash === torrent.infoHash)
-  // El .torrent solo sirve para reanudar cuando ya llegaron los metadatos
-  // (dict `info`); antes de eso, torrentFile es un stub imposible de parsear.
-  let hasMeta = !!(prev && prev.hasMeta)
-  if (torrent.info && torrent.torrentFile) {
-    try {
-      const p = metaPath(torrent.infoHash)
-      if (!hasMeta || !fs.existsSync(p)) fs.writeFileSync(p, torrent.torrentFile)
-      hasMeta = true
-    } catch (err) {
-      console.error('[persistencia] no se pudo guardar .torrent:', err.message)
-    }
-  }
-  store.add({
-    infoHash: torrent.infoHash,
-    magnetURI: torrent.magnetURI,
-    name: torrent.name || null,
-    hasMeta,
-    paused: !!torrent.paused,
-    owners: userId ? [userId] : [],
-    mode: extra.mode || prev?.mode || 'download',
-    titleRef: extra.titleRef ?? prev?.titleRef ?? null,
-    path: torrent.path || prev?.path || null,
-    addedAt: prev?.addedAt || new Date().toISOString()
-  })
-}
-
-// Elimina un torrent en modo buffer (y sus archivos) cuando todos sus vídeos
-// han quedado marcados como vistos por el dueño. Las descargas normales no
-// se tocan nunca.
-function cleanupBufferTorrent (infoHash, userId) {
-  const entry = store.all().find((e) => e.infoHash === infoHash)
-  if (!entry || entry.mode !== 'buffer') return
-  const torrent = client.get(infoHash)
-  if (!torrent || !torrent.files.length) return
-  const videos = torrent.files.map((f, i) => ({ i, name: f.name })).filter((f) => isVideo(f.name))
-  if (!videos.length) return
-  const allWatched = videos.every((v) => userData.isWatchedByAnyProfile(userId, infoHash, v.i))
-  if (!allWatched) return
-  // Si otro usuario también lo posee, solo lo soltamos nosotros
-  if (store.getOwners(infoHash).some((o) => o !== userId)) {
-    store.removeOwner(infoHash, userId)
-    return
-  }
-  console.log('[buffer] vídeo visto: eliminando torrent temporal y archivos:', entry.name || infoHash)
-  torrent.destroy({ destroyStore: true }, (err) => {
-    if (err) console.error('[buffer] error al eliminar:', err.message)
-  })
-  store.remove(infoHash)
-  fs.unlink(metaPath(infoHash), () => {})
-}
-
-// Devuelve el torrent si existe Y pertenece al usuario; si no, responde error.
-function getOwnedTorrent (req, res) {
-  const { infoHash } = req.params
-  const torrent = client.get(infoHash)
-  if (!torrent) { res.status(404).json({ error: 'Torrent no encontrado.' }); return null }
-  if (!store.isOwner(infoHash, req.user.id)) {
-    res.status(403).json({ error: 'No tienes acceso a este torrent.' }); return null
-  }
-  return torrent
-}
-
-function getOwnedFile (req, res) {
-  const torrent = getOwnedTorrent(req, res)
-  if (!torrent) return null
-  const file = torrent.files[Number(req.params.fileIndex)]
-  if (!file) { res.status(404).send('Archivo no encontrado.'); return null }
-  return file
 }
 
 // ========================================================================
@@ -346,7 +213,6 @@ app.get('/api/auth/me', (req, res) => {
 // Config pública (no requiere sesión)
 app.get('/api/config', (req, res) => {
   res.json({
-    ffmpeg: ffmpegAvailable,
     search: !!OMDB_API_KEY,
     catalogs: !!TMDB_API_KEY,
     firebase: !!FIREBASE_PROJECT_ID,
@@ -360,11 +226,6 @@ app.get('/api/config', (req, res) => {
 app.use('/api/me', auth.requireAuth)
 app.use('/api/search', auth.requireAuth)
 app.use('/api/catalogs', auth.requireAuth)
-app.use('/api/torrents', auth.requireAuth)
-app.use('/stream', auth.requireAuth)
-app.use('/transcode', auth.requireAuth)
-app.use('/subtitle', auth.requireAuth)
-app.use('/subtitle-embedded', auth.requireAuth)
 
 // ========================================================================
 // BÚSQUEDA
@@ -527,6 +388,7 @@ app.post('/api/rd/download', searchLimiter, async (req, res) => {
       url: result.url,
       filename: result.filename,
       magnet,
+      title: sanitizeTitleRef((req.body || {}).title),
       dir: activeDownloadDir()
     })
     res.json({ success: true, ready: true, download: rdDownloads.toPublic(entry) })
@@ -600,77 +462,29 @@ app.get('/rd-file/:id', auth.requireAuth, (req, res) => {
 })
 
 // ========================================================================
-// ACESTREAM (TV P2P) — paridad con la pestaña TV de la app Android
-// ========================================================================
-
-app.use('/api/tv', auth.requireAuth)
-
-// Estado del engine local (127.0.0.1:6878)
-app.get('/api/tv/engine', async (req, res) => {
-  res.json(await aceStream.engineStatus())
-})
-
-// Lista de canales de la playlist pública (con caché de 30 min)
-app.get('/api/tv/channels', async (req, res) => {
-  try {
-    if (!acePlaylistCache.data || Date.now() - acePlaylistCache.at > 30 * 60 * 1000) {
-      acePlaylistCache = { at: Date.now(), data: await aceStream.loadPlaylist() }
-    }
-    res.json({ channels: acePlaylistCache.data })
-  } catch (err) {
-    res.status(502).json({ error: 'No se pudo cargar la lista de canales: ' + err.message })
-  }
-})
-
-// Búsqueda de canales por texto
-app.get('/api/tv/search', searchLimiter, async (req, res) => {
-  const q = String(req.query.q || '').trim()
-  if (!q) return res.status(400).json({ error: 'Escribe algo para buscar.' })
-  try {
-    res.json({ channels: await aceStream.searchApi(q) })
-  } catch (err) {
-    res.status(502).json({ error: 'Error al buscar canales: ' + err.message })
-  }
-})
-
-// Resuelve un content-id contra el engine local -> URL reproducible
-app.get('/api/tv/resolve', async (req, res) => {
-  try {
-    const out = await aceStream.resolve(String(req.query.id || ''))
-    res.json({ success: true, ...out })
-  } catch (err) {
-    res.status(err.status || 502).json({ error: err.message })
-  }
-})
-
-// ========================================================================
-// AJUSTES DEL SERVIDOR (carpetas de descarga y buffer)
+// AJUSTES DEL SERVIDOR (carpeta donde se guardan las descargas de RD)
 // ========================================================================
 
 app.use('/api/settings', auth.requireAuth)
 
 app.get('/api/settings/server', (req, res) => {
-  res.json({ downloadDir: activeDownloadDir(), bufferDir: activeBufferDir() })
+  res.json({ downloadDir: activeDownloadDir() })
 })
 
 app.put('/api/settings/server', (req, res) => {
-  const { downloadDir, bufferDir } = req.body || {}
+  const { downloadDir } = req.body || {}
   const patch = {}
   try {
     if (downloadDir !== undefined) patch.downloadDir = ensureDir(downloadDir)
-    if (bufferDir !== undefined) patch.bufferDir = ensureDir(bufferDir)
   } catch (err) {
     return res.status(400).json({ error: 'Carpeta no válida o sin permisos de escritura: ' + err.message })
-  }
-  if (patch.downloadDir && patch.bufferDir && patch.downloadDir === patch.bufferDir) {
-    return res.status(400).json({ error: 'La carpeta de descargas y la de buffer deben ser distintas.' })
   }
   try {
     saveServerSettings(patch)
   } catch (err) {
     return res.status(500).json({ error: 'No se pudieron guardar los ajustes: ' + err.message })
   }
-  res.json({ downloadDir: activeDownloadDir(), bufferDir: activeBufferDir(), note: 'Se aplican a los torrents nuevos.' })
+  res.json({ downloadDir: activeDownloadDir(), note: 'Se aplica a las descargas nuevas.' })
 })
 
 // ========================================================================
@@ -729,7 +543,6 @@ app.delete('/api/me/favorites/:id', (req, res) => {
 app.post('/api/me/progress', (req, res) => {
   const entry = userData.setProgress(req.user.id, profileOf(req), req.body || {})
   if (!entry) return res.status(400).json({ error: 'Progreso inválido.' })
-  if (entry.watched) cleanupBufferTorrent(entry.infoHash, req.user.id)
   res.json({ progress: entry })
 })
 
@@ -744,256 +557,16 @@ app.put('/api/me/settings', (req, res) => {
   res.json({ settings })
 })
 
-// ========================================================================
-// TORRENTS (por usuario)
-// ========================================================================
-
-app.post('/api/torrents', (req, res) => {
-  const magnet = (req.body && req.body.magnet ? String(req.body.magnet) : '').trim()
-  if (!magnet) return res.status(400).json({ error: 'Falta el enlace magnet.' })
-  if (!isValidMagnet(magnet)) return res.status(400).json({ error: 'El enlace magnet no es válido.' })
-  const mode = req.body.mode === 'buffer' ? 'buffer' : 'download'
-  const titleRef = req.body.titleRef ? String(req.body.titleRef).slice(0, 64) : null
-  addTorrent(magnet, req.user.id, res, null, { mode, titleRef })
-})
-
-app.post('/api/torrents/upload', upload.single('torrent'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No se recibió ningún archivo .torrent.' })
-  const filePath = req.file.path
-  addTorrent(filePath, req.user.id, res, () => fs.unlink(filePath, () => {}))
-})
-
-function addTorrent (torrentId, userId, res, cleanup, opts = {}) {
-  const extra = { mode: opts.mode || 'download', titleRef: opts.titleRef || null }
-  let responded = false
-  const fail = (msg, code = 400) => {
-    if (cleanup) cleanup()
-    if (!responded) { responded = true; res.status(code).json({ error: msg }) }
-  }
-  const respond = () => {
-    if (cleanup) cleanup()
-    persistTorrent(torrent, userId, extra)
-    store.addOwner(torrent.infoHash, userId)
-    if (!responded) { responded = true; res.json(serializeTorrent(torrent)) }
-  }
-
-  let torrent
-  try {
-    // El buffer temporal y las descargas definitivas viven en carpetas distintas
-    torrent = client.add(torrentId, { path: extra.mode === 'buffer' ? activeBufferDir() : activeDownloadDir() })
-  } catch (err) {
-    return fail('No se pudo añadir el torrent: ' + err.message)
-  }
-
-  torrent.on('error', (err) => {
-    if (/duplicate/i.test(err.message)) {
-      const existing = client.get(torrent && torrent.infoHash)
-      if (existing) { torrent = existing; respond(); return }
-    }
-    fail('Error en el torrent: ' + err.message, 500)
-  })
-  torrent.on('metadata', () => { persistTorrent(torrent, userId, extra); store.addOwner(torrent.infoHash, userId); respond() })
-  torrent.on('done', () => persistTorrent(torrent, userId))
-
-  if (torrent.ready || torrent.files.length) { respond(); return }
-  const timer = setTimeout(respond, 4000)
-  if (timer.unref) timer.unref()
-}
-
-app.get('/api/torrents', (req, res) => {
-  const mine = client.torrents.filter((t) => store.isOwner(t.infoHash, req.user.id))
-  res.json(mine.map(serializeTorrent))
-})
-
-app.get('/api/torrents/:infoHash', (req, res) => {
-  const torrent = getOwnedTorrent(req, res)
-  if (!torrent) return
-  res.json(serializeTorrent(torrent))
-})
-
-app.post('/api/torrents/:infoHash/pause', (req, res) => {
-  const torrent = getOwnedTorrent(req, res)
-  if (!torrent) return
-  torrent.pause()
-  store.update(torrent.infoHash, { paused: true })
-  res.json(serializeTorrent(torrent))
-})
-
-app.post('/api/torrents/:infoHash/resume', (req, res) => {
-  const torrent = getOwnedTorrent(req, res)
-  if (!torrent) return
-  torrent.resume()
-  store.update(torrent.infoHash, { paused: false })
-  res.json(serializeTorrent(torrent))
-})
-
-app.delete('/api/torrents/:infoHash', (req, res) => {
-  const torrent = getOwnedTorrent(req, res)
-  if (!torrent) return
-  const removeFiles = req.query.files === 'true'
-  const infoHash = torrent.infoHash
-  const remaining = store.removeOwner(infoHash, req.user.id)
-  // Solo destruimos el torrent cuando ya no lo posee nadie
-  if (remaining > 0) return res.json({ ok: true, keptForOthers: true })
-  torrent.destroy({ destroyStore: removeFiles }, (err) => {
-    if (err) return res.status(500).json({ error: err.message })
-    store.remove(infoHash)
-    fs.unlink(metaPath(infoHash), () => {})
-    res.json({ ok: true })
-  })
-})
-
-// ========================================================================
-// STREAMING (Range)
-// ========================================================================
-
-app.get('/stream/:infoHash/:fileIndex', (req, res) => {
-  const file = getOwnedFile(req, res)
-  if (!file) return
-
-  const total = file.length
-  const range = req.headers.range
-  res.setHeader('Accept-Ranges', 'bytes')
-  res.setHeader('Content-Type', MIME[ext(file.name)] || 'application/octet-stream')
-
-  let start = 0
-  let end = total - 1
-  if (range) {
-    const match = /bytes=(\d*)-(\d*)/.exec(range)
-    if (match) {
-      if (match[1]) start = parseInt(match[1], 10)
-      if (match[2]) end = parseInt(match[2], 10)
-    }
-    if (isNaN(start) || isNaN(end) || start > end || start < 0 || end >= total) {
-      res.setHeader('Content-Range', `bytes */${total}`)
-      return res.status(416).end()
-    }
-    res.status(206)
-    res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`)
-  } else {
-    res.status(200)
-  }
-  res.setHeader('Content-Length', end - start + 1)
-  if (req.method === 'HEAD') return res.end()
-
-  const stream = file.createReadStream({ start, end })
-  stream.on('error', (err) => { console.error('[stream]', err.message); if (!res.headersSent) res.status(500); res.end() })
-  req.on('close', () => stream.destroy())
-  stream.pipe(res)
-})
-
-// ========================================================================
-// TRANSCODIFICACIÓN
-// ========================================================================
-
-app.get('/transcode/:infoHash/:fileIndex', (req, res) => {
-  if (!ffmpegAvailable) return res.status(503).send('Transcodificación no disponible: ffmpeg no instalado.')
-  const file = getOwnedFile(req, res)
-  if (!file) return
-  res.setHeader('Content-Type', 'video/mp4')
-  res.setHeader('Cache-Control', 'no-store')
-  transcodeToMp4(file.createReadStream(), res)
-})
-
-// ========================================================================
-// SUBTÍTULOS
-// ========================================================================
-
-// Lista de pistas embebidas (requiere ffprobe)
-app.get('/api/torrents/:infoHash/:fileIndex/subinfo', async (req, res) => {
-  const file = getOwnedFile(req, res)
-  if (!file) return
-  if (!ffmpegAvailable) return res.json({ embedded: [] })
-  const tracks = await probeSubtitleTracks(file.createReadStream())
-  res.json({ embedded: tracks })
-})
-
-// Sirve un fichero de subtítulos incluido en el torrent, convertido a VTT
-app.get('/subtitle/:infoHash/:fileIndex', (req, res) => {
-  const file = getOwnedFile(req, res)
-  if (!file) return
-  if (!isSubtitle(file.name)) return res.status(400).send('El archivo no es un subtítulo.')
-  res.setHeader('Content-Type', 'text/vtt; charset=utf-8')
-  const chunks = []
-  const stream = file.createReadStream()
-  stream.on('data', (c) => chunks.push(c))
-  stream.on('error', () => { if (!res.headersSent) res.status(500); res.end() })
-  stream.on('end', () => {
-    const text = Buffer.concat(chunks).toString('utf8')
-    res.end(srtToVtt(text))
-  })
-})
-
-// Extrae una pista de subtítulos embebida a VTT (requiere ffmpeg)
-app.get('/subtitle-embedded/:infoHash/:fileIndex/:track', (req, res) => {
-  if (!ffmpegAvailable) return res.status(503).send('ffmpeg no disponible.')
-  const file = getOwnedFile(req, res)
-  if (!file) return
-  const track = Number(req.params.track)
-  if (!Number.isInteger(track) || track < 0) return res.status(400).send('Pista inválida.')
-  res.setHeader('Content-Type', 'text/vtt; charset=utf-8')
-  res.setHeader('Cache-Control', 'no-store')
-  extractEmbeddedVtt(file.createReadStream(), track, res)
-})
-
-// ========================================================================
-// Reanudar torrents persistidos
-// ========================================================================
-
-function resumePersisted () {
-  const entries = store.all()
-  if (!entries.length) return
-  console.log(`[persistencia] reanudando ${entries.length} torrent(s)…`)
-  for (const entry of entries) {
-    const meta = metaPath(entry.infoHash)
-    const magnet = entry.magnetURI || entry.infoHash
-    const useMeta = entry.hasMeta && fs.existsSync(meta)
-    if (!useMeta && !magnet) continue
-    try {
-      if (client.get(entry.infoHash)) continue
-      // Cada torrent se reanuda en la carpeta donde se descargó
-      const dir = entry.path || (entry.mode === 'buffer' ? activeBufferDir() : activeDownloadDir())
-      const addFrom = (id, viaMeta) => {
-        const torrent = client.add(id, { path: dir })
-        torrent.on('error', (err) => {
-          if (viaMeta && magnet) {
-            // .torrent corrupto (p. ej. stub sin `info` guardado por versiones
-            // anteriores): se descarta y se reintenta con el magnet.
-            console.error('[persistencia] .torrent inválido, reintentando con magnet:', entry.name || entry.infoHash)
-            try { fs.unlinkSync(meta) } catch {}
-            store.update(entry.infoHash, { hasMeta: false })
-            addFrom(magnet, false)
-            return
-          }
-          console.error('[persistencia] error al reanudar:', err.message)
-        })
-        torrent.on('metadata', () => {
-          try {
-            fs.writeFileSync(meta, torrent.torrentFile)
-            store.update(entry.infoHash, { hasMeta: true })
-          } catch {}
-        })
-        if (entry.paused) torrent.once('ready', () => torrent.pause())
-      }
-      addFrom(useMeta ? meta : magnet, useMeta)
-    } catch (err) {
-      console.error('[persistencia] no se pudo reanudar', entry.infoHash, err.message)
-    }
-  }
-}
-
 app.listen(PORT, () => {
-  console.log(`Torrent Client Viewer escuchando en http://localhost:${PORT}`)
-  console.log(`Descargas en: ${DOWNLOAD_DIR}`)
+  console.log(`Torrent Client Viewer (modo Real-Debrid) escuchando en http://localhost:${PORT}`)
+  console.log(`Descargas en: ${activeDownloadDir()}`)
   if (!OMDB_API_KEY) console.log('[aviso] OMDB_API_KEY sin configurar: el buscador Torrentio quedará limitado.')
   if (!TMDB_API_KEY) console.log('[aviso] TMDB_API_KEY sin configurar: los catálogos de streaming estarán desactivados.')
-  resumePersisted()
 })
 
 // Apagado limpio: vuelca el estado a disco antes de salir
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
-    try { store.flush() } catch {}
     try { userData.flush() } catch {}
     try { rdDownloads.flush() } catch {}
     process.exit(0)
