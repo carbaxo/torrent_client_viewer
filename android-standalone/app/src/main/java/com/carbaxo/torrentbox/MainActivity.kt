@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,7 +46,13 @@ private fun onMain(block: () -> Unit) = mainHandler.post(block)
 private fun onMainDelayed(ms: Long, block: () -> Unit) = mainHandler.postDelayed(block, ms)
 
 /** Estado de la ventana flotante mientras Real-Debrid prepara un enlace. */
-data class Prep(val download: Boolean, val msg: String, val error: String? = null)
+data class Prep(
+    val download: Boolean,
+    val msg: String,
+    val error: String? = null,
+    /** Magnet del enlace: si RD falla, se puede añadir a mano a la cuenta. */
+    val magnet: String = ""
+)
 
 // Paleta al estilo de la web (morado Stremio)
 private val Accent = Color(0xFF7B5BF5)
@@ -74,6 +81,12 @@ class MainActivity : AppCompatActivity() {
                 .launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
+        // Magnets que llegan de fuera: al pulsar uno en el navegador o al
+        // compartir un texto con TorrentBox. Se usa el listener de androidx en
+        // vez de sobrescribir onNewIntent (la app es singleTop).
+        handleIncoming(intent)
+        addOnNewIntentListener { handleIncoming(it) }
+
         setContent {
             MaterialTheme(
                 colorScheme = darkColorScheme(primary = Accent, background = Bg, surface = Surface1)
@@ -88,6 +101,14 @@ class MainActivity : AppCompatActivity() {
                     )
                 }
             }
+        }
+    }
+
+    /** Deja el magnet/enlace recibido en el buzón; Descargas lo recoge. */
+    private fun handleIncoming(i: Intent?) {
+        when (i?.action) {
+            Intent.ACTION_VIEW -> MagnetInbox.offer(i.dataString)
+            Intent.ACTION_SEND -> MagnetInbox.offer(i.getStringExtra(Intent.EXTRA_TEXT))
         }
     }
 
@@ -178,6 +199,12 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
 
     // Avisos de episodios nuevos cuando llegan los favoritos de la nube
     LaunchedEffect(Sync.favorites.size) { if (Sync.favorites.isNotEmpty()) EpisodeAlerts.check(ctx) }
+
+    // Un magnet compartido desde fuera (o el de un enlace que falló) se añade en
+    // Descargas: nos vamos allí para que se vea el campo ya relleno.
+    LaunchedEffect(MagnetInbox.pending) {
+        if (MagnetInbox.pending != null) { detail = null; showCastScreen = false; tab = Tab.DOWNLOADS }
+    }
 
     // --- ¿Con qué reproductor? (modo "preguntar cada vez") ---
     askPlayer?.let { (url, c) ->
@@ -1074,6 +1101,9 @@ fun DownloadsScreen(rdDownloads: List<RdDownloads.Snap>, onPlayUrl: (String) -> 
             }
         }
 
+        // --- Añadir un magnet/enlace a mano + estado de la cuenta de RD ---
+        item { Spacer(Modifier.height(10.dp)); RdCloudSection(onPlayUrl = onPlayUrl) }
+
         // --- Listas para ver ---
         if (ready.isNotEmpty()) {
             item { Text("▶ Listas para ver", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color(0xFF34D399), modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)) }
@@ -1085,6 +1115,264 @@ fun DownloadsScreen(rdDownloads: List<RdDownloads.Snap>, onPlayUrl: (String) -> 
             item { Text("⏳ Descargando", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp)) }
             items(active.size) { i -> RdDownloadCard(active[i], onPlayUrl = { onPlayUrl(RdDownloads.playUri(ctx, active[i].id) ?: active[i].localUri ?: "") }, onRemove = { RdDownloads.remove(ctx, active[i].id) }) }
         }
+    }
+}
+
+/**
+ * Añadir un magnet o un enlace a Real-Debrid A MANO, y ver qué está haciendo RD
+ * con los torrents de la cuenta.
+ *
+ * Es la salida a los dos fallos habituales de los enlaces de los buscadores, que
+ * no dependen de la app: que RD todavía no tenga el torrent en su caché (lo baja
+ * a sus servidores, y eso tarda) o que el archivo ya se haya borrado de ella. En
+ * los dos casos la solución es meter el magnet en la cuenta y esperar a que RD lo
+ * tenga; desde aquí se ve el progreso real en vez de un mensaje de error.
+ */
+@Composable
+private fun RdCloudSection(onPlayUrl: (String) -> Unit) {
+    val ctx = LocalContext.current
+    // rememberSaveable: la sección vive en un item de la lista y se destruye al
+    // salir de pantalla; el magnet pegado no se puede perder por eso.
+    var input by rememberSaveable { mutableStateOf("") }
+    var msg by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var list by remember { mutableStateOf<List<RealDebrid.Torrent>>(emptyList()) }
+    var listErr by remember { mutableStateOf("") }
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    // Elegir archivo dentro de un pack: (archivos, ¿descargar o ver?)
+    var picker by remember { mutableStateOf<Pair<List<RealDebrid.RdFile>, Boolean>?>(null) }
+
+    fun refresh() {
+        if (!RealDebrid.configured) return
+        RealDebrid.torrents { l, err ->
+            onMain { if (l != null) { list = l; listErr = "" } else listErr = err ?: "" }
+        }
+    }
+
+    /** Del enlace de RD a la URL directa, y a ver o a descargar. */
+    fun useLink(link: String, download: Boolean) {
+        busy = true; msg = "Preparando el enlace…"
+        RealDebrid.unrestrict(link) { url, name, err ->
+            onMain {
+                busy = false
+                when {
+                    url == null -> msg = err ?: "No se pudo preparar el enlace."
+                    download -> {
+                        RdDownloads.enqueue(ctx, url, name ?: "video")
+                        msg = "⬇ Descarga encolada: ${name ?: ""}"
+                    }
+                    else -> { msg = ""; onPlayUrl(url) }
+                }
+            }
+        }
+    }
+
+    /** Abre un torrent ya listo: si trae varios archivos, deja elegir. */
+    fun openTorrent(t: RealDebrid.Torrent, download: Boolean) {
+        busy = true; msg = "Mirando qué archivos tiene…"
+        RealDebrid.torrentFiles(t.id) { files, err ->
+            onMain {
+                busy = false
+                when {
+                    files == null -> msg = err ?: "No se pudo leer el torrent."
+                    files.size == 1 -> useLink(files[0].link, download)
+                    else -> { msg = ""; picker = files to download }
+                }
+            }
+        }
+    }
+
+    fun add() {
+        val v = input.trim()
+        busy = true
+        if (v.startsWith("magnet:", ignoreCase = true)) {
+            msg = "Añadiendo el magnet a Real-Debrid…"
+            RealDebrid.addMagnet(v) { id, err ->
+                onMain {
+                    busy = false
+                    if (id == null) msg = err ?: "No se pudo añadir."
+                    else {
+                        input = ""; expanded = true
+                        msg = "✅ Añadido. Real-Debrid lo está bajando a sus servidores; " +
+                            "cuando ponga «listo» ya se puede ver."
+                        refresh()
+                    }
+                }
+            }
+        } else {
+            // Enlace de hoster (1fichier, Mega…): es el "Descargador" de la web de RD
+            msg = "Preparando el enlace con Real-Debrid…"
+            RealDebrid.unrestrict(v) { url, name, err ->
+                onMain {
+                    busy = false
+                    if (url == null) msg = err ?: "No se pudo preparar el enlace."
+                    else {
+                        RdDownloads.enqueue(ctx, url, name ?: "video")
+                        input = ""; msg = "⬇ Descarga encolada: ${name ?: ""}"
+                    }
+                }
+            }
+        }
+    }
+
+    // Un magnet llegado de fuera (o de un enlace que falló) entra por aquí
+    LaunchedEffect(MagnetInbox.pending) {
+        MagnetInbox.pending?.let {
+            input = it; expanded = true
+            msg = "Pegado. Pulsa «Añadir a Real-Debrid»."
+            MagnetInbox.clear()
+        }
+    }
+
+    // Refresco: rápido mientras RD esté trabajando, lento si no hay nada en marcha
+    LaunchedEffect(RealDebrid.configured) {
+        while (RealDebrid.configured) {
+            refresh()
+            kotlinx.coroutines.delay(if (list.any { it.working }) 4000L else 20000L)
+        }
+    }
+
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Añadir a Real-Debrid", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                if (RealDebrid.configured) {
+                    IconButton(onClick = { refresh() }) { Icon(Icons.Filled.Refresh, "Actualizar") }
+                }
+            }
+            if (!RealDebrid.configured) {
+                Text(
+                    "Conecta Real-Debrid en Ajustes para poder añadir magnets.",
+                    color = Color(0xFFFBBF24), style = MaterialTheme.typography.bodySmall
+                )
+            } else {
+                Text(
+                    "Pega un magnet y Real-Debrid lo baja a sus servidores; luego se ve al " +
+                        "instante. Sirve para lo que falla en la ficha: cuando RD todavía no " +
+                        "lo tiene o el archivo se borró de su caché. Un enlace de hoster " +
+                        "(1fichier, Mega…) se prepara y se descarga directamente.",
+                    color = Muted, style = MaterialTheme.typography.bodySmall
+                )
+                OutlinedTextField(
+                    value = input, onValueChange = { input = it },
+                    label = { Text("magnet:?xt=… o un enlace") },
+                    minLines = 2, maxLines = 4,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Button(onClick = { add() }, enabled = input.isNotBlank() && !busy) {
+                        Text("Añadir a Real-Debrid")
+                    }
+                    OutlinedButton(onClick = {
+                        val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                            as? android.content.ClipboardManager
+                        val t = cm?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString()
+                        if (t.isNullOrBlank()) msg = "No hay nada copiado." else { input = t; msg = "" }
+                    }) { Text("Pegar") }
+                    if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                }
+                if (msg.isNotBlank()) Text(msg, color = Muted, style = MaterialTheme.typography.labelSmall)
+
+                // --- Lo que hay en la cuenta de RD ---
+                Spacer(Modifier.height(2.dp))
+                val working = list.count { it.working }
+                Row(
+                    Modifier.fillMaxWidth().clickable { expanded = !expanded },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "En tu Real-Debrid (${list.size})" + if (working > 0) " · $working en marcha" else "",
+                        fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Icon(
+                        if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                        if (expanded) "Ocultar" else "Mostrar"
+                    )
+                }
+                if (listErr.isNotBlank()) Text(listErr, color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall)
+                if (expanded) {
+                    if (list.isEmpty() && listErr.isBlank()) {
+                        Text("No hay nada en la cuenta.", color = Muted, style = MaterialTheme.typography.labelSmall)
+                    }
+                    list.forEach { t ->
+                        RdCloudRow(
+                            t = t,
+                            onPlay = { openTorrent(t, false) },
+                            onDownload = { openTorrent(t, true) },
+                            onDelete = {
+                                RealDebrid.deleteTorrent(t.id) { err ->
+                                    onMain { if (err != null) msg = err; refresh() }
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Elegir archivo cuando el torrent trae varios (packs de temporada) ---
+    picker?.let { (files, download) ->
+        AlertDialog(
+            onDismissRequest = { picker = null },
+            title = { Text(if (download) "¿Cuál descargo?" else "¿Cuál pongo?") },
+            text = {
+                Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
+                    files.forEach { f ->
+                        Text(
+                            f.name + if (f.bytes > 0) "   ·   ${Search.humanSize(f.bytes)}" else "",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.fillMaxWidth()
+                                .clickable { picker = null; useLink(f.link, download) }
+                                .padding(vertical = 8.dp)
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { picker = null }) { Text("Cancelar") } }
+        )
+    }
+}
+
+/** Una línea de la lista de torrents de la cuenta de Real-Debrid. */
+@Composable
+private fun RdCloudRow(
+    t: RealDebrid.Torrent,
+    onPlay: () -> Unit,
+    onDownload: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(t.name, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        val detail = buildList {
+            add(RealDebrid.statusEs(t.status))
+            if (t.working && t.status != "queued") add("${t.progress}%")
+            if (t.speed > 0) add("${Search.humanSize(t.speed)}/s")
+            if (t.status == "downloading" && t.seeders > 0) add("${t.seeders} semillas")
+            if (t.bytes > 0) add(Search.humanSize(t.bytes))
+            if (t.ready && t.links > 1) add("${t.links} archivos")
+        }.joinToString("  ·  ")
+        Text(
+            detail,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (t.ready) Color(0xFF34D399) else if (t.working) Muted else Color(0xFFFBBF24)
+        )
+        if (t.working && t.progress in 1..99) {
+            LinearProgressIndicator(
+                progress = { t.progress / 100f },
+                modifier = Modifier.fillMaxWidth().height(3.dp)
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (t.ready) {
+                TextButton(onClick = onPlay) { Text("▶ Ver") }
+                TextButton(onClick = onDownload) { Text("⬇ Descargar") }
+            }
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, "Quitar de Real-Debrid", tint = Muted) }
+        }
+        HorizontalDivider(color = Color(0x22FFFFFF))
     }
 }
 
@@ -1157,7 +1445,11 @@ fun SourcesSection(
      */
     fun prepare(r: Search.Result, download: Boolean, attempt: Int = 0) {
         if (attempt == 0) {
-            prep = Prep(download, if (download) "Pidiendo el enlace a Real-Debrid…" else "Preparando el vídeo…")
+            prep = Prep(
+                download,
+                if (download) "Pidiendo el enlace a Real-Debrid…" else "Preparando el vídeo…",
+                magnet = r.magnet
+            )
         }
         RealDebrid.streamMagnet(r.magnet) { url, fname, err, progress ->
             onMain {
@@ -1175,7 +1467,8 @@ fun SourcesSection(
                         onMainDelayed(4000) { prepare(r, download, attempt + 1) }
                     }
                     progress != null -> prep = cur.copy(
-                        error = "Real-Debrid sigue preparándolo (${progress}%). Inténtalo dentro de un rato."
+                        error = "Real-Debrid sigue bajándolo a sus servidores (${progress}%). " +
+                            "No se pierde: sigue en tu cuenta y el progreso se ve en Descargas."
                     )
                     else -> prep = cur.copy(error = err ?: "Error de Real-Debrid")
                 }
@@ -1304,6 +1597,17 @@ fun SourcesSection(
             confirmButton = {
                 TextButton(onClick = { prep = null }) {
                     Text(if (p.error != null) "Cerrar" else "Cancelar")
+                }
+            },
+            // Si RD no pudo con el enlace (no lo tiene cacheado, o el archivo se
+            // borró), se puede meter el magnet en la cuenta y esperar a que lo baje.
+            dismissButton = {
+                if (p.error != null && p.magnet.isNotBlank()) {
+                    TextButton(onClick = {
+                        MagnetInbox.offer(p.magnet)
+                        prep = null
+                        onOpenDownloads()
+                    }) { Text("Añadirlo a Real-Debrid") }
                 }
             }
         )

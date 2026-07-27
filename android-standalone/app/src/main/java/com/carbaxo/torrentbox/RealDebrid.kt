@@ -103,20 +103,39 @@ object RealDebrid {
         connect(t) { _, _ -> }
     }
 
-    private fun rd(method: String, path: String, form: Map<String, String>? = null, tok: String = token): JSONObject {
+    /**
+     * Llamada cruda a la API. Devuelve el cuerpo tal cual, porque unas rutas
+     * responden un objeto (`/torrents/info`) y otras un array (`/torrents`).
+     * Cuando RD falla suele explicar el motivo en el campo `error`: se propaga,
+     * que es mucho más útil que un "respondió 400" a secas.
+     */
+    private fun rdRaw(method: String, path: String, form: Map<String, String>? = null, tok: String = token): String {
         val b = Request.Builder().url(API + path).header("Authorization", "Bearer $tok")
         if (form != null) {
             val fb = FormBody.Builder(); form.forEach { (k, v) -> fb.add(k, v) }
             if (method == "POST") b.post(fb.build())
         }
+        if (method == "DELETE") b.delete()
         client.newCall(b.build()).execute().use { resp ->
-            if (resp.code == 401) throw RuntimeException("Token de Real-Debrid inválido o caducado.")
-            if (resp.code == 403) throw RuntimeException("La cuenta de Real-Debrid no es premium.")
-            if (!resp.isSuccessful && resp.code != 204) throw RuntimeException("Real-Debrid respondió ${resp.code}.")
-            val body = resp.body?.string()
-            return if (body.isNullOrBlank()) JSONObject() else JSONObject(body)
+            val body = resp.body?.string() ?: ""
+            if (resp.isSuccessful || resp.code == 204) return body
+            val why = runCatching { JSONObject(body).optString("error", "") }.getOrDefault("")
+            throw RuntimeException(
+                when {
+                    resp.code == 401 -> "Token de Real-Debrid inválido o caducado."
+                    resp.code == 403 -> "Real-Debrid rechaza la cuenta (¿sin premium?)."
+                    why.isNotBlank() -> "Real-Debrid: $why"
+                    else -> "Real-Debrid respondió ${resp.code}."
+                }
+            )
         }
     }
+
+    private fun rd(method: String, path: String, form: Map<String, String>? = null, tok: String = token): JSONObject =
+        rdRaw(method, path, form, tok).let { if (it.isBlank()) JSONObject() else JSONObject(it) }
+
+    private fun rdArray(path: String): org.json.JSONArray =
+        rdRaw("GET", path).let { if (it.isBlank()) org.json.JSONArray() else org.json.JSONArray(it) }
 
     /** Valida y guarda el token; devuelve el nombre de usuario o un error.
      *  Valida con el token CANDIDATO y solo lo compromete si es válido, para
@@ -160,16 +179,7 @@ object RealDebrid {
 
                 var info = rd("GET", "/torrents/info/$id")
                 var selected = false
-                fun selectVideos(inf: JSONObject) {
-                    val files = inf.optJSONArray("files")
-                    val vids = ArrayList<String>()
-                    if (files != null) for (i in 0 until files.length()) {
-                        val f = files.getJSONObject(i)
-                        if (Regex(VIDEO).containsMatchIn(f.optString("path"))) vids.add(f.optInt("id").toString())
-                    }
-                    rd("POST", "/torrents/selectFiles/$id", mapOf("files" to if (vids.isNotEmpty()) vids.joinToString(",") else "all"))
-                    selected = true
-                }
+                fun selectVideos(inf: JSONObject) { selectVideoFiles(id, inf); selected = true }
                 if (info.optString("status") == "waiting_files_selection") selectVideos(info)
 
                 var tries = 0
@@ -200,6 +210,185 @@ object RealDebrid {
                 torrentIdByMagnet.remove(magnet)
                 onDone(null, null, e.message ?: "Error de Real-Debrid.", null)
             }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    //  Gestión manual de la cuenta de RD: añadir un magnet o un enlace a
+    //  mano y ver qué está haciendo RD con él.
+    //
+    //  Existe porque los enlaces de los buscadores fallan a menudo por dos
+    //  motivos que no dependen de la app: RD todavía no tiene el torrent
+    //  cacheado (lo tiene que bajar a sus servidores) o el archivo ya se
+    //  borró de su caché. En los dos casos la solución es la misma: meter el
+    //  magnet en la cuenta y esperar a que RD lo tenga.
+    // ------------------------------------------------------------------
+
+    /** Un torrent tal y como lo tiene Real-Debrid en la cuenta. */
+    data class Torrent(
+        val id: String,
+        val name: String,
+        val status: String,
+        val progress: Int,
+        val bytes: Long,
+        val links: Int,
+        val speed: Long,
+        val seeders: Int
+    ) {
+        val ready: Boolean get() = status == "downloaded"
+        /** Está trabajando: tiene sentido seguir refrescando. */
+        val working: Boolean
+            get() = status in listOf("magnet_conversion", "queued", "downloading", "compressing", "uploading")
+    }
+
+    /** Un archivo ya listo dentro de un torrent (los packs traen varios). */
+    data class RdFile(val name: String, val bytes: Long, val link: String)
+
+    /** El estado de RD, en castellano y sin jerga. */
+    fun statusEs(st: String): String = when (st) {
+        "magnet_conversion" -> "leyendo el magnet"
+        "waiting_files_selection" -> "esperando a elegir archivos"
+        "queued" -> "en cola"
+        "downloading" -> "descargando en Real-Debrid"
+        "downloaded" -> "listo"
+        "compressing" -> "comprimiendo"
+        "uploading" -> "subiendo"
+        "magnet_error" -> "el magnet no vale"
+        "error" -> "error"
+        "virus" -> "rechazado (virus)"
+        "dead" -> "sin semillas: nadie lo comparte"
+        else -> st.ifBlank { "desconocido" }
+    }
+
+    private val BAD = listOf("magnet_error", "error", "virus", "dead")
+
+    /** Marca en RD los archivos de vídeo del torrent (si no, se queda parado). */
+    private fun selectVideoFiles(id: String, info: JSONObject) {
+        val files = info.optJSONArray("files")
+        val vids = ArrayList<String>()
+        if (files != null) for (i in 0 until files.length()) {
+            val f = files.getJSONObject(i)
+            if (Regex(VIDEO).containsMatchIn(f.optString("path"))) vids.add(f.optInt("id").toString())
+        }
+        rd("POST", "/torrents/selectFiles/$id", mapOf("files" to if (vids.isNotEmpty()) vids.joinToString(",") else "all"))
+    }
+
+    /**
+     * Mete un magnet en la cuenta de RD y le dice que baje los vídeos. NO espera
+     * a que termine: devuelve en cuanto RD lo ha aceptado, y el progreso se ve
+     * luego en la lista. Un magnet sin `selectFiles` se queda esperando para
+     * siempre, así que eso se hace aquí mismo.
+     */
+    fun addMagnet(magnet: String, onDone: (String?, String?) -> Unit) {
+        io.submit {
+            try {
+                val m = magnet.trim()
+                if (!m.startsWith("magnet:", ignoreCase = true))
+                    return@submit onDone(null, "Eso no es un magnet (tiene que empezar por «magnet:?xt=…»).")
+                val id = rd("POST", "/torrents/addMagnet", mapOf("magnet" to m)).optString("id", "")
+                if (id.isBlank()) return@submit onDone(null, "Real-Debrid no aceptó el magnet.")
+                // Espera a que RD lea el magnet para poder elegir los archivos
+                var tries = 0
+                while (tries++ < 10) {
+                    val info = rd("GET", "/torrents/info/$id")
+                    val st = info.optString("status")
+                    if (st == "waiting_files_selection") { selectVideoFiles(id, info); break }
+                    if (st in BAD) return@submit onDone(null, "Real-Debrid no pudo con el torrent: ${statusEs(st)}.")
+                    if (st != "magnet_conversion" && st != "queued") break   // ya iba solo
+                    Thread.sleep(1200)
+                }
+                onDone(id, null)
+            } catch (e: Throwable) {
+                onDone(null, e.message ?: "Error de Real-Debrid.")
+            }
+        }
+    }
+
+    /** Los torrents de la cuenta, del más reciente al más antiguo. */
+    fun torrents(onDone: (List<Torrent>?, String?) -> Unit) {
+        io.submit {
+            try {
+                val arr = rdArray("/torrents?limit=50")
+                val out = ArrayList<Torrent>()
+                for (i in 0 until arr.length()) {
+                    val t = arr.getJSONObject(i)
+                    out.add(
+                        Torrent(
+                            id = t.optString("id"),
+                            name = t.optString("filename").ifBlank { t.optString("original_filename", "torrent") },
+                            status = t.optString("status"),
+                            progress = t.optInt("progress", 0),
+                            bytes = t.optLong("bytes", 0L),
+                            links = t.optJSONArray("links")?.length() ?: 0,
+                            speed = t.optLong("speed", 0L),
+                            seeders = t.optInt("seeders", 0)
+                        )
+                    )
+                }
+                onDone(out, null)
+            } catch (e: Throwable) {
+                onDone(null, e.message ?: "Error de Real-Debrid.")
+            }
+        }
+    }
+
+    /**
+     * Los archivos listos de un torrent, con su enlace de RD (aún restringido).
+     * Los packs de temporada traen varios: así se puede elegir el episodio.
+     */
+    fun torrentFiles(id: String, onDone: (List<RdFile>?, String?) -> Unit) {
+        io.submit {
+            try {
+                val info = rd("GET", "/torrents/info/$id")
+                val st = info.optString("status")
+                val links = info.optJSONArray("links")
+                // Los enlaces van en el mismo orden que los archivos marcados
+                val chosen = ArrayList<Pair<String, Long>>()
+                info.optJSONArray("files")?.let { fs ->
+                    for (i in 0 until fs.length()) {
+                        val f = fs.getJSONObject(i)
+                        if (f.optInt("selected", 0) == 1)
+                            chosen.add(f.optString("path").trimStart('/') to f.optLong("bytes", 0L))
+                    }
+                }
+                val out = ArrayList<RdFile>()
+                for (i in 0 until (links?.length() ?: 0)) {
+                    val meta = chosen.getOrNull(i)
+                    out.add(RdFile(meta?.first ?: "Archivo ${i + 1}", meta?.second ?: 0L, links!!.getString(i)))
+                }
+                if (out.isEmpty()) onDone(null, "Todavía no hay nada listo: ${statusEs(st)}.")
+                else onDone(out, null)
+            } catch (e: Throwable) {
+                onDone(null, e.message ?: "Error de Real-Debrid.")
+            }
+        }
+    }
+
+    /**
+     * Convierte un enlace en la URL directa para ver o descargar. Vale para los
+     * enlaces de un torrent de la cuenta y para un enlace de hoster pegado a
+     * mano (1fichier, Mega…), que es lo que hace la web de RD en "Descargador".
+     */
+    fun unrestrict(link: String, onDone: (String?, String?, String?) -> Unit) {
+        io.submit {
+            try {
+                val un = rd("POST", "/unrestrict/link", mapOf("link" to link.trim()))
+                val dl = un.optString("download", "")
+                val fname = un.optString("filename", "").ifBlank { "video" }
+                if (dl.isBlank()) return@submit onDone(null, null, "Real-Debrid no devolvió un enlace directo.")
+                un.optString("id", "").takeIf { it.isNotBlank() }?.let { idsByUrl[dl] = it }
+                onDone(dl, fname, null)
+            } catch (e: Throwable) {
+                onDone(null, null, e.message ?: "Error de Real-Debrid.")
+            }
+        }
+    }
+
+    /** Borra el torrent de la cuenta de RD (no toca lo descargado en el móvil). */
+    fun deleteTorrent(id: String, onDone: (String?) -> Unit) {
+        io.submit {
+            try { rdRaw("DELETE", "/torrents/delete/$id"); onDone(null) }
+            catch (e: Throwable) { onDone(e.message ?: "Error de Real-Debrid.") }
         }
     }
 }

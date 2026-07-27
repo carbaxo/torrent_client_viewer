@@ -19,6 +19,16 @@ servidor propio. Funciona en **móvil y en Android TV**.
   del CDN de RD al reproductor; no se descarga nada en el móvil.
 - ⬇️ **Descargar**: la encola en el **DownloadManager del sistema**, así que
   continúa **aunque cierres la app** y queda disponible sin conexión.
+- ➕ **Añadir un magnet o un enlace a mano** (pestaña Descargas): se pega el
+  magnet y Real-Debrid lo baja a sus servidores; debajo se ve **la lista de la
+  cuenta de RD con su estado real** (leyendo el magnet, en cola, descargando
+  con su %, listo, sin semillas…) y botones Ver / Descargar / quitar. Es la
+  salida a los dos fallos que no dependen de la app: que RD **aún no tenga el
+  torrent cacheado** o que **el archivo se haya borrado** de su caché. También
+  se puede pulsar un magnet **en el navegador** o **compartirlo** con TorrentBox,
+  y cuando un enlace de la ficha falla, el propio aviso ofrece
+  **«Añadirlo a Real-Debrid»**. Un enlace de hoster (1fichier, Mega…) se
+  desbloquea y se descarga igual que en el "Descargador" de la web de RD.
 - Reproductor **ExoPlayer (Media3)**: subtítulos, pistas de audio, velocidad,
   gestos de volumen/brillo, siguiente episodio y continuar viendo.
 - 🎬 **Reproductor externo opcional** (Ajustes → Reproducción): el de la app,
