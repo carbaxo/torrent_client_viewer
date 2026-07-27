@@ -32,10 +32,19 @@ servidor propio. Funciona en **móvil y en Android TV**.
 - Reproductor **ExoPlayer (Media3)**: subtítulos, pistas de audio, velocidad,
   gestos de volumen/brillo, siguiente episodio y continuar viendo.
 - 🎬 **Reproductor externo opcional** (Ajustes → Reproducción): el de la app,
-  *preguntar cada vez* o siempre **otra app** (VLC, MX Player…), que manejan
-  mejor los MKV con audio DTS/TrueHD. Vale igual para el streaming de RD y para
-  un fichero ya descargado. A cambio se pierden "continuar viendo" y el
-  siguiente episodio automático, que son del reproductor propio.
+  **siempre VLC** (va directo, sin preguntar), *preguntar cada vez* u **otra
+  app** con el diálogo "abrir con…". VLC y MX Player manejan mejor los MKV con
+  audio DTS/TrueHD. Vale igual para el streaming de RD y para un fichero ya
+  descargado. A cambio se pierden "continuar viendo" y el siguiente episodio
+  automático, que son del reproductor propio.
+- 📺 **Emitir a la TV con VLC** (Ajustes → Reproducción, opcional): con una TV
+  elegida arriba, "Ver" abre el vídeo en VLC para que sea **VLC quien emita**.
+  VLC transcodifica en el móvil, así que se traga cualquier MKV con Dolby o DTS
+  que el Chromecast rechaza. Dos peajes: el vídeo pasa por el teléfono (que
+  tiene que quedarse encendido y en la misma WiFi) y **el último paso lo da el
+  usuario** pulsando el icono de emitir dentro de VLC — Android no permite
+  elegirle el dispositivo desde fuera. Al usarlo, la app cierra su propia sesión
+  de Chromecast para no pelearse con VLC por la TV.
 - 📺 **Chromecast**: se elige la TV en la barra superior (antes de abrir nada) y
   luego cada título va a esa TV; envía la versión con **audio AAC** convertida
   por Real-Debrid para que suene (el Chromecast no decodifica Dolby/DTS).

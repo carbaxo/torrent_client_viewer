@@ -18,6 +18,23 @@
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
+    <!--
+      Android 11+ oculta las demás apps instaladas. Sin declararlas aquí,
+      getPackageInfo("org.videolan.vlc") falla incluso con VLC instalado y
+      startActivity con setPackage() lanza ActivityNotFoundException: la opción
+      de "reproducir siempre con VLC" no funcionaría.
+    -->
+    <queries>
+        <package android:name="org.videolan.vlc" />
+        <package android:name="com.mxtech.videoplayer.ad" />
+        <package android:name="com.mxtech.videoplayer.pro" />
+        <!-- Y cualquier otra app de vídeo, para el diálogo "abrir con…" -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="video/*" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="true"
         android:banner="@drawable/ic_launcher"

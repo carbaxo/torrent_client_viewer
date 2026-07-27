@@ -156,7 +156,8 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
     var showCastScreen by remember { mutableStateOf(false) }
     // "Preguntar cada vez" con qué reproductor abrir, y errores al lanzarlo
     var askPlayer by remember { mutableStateOf<Pair<String, PlayCtx>?>(null) }
-    var playerError by remember { mutableStateOf<String?>(null) }
+    // (título, mensaje, ¿ofrecer instalar VLC?)
+    var playerMsg by remember { mutableStateOf<Triple<String, String, Boolean>?>(null) }
     val rdDownloads = remember { mutableStateListOf<RdDownloads.Snap>() }
     val ctx = LocalContext.current
 
@@ -164,15 +165,48 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
     LaunchedEffect(Unit) { CastManager.init(ctx) }
 
     // Con TV conectada todo va a la TV; si no, al reproductor del móvil
-    fun openExternal(url: String, c: PlayCtx) {
-        val err = ExternalPlayer.open(ctx, url, c.name, c.resumeMs)
-        if (err != null) playerError = err else detail = null
+    fun openExternal(url: String, c: PlayCtx, pkg: String? = null) {
+        val err = ExternalPlayer.open(ctx, url, c.name, c.resumeMs, pkg)
+        if (err == null) { detail = null; return }
+        playerMsg = Triple(
+            "Reproductor externo", err,
+            pkg == ExternalPlayer.VLC && !ExternalPlayer.vlcInstalled(ctx)
+        )
+    }
+
+    /**
+     * Pasa el vídeo a VLC para que sea VLC quien lo emita a la TV. VLC
+     * transcodifica en el móvil, así que se traga cualquier MKV con DTS; a
+     * cambio el vídeo pasa por el teléfono y el último paso lo tiene que dar el
+     * usuario dentro de VLC: Android no permite elegirle el dispositivo desde
+     * fuera.
+     */
+    fun castViaVlc(url: String, c: PlayCtx) {
+        // El receptor de la TV solo atiende a una app: si nuestra sesión sigue
+        // abierta, VLC no podría conectarse. Se cierra antes de pasar el relevo.
+        if (CastManager.connected) CastManager.disconnect()
+        val err = ExternalPlayer.open(ctx, url, c.name, c.resumeMs, ExternalPlayer.VLC)
+        if (err != null) {
+            playerMsg = Triple("Emitir con VLC", err, !ExternalPlayer.vlcInstalled(ctx))
+            return
+        }
+        detail = null
+        playerMsg = Triple(
+            "Emitir con VLC",
+            "Ya está abierto en VLC. Ahora pulsa el icono de emitir (📺) arriba en VLC y " +
+                "elige tu TV. Ese último paso hay que darlo ahí: Android no deja que otra " +
+                "app le diga a VLC a qué dispositivo emitir.",
+            false
+        )
     }
 
     fun play(url: String, c: PlayCtx) {
         when {
+            // TV elegida arriba + "emitir con VLC" en Ajustes
+            CastManager.connected && Prefs.castWithVlc -> castViaVlc(url, c)
             CastManager.connected -> { CastManager.castUrl(url, c); showCastScreen = true; detail = null }
             // Reproductor externo (VLC, MX Player…) según Ajustes → Reproducción
+            Prefs.playerMode == Prefs.PLAYER_VLC -> openExternal(url, c, ExternalPlayer.VLC)
             Prefs.playerMode == Prefs.PLAYER_EXTERNAL -> openExternal(url, c)
             Prefs.playerMode == Prefs.PLAYER_ASK -> askPlayer = url to c
             else -> onPlayUrl(url, c)
@@ -212,24 +246,50 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
 
     // --- ¿Con qué reproductor? (modo "preguntar cada vez") ---
     askPlayer?.let { (url, c) ->
+        val hasVlc = ExternalPlayer.vlcInstalled(ctx)
         AlertDialog(
             onDismissRequest = { askPlayer = null },
             title = { Text("¿Con qué lo abrimos?") },
-            text = { Text("Otra app (VLC, MX Player…) suele manejar mejor los MKV con audio DTS o TrueHD.") },
-            confirmButton = {
-                TextButton(onClick = { askPlayer = null; onPlayUrl(url, c) }) { Text("En la app") }
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "VLC maneja mejor los MKV con audio DTS o TrueHD; el de la app guarda " +
+                            "el «continuar viendo» y pasa al siguiente episodio.",
+                        style = MaterialTheme.typography.bodySmall, color = Muted
+                    )
+                    Button(
+                        onClick = { askPlayer = null; onPlayUrl(url, c) },
+                        modifier = Modifier.fillMaxWidth().tvFocusRing(RoundedCornerShape(20.dp))
+                    ) { Text("Reproductor de la app") }
+                    if (hasVlc) OutlinedButton(
+                        onClick = { askPlayer = null; openExternal(url, c, ExternalPlayer.VLC) },
+                        modifier = Modifier.fillMaxWidth().tvFocusRing(RoundedCornerShape(20.dp))
+                    ) { Text("VLC") }
+                    OutlinedButton(
+                        onClick = { askPlayer = null; openExternal(url, c) },
+                        modifier = Modifier.fillMaxWidth().tvFocusRing(RoundedCornerShape(20.dp))
+                    ) { Text("Otra app…") }
+                }
             },
-            dismissButton = {
-                TextButton(onClick = { askPlayer = null; openExternal(url, c) }) { Text("Otra app…") }
+            confirmButton = {
+                TextButton(onClick = { askPlayer = null }, modifier = Modifier.tvFocusRing()) { Text("Cancelar") }
             }
         )
     }
-    playerError?.let { msg ->
+    playerMsg?.let { (mTitle, mText, offerVlc) ->
         AlertDialog(
-            onDismissRequest = { playerError = null },
-            title = { Text("Reproductor externo") },
-            text = { Text(msg) },
-            confirmButton = { TextButton(onClick = { playerError = null }) { Text("Cerrar") } }
+            onDismissRequest = { playerMsg = null },
+            title = { Text(mTitle) },
+            text = { Text(mText) },
+            confirmButton = {
+                TextButton(onClick = { playerMsg = null }, modifier = Modifier.tvFocusRing()) { Text("Cerrar") }
+            },
+            dismissButton = {
+                if (offerVlc) TextButton(
+                    onClick = { playerMsg = null; ExternalPlayer.installVlc(ctx) },
+                    modifier = Modifier.tvFocusRing()
+                ) { Text("Instalar VLC") }
+            }
         )
     }
 
@@ -1105,9 +1165,10 @@ fun SettingsScreen() {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Reproducción", fontWeight = FontWeight.Bold)
                 Text("¿Con qué se abre el vídeo al pulsar Ver?", color = Muted, style = MaterialTheme.typography.bodySmall)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(
                         Prefs.PLAYER_APP to "Reproductor de la app",
+                        Prefs.PLAYER_VLC to "Siempre VLC",
                         Prefs.PLAYER_ASK to "Preguntar",
                         Prefs.PLAYER_EXTERNAL to "Otra app"
                     ).forEach { (mode, label) ->
@@ -1119,11 +1180,48 @@ fun SettingsScreen() {
                         )
                     }
                 }
+                val hasVlc = ExternalPlayer.vlcInstalled(ctx)
+                if (Prefs.playerMode == Prefs.PLAYER_VLC && !hasVlc) {
+                    Text(
+                        "⚠️ VLC no está instalado en este dispositivo, así que no se puede usar.",
+                        color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
+                    )
+                    OutlinedButton(
+                        onClick = { ExternalPlayer.installVlc(ctx) },
+                        modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                    ) { Text("Instalar VLC") }
+                }
                 Text(
-                    "Con «Otra app» se abre en VLC, MX Player o el que elijas: van mejor con MKV " +
-                        "y audio DTS/TrueHD. Se pierden el «continuar viendo» y el siguiente " +
-                        "episodio automático, que son del reproductor de la app. Al emitir a una " +
-                        "TV esto no aplica: manda el Chromecast.",
+                    "«Siempre VLC» va directo a VLC sin preguntar: es el que mejor se lleva con " +
+                        "los MKV y el audio DTS/TrueHD. A cambio se pierden el «continuar " +
+                        "viendo» y el siguiente episodio automático, que son del reproductor de " +
+                        "la app. «Otra app» abre el diálogo para elegir.",
+                    color = Muted, style = MaterialTheme.typography.labelSmall
+                )
+
+                HorizontalDivider(color = Color(0x22FFFFFF), modifier = Modifier.padding(vertical = 4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Emitir a la TV con VLC", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            if (Prefs.castWithVlc) "Activado: al pulsar Ver con una TV elegida, el vídeo se abre en VLC."
+                            else "Desactivado: emite la propia app (Chromecast).",
+                            color = Muted, style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                    Switch(
+                        checked = Prefs.castWithVlc,
+                        onCheckedChange = { Prefs.saveCastWithVlc(it) },
+                        modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                    )
+                }
+                Text(
+                    "VLC transcodifica en el móvil, así que se traga cualquier MKV con Dolby o " +
+                        "DTS que el Chromecast rechaza. Dos peajes: el vídeo pasa por el teléfono " +
+                        "(que tiene que quedarse encendido y en la misma WiFi) y el último paso lo " +
+                        "das tú, pulsando el icono de emitir DENTRO de VLC — Android no permite " +
+                        "elegirle el dispositivo desde fuera. Al activarlo, la app cierra su " +
+                        "propia sesión de Chromecast para no pelearse con VLC por la TV.",
                     color = Muted, style = MaterialTheme.typography.labelSmall
                 )
             }
@@ -1777,15 +1875,28 @@ fun SourcesSection(
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(
                                 onClick = {
-                                    if (CastManager.connected) {
+                                    if (CastManager.connected && !Prefs.castWithVlc) {
                                         // Con TV conectada va directo a la TV; el
                                         // CastManager muestra el progreso y elige la
                                         // versión con audio compatible.
                                         onCastMagnet(r.magnet, buildCtx().withSource(r))
-                                    } else prepare(r, download = false)
+                                    } else {
+                                        // Con "emitir con VLC" hace falta el enlace
+                                        // resuelto, así que pasa por Real-Debrid igual
+                                        // que al ver en el móvil.
+                                        prepare(r, download = false)
+                                    }
                                 },
                                 modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
-                            ) { Text(if (CastManager.connected) "📺 Ver en la TV" else "▶ Ver") }
+                            ) {
+                                Text(
+                                    when {
+                                        CastManager.connected && Prefs.castWithVlc -> "📺 Ver en la TV (VLC)"
+                                        CastManager.connected -> "📺 Ver en la TV"
+                                        else -> "▶ Ver"
+                                    }
+                                )
+                            }
                             OutlinedButton(
                                 onClick = { prepare(r, download = true) },
                                 modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))

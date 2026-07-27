@@ -58,9 +58,10 @@ object Prefs {
     }
 
     // --- Con qué se reproduce: el reproductor de la app u otra app ---
-    const val PLAYER_APP = "app"          // el reproductor propio (por defecto)
+    const val PLAYER_APP = "app"          // el reproductor propio
+    const val PLAYER_VLC = "vlc"          // siempre VLC, sin preguntar
     const val PLAYER_ASK = "ask"          // preguntar cada vez
-    const val PLAYER_EXTERNAL = "external" // ir siempre a otra app (VLC, MX…)
+    const val PLAYER_EXTERNAL = "external" // otra app (diálogo "abrir con…")
 
     var playerMode by mutableStateOf(PLAYER_APP)
         private set
@@ -68,6 +69,20 @@ object Prefs {
     fun savePlayerMode(mode: String) {
         playerMode = mode
         sp().edit().putString("playerMode", mode).apply()
+    }
+
+    /**
+     * Emitir a la TV con VLC en vez de con el Chromecast de la propia app.
+     * VLC transcodifica en el móvil, así que se come cualquier MKV con DTS, pero
+     * el vídeo pasa por el teléfono y hay que darle al icono de emitir DENTRO de
+     * VLC: no existe forma de decírselo desde fuera.
+     */
+    var castWithVlc by mutableStateOf(false)
+        private set
+
+    fun saveCastWithVlc(on: Boolean) {
+        castWithVlc = on
+        sp().edit().putBoolean("castWithVlc", on).apply()
     }
 
     private var secure: android.content.SharedPreferences? = null
@@ -108,6 +123,7 @@ object Prefs {
         githubToken = runCatching { secureStore().getString("ghToken", "") ?: "" }.getOrDefault("")
         downloadOverMobile = sp.getBoolean("dlOverMobile", true)
         playerMode = sp.getString("playerMode", PLAYER_APP) ?: PLAYER_APP
+        castWithVlc = sp.getBoolean("castWithVlc", false)
     }
 
     fun savePeerflixUrl(u: String) {
