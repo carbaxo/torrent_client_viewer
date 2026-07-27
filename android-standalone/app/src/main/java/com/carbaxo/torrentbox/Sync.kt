@@ -209,6 +209,10 @@ object Sync {
         gsc?.signOut()
         email = null
         profiles.clear(); favorites.clear(); activeProfile = null; doc = emptyMap()
+        // El token de Real-Debrid es de la CUENTA, no del aparato. Si se quedara
+        // aquí, la siguiente cuenta que entrara en este móvil heredaría el
+        // Real-Debrid de la anterior (y quedaría suelto en un móvil ajeno).
+        RealDebrid.disconnect()
     }
 
     private fun db() = FirebaseFirestore.getInstance()
@@ -242,6 +246,10 @@ object Sync {
             // Token de Real-Debrid a nivel de cuenta (extensión de la app móvil)
             val account = data["account"] as? Map<String, Any?>
             val rdToken = account?.get("rdToken")?.toString()?.takeIf { it.isNotBlank() }
+            // Distinguir "nunca tuvo token" de "se desvinculó a propósito": si la
+            // clave existe vacía, fue una desconexión y no hay que resubir el del
+            // móvil, que desharía la desconexión hecha en otro dispositivo.
+            val rdEverSet = account?.containsKey("rdToken") == true
 
             onMain {
                 doc = data
@@ -251,7 +259,12 @@ object Sync {
                     val pick = profs.firstOrNull { it.id == lastProfilePref() } ?: profs.first()
                     selectProfile(pick.id)
                 }
+                // El token de Real-Debrid va con la cuenta:
+                //  - si la cuenta trae uno, ese manda en todos los dispositivos;
+                //  - si la cuenta no tiene y este móvil sí, se sube para vincularlo
+                //    (caso típico: token pegado antes de crear la cuenta).
                 if (rdToken != null) onRdToken?.invoke(rdToken)
+                else if (!rdEverSet && RealDebrid.configured) saveAccountRdToken(RealDebrid.token)
             }
         }.addOnFailureListener { onMain { loading = false } }
     }
@@ -384,6 +397,17 @@ object Sync {
         val u = uid() ?: return
         db().collection("users").document(u)
             .set(mapOf("account" to mapOf("rdToken" to token), "updatedAt" to iso()), SetOptions.merge())
+    }
+
+    /**
+     * Desvincula Real-Debrid de la cuenta. Hace falta al pulsar "Desconectar":
+     * si solo se borrara en el móvil, el siguiente arranque lo volvería a bajar
+     * de la nube y parecería que no se ha desconectado nada.
+     */
+    fun clearAccountRdToken() {
+        val u = uid() ?: return
+        db().collection("users").document(u)
+            .set(mapOf("account" to mapOf("rdToken" to ""), "updatedAt" to iso()), SetOptions.merge())
     }
 
     /**

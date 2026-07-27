@@ -135,7 +135,22 @@ es el foco, así que:
 ## Configuración
 
 1. **Ajustes → Real-Debrid** → pega tu token de <https://real-debrid.com/apitoken>.
-   Con la sesión iniciada, el token se sincroniza con tus otros dispositivos.
+
+   **El token va con la CUENTA, no con el aparato.** Con la sesión iniciada se
+   guarda en `users/{uid}.account.rdToken` y todos tus dispositivos con esa
+   cuenta usan el mismo Real-Debrid:
+   - Si la cuenta ya tiene token, **ese manda** y sustituye al del móvil.
+   - Si la cuenta no tiene y el móvil sí (token pegado antes de crear la cuenta),
+     se sube para vincularlo.
+   - Al **cerrar sesión** se borra del dispositivo: el token es de la cuenta, y
+     si no, la siguiente cuenta que entrara en ese móvil heredaría el
+     Real-Debrid de la anterior.
+   - **Desconectar** lo quita también de la cuenta, para que no vuelva a bajarse
+     en el siguiente arranque.
+   - Sin iniciar sesión, el token se queda solo en ese móvil (cifrado).
+
+   Cada persona necesita **su propia cuenta de Real-Debrid**: RD detecta el uso
+   desde muchas IPs y bloquea temporalmente las cuentas compartidas.
 2. **Ajustes → Cuenta** (opcional) para perfiles, favoritos e historial
    compartidos. Dos formas de entrar, las dos válidas:
    - **Email y contraseña**: crear cuenta o entrar directamente, sin Google.

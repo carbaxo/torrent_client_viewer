@@ -97,10 +97,22 @@ object RealDebrid {
 
     private fun save() { prefs?.edit()?.putString("rd_token", token)?.apply() }
 
-    /** Adopta un token recibido de la nube (ya validado en la web); no re-sube. */
+    /**
+     * Adopta el token de Real-Debrid de la CUENTA. El de la cuenta manda: si en
+     * este aparato había otro, se sustituye.
+     *
+     * Antes salía por la puerta de atrás cuando el móvil ya tenía token
+     * (`if (configured) return`), y eso rompía justo lo que se espera: al entrar
+     * con otra cuenta en el mismo móvil seguías usando el Real-Debrid de la
+     * cuenta anterior.
+     *
+     * Si el token de la nube no vale, `connect` falla y se queda el actual: no
+     * se pierde el acceso por un dato viejo en Firestore.
+     */
     fun adoptToken(t: String) {
-        if (configured || t.isBlank()) return
-        connect(t) { _, _ -> }
+        val cand = t.trim()
+        if (cand.isBlank() || cand == token) return
+        connect(cand) { _, _ -> }
     }
 
     /**

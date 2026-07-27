@@ -1140,7 +1140,25 @@ fun SettingsScreen() {
                 Text("Real-Debrid", fontWeight = FontWeight.Bold)
                 if (RealDebrid.configured) {
                     Text("⚡ Conectado${RealDebrid.account?.let { " · $it" } ?: ""}", color = Color(0xFF34D399), style = MaterialTheme.typography.bodyMedium)
-                    OutlinedButton(onClick = { RealDebrid.disconnect() }) { Text("Desconectar") }
+                    Text(
+                        if (Sync.email != null)
+                            "Vinculado a la cuenta ${Sync.email}: el mismo Real-Debrid en todos tus " +
+                                "dispositivos con esa cuenta. Al cerrar sesión se queda con la cuenta, " +
+                                "no en este móvil."
+                        else
+                            "Guardado solo en este móvil (cifrado). Inicia sesión en Ajustes → Cuenta " +
+                                "para tenerlo en todos tus dispositivos.",
+                        color = Muted, style = MaterialTheme.typography.labelSmall
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            RealDebrid.disconnect()
+                            // También en la nube: si no, al arrancar se volvería a
+                            // bajar y parecería que no se ha desconectado.
+                            if (Sync.email != null) Sync.clearAccountRdToken()
+                        },
+                        modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                    ) { Text("Desconectar") }
                 } else {
                     Text("⚠️ Real-Debrid es imprescindible: la app no descarga por BitTorrent, todo el vídeo llega por streaming directo desde los servidores de RD. Pega tu token para empezar. Se comparte con tu cuenta si has entrado con Google.", color = Color(0xFFFBBF24), style = MaterialTheme.typography.bodySmall)
                     OutlinedTextField(value = rdInput, onValueChange = { rdInput = it }, label = { Text("Token de Real-Debrid") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -1149,11 +1167,17 @@ fun SettingsScreen() {
                         val tk = rdInput.trim()
                         RealDebrid.connect(tk) { ok, msg ->
                             onMain {
-                                rdStatus = if (ok) "Conectado como $msg" else (msg ?: "Error")
-                                if (ok && Sync.email != null) Sync.saveAccountRdToken(tk)
+                                rdStatus = if (ok) {
+                                    // Se sube a la cuenta: el token va con ella, no
+                                    // con el aparato.
+                                    if (Sync.email != null) {
+                                        Sync.saveAccountRdToken(tk)
+                                        "Conectado como $msg · vinculado a ${Sync.email}"
+                                    } else "Conectado como $msg"
+                                } else (msg ?: "Error")
                             }
                         }
-                    }, enabled = rdInput.isNotBlank()) { Text("Conectar") }
+                    }, enabled = rdInput.isNotBlank(), modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))) { Text("Conectar") }
                     Text("Consíguelo en real-debrid.com/apitoken", color = Muted, style = MaterialTheme.typography.labelSmall)
                 }
                 if (rdStatus.isNotBlank()) Text(rdStatus, color = Muted, style = MaterialTheme.typography.bodySmall)
