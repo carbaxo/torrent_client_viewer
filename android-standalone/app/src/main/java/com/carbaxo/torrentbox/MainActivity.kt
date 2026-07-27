@@ -36,6 +36,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -651,7 +654,7 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, kids: Boolean = false
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("Descubrir", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                if (Sync.enabled) {
+                if (Sync.googleEnabled) {
                     if (Sync.email == null) {
                         OutlinedButton(
                             onClick = { Sync.signInIntent()?.let { launcher.launch(it) } },
@@ -899,10 +902,83 @@ fun SettingsScreen() {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Cuenta", fontWeight = FontWeight.Bold)
                 if (!Sync.enabled) {
-                    Text("El login con Google no está disponible en esta compilación.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("Esta compilación no lleva Firebase, así que no hay cuentas ni sincronización.", color = Muted, style = MaterialTheme.typography.bodySmall)
                 } else if (Sync.email == null) {
-                    Text("Inicia sesión con tu cuenta de Google para ver tus perfiles, favoritos y ajustes de la app del PC.", color = Muted, style = MaterialTheme.typography.bodySmall)
-                    Button(onClick = { Sync.signInIntent()?.let { launcher.launch(it) } }) { Text("Entrar con Google") }
+                    Text(
+                        "Inicia sesión para tener tus perfiles, favoritos, historial y el token de " +
+                            "Real-Debrid en todos tus dispositivos (y compartidos con la app del PC).",
+                        color = Muted, style = MaterialTheme.typography.bodySmall
+                    )
+                    // --- Email y contraseña (sin depender de Google) ---
+                    var mail by remember { mutableStateOf("") }
+                    var pass by remember { mutableStateOf("") }
+                    var showPass by remember { mutableStateOf(false) }
+                    var authMsg by remember { mutableStateOf("") }
+                    var authBusy by remember { mutableStateOf(false) }
+
+                    OutlinedTextField(
+                        value = mail, onValueChange = { mail = it.trim() },
+                        label = { Text("Email") }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = pass, onValueChange = { pass = it },
+                        label = { Text("Contraseña (mínimo ${Sync.MIN_PASS})") }, singleLine = true,
+                        visualTransformation = if (showPass) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                        trailingIcon = {
+                            // Con el mando de la tele escribir a ciegas es horrible:
+                            // que se pueda ver lo escrito.
+                            IconButton(onClick = { showPass = !showPass }, modifier = Modifier.tvFocusRing()) {
+                                Icon(
+                                    if (showPass) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                    contentDescription = if (showPass) "Ocultar" else "Ver"
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    val done: (Boolean, String?) -> Unit = { ok, err ->
+                        onMain { authBusy = false; authMsg = if (ok) "" else (err ?: "Error") }
+                    }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Button(
+                            onClick = { authBusy = true; authMsg = "Entrando…"; Sync.signInEmail(mail, pass, done) },
+                            enabled = !authBusy,
+                            modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                        ) { Text("Entrar") }
+                        OutlinedButton(
+                            onClick = { authBusy = true; authMsg = "Creando la cuenta…"; Sync.signUpEmail(mail, pass, done) },
+                            enabled = !authBusy,
+                            modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                        ) { Text("Crear cuenta") }
+                        TextButton(
+                            onClick = {
+                                authBusy = true
+                                Sync.resetPassword(mail) { ok, msg ->
+                                    onMain { authBusy = false; authMsg = msg ?: if (ok) "Correo enviado." else "Error" }
+                                }
+                            },
+                            enabled = !authBusy,
+                            modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                        ) { Text("Olvidé la contraseña") }
+                    }
+                    if (authMsg.isNotBlank()) Text(
+                        authMsg, color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
+                    )
+                    if (Sync.googleEnabled) {
+                        HorizontalDivider(color = Color(0x22FFFFFF), modifier = Modifier.padding(vertical = 4.dp))
+                        Button(
+                            onClick = { Sync.signInIntent()?.let { launcher.launch(it) } },
+                            modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                        ) { Text("Entrar con Google") }
+                        Text(
+                            "Las dos formas valen; si ya entrabas con Google, sigue usando ese botón " +
+                                "para encontrar tus datos de siempre.",
+                            color = Muted, style = MaterialTheme.typography.labelSmall
+                        )
+                    }
                 } else {
                     Text("👤 ${Sync.email}", style = MaterialTheme.typography.bodyMedium)
                     if (Sync.loading) Text("Sincronizando…", color = Muted, style = MaterialTheme.typography.labelSmall)

@@ -105,12 +105,35 @@ directamente de RD: no pasa por el móvil.
 > (ver `CastOptionsProvider.kt`). El receptor con DRM que trae media3 por defecto
 > rechaza los archivos cuyo tipo no reconoce y la TV se queda en negro.
 
+## En una Smart TV (mando, sin pantalla táctil)
+
+El **mismo APK** sirve para móvil y tele: al arrancar detecta si está en una
+Android TV / Google TV y cambia la interfaz. En una tele lo único que te sitúa
+es el foco, así que:
+
+- **Anillo blanco grueso + zoom** en lo que tienes seleccionado, en todo lo
+  pulsable (carátulas, episodios, chips, botones de cada enlace, descargas…).
+- **Barra de secciones a la izquierda** al estilo de Stremio para TV. La sección
+  **activa** va en morado; la **enfocada**, con el anillo: una dice dónde estás y
+  la otra qué vas a pulsar.
+- **El foco arranca colocado**: en la sección activa, en «Volver» al abrir una
+  ficha y en play/pausa en el mando de Chromecast.
+- **Botón ATRÁS del mando**: sale de la ficha, de la rejilla y del mando, y de
+  cualquier pestaña vuelve a Descubrir (antes cerraba la app).
+- Carátulas más grandes (165 dp) y margen de **overscan** para los bordes que
+  recortan las teles.
+
 ## Configuración
 
 1. **Ajustes → Real-Debrid** → pega tu token de <https://real-debrid.com/apitoken>.
-   Si entras con Google, el token se sincroniza con tus otros dispositivos.
-2. **Ajustes → Cuenta → Entrar con Google** (opcional) para perfiles, favoritos
-   e historial compartidos.
+   Con la sesión iniciada, el token se sincroniza con tus otros dispositivos.
+2. **Ajustes → Cuenta** (opcional) para perfiles, favoritos e historial
+   compartidos. Dos formas de entrar, las dos válidas:
+   - **Email y contraseña**: crear cuenta o entrar directamente, sin Google.
+     Requiere activar el método en **Firebase Console → Authentication →
+     Sign-in method → Email/Password**; si no está activado, la app lo dice.
+   - **Entrar con Google**: necesita además el `GOOGLE_WEB_CLIENT_ID` y la SHA-1
+     registrada (ver más abajo).
 
 ## Sincronización con tu cuenta de Google
 

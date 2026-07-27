@@ -12,7 +12,13 @@ import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
+import com.google.firebase.FirebaseNetworkException
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseAuthException
+import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
+import com.google.firebase.auth.FirebaseAuthInvalidUserException
+import com.google.firebase.auth.FirebaseAuthUserCollisionException
+import com.google.firebase.auth.FirebaseAuthWeakPasswordException
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
@@ -45,7 +51,20 @@ object Sync {
     private var gsc: GoogleSignInClient? = null
     private var appCtx: Context? = null
 
-    val enabled: Boolean get() = BuildConfig.GOOGLE_WEB_CLIENT_ID.isNotBlank()
+    /**
+     * Hay Firebase en esta compilación: basta para entrar con EMAIL Y CONTRASEÑA
+     * y para sincronizar. Antes esto exigía el ID de cliente web de Google, que
+     * en realidad solo hace falta para el botón de Google.
+     */
+    val enabled: Boolean get() = firebaseOk
+
+    /** Además se puede entrar con Google (necesita el ID de cliente web). */
+    val googleEnabled: Boolean get() = firebaseOk && BuildConfig.GOOGLE_WEB_CLIENT_ID.isNotBlank()
+
+    private var firebaseOk = false
+
+    /** Mínimo que exige Firebase para la contraseña. */
+    const val MIN_PASS = 6
 
     var email by mutableStateOf<String?>(null)
     val profiles = mutableStateListOf<Profile>()
@@ -60,15 +79,108 @@ object Sync {
 
     fun init(ctx: Context) {
         appCtx = ctx.applicationContext
-        if (!enabled) return
-        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-            .requestIdToken(BuildConfig.GOOGLE_WEB_CLIENT_ID)
-            .requestEmail()
-            .build()
-        gsc = GoogleSignIn.getClient(ctx.applicationContext, gso)
+        // Sin google-services.json no hay Firebase de ninguna clase
+        firebaseOk = runCatching {
+            com.google.firebase.FirebaseApp.getApps(ctx.applicationContext).isNotEmpty()
+        }.getOrDefault(false)
+        if (!firebaseOk) return
+        if (googleEnabled) {
+            val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                .requestIdToken(BuildConfig.GOOGLE_WEB_CLIENT_ID)
+                .requestEmail()
+                .build()
+            gsc = GoogleSignIn.getClient(ctx.applicationContext, gso)
+        }
         FirebaseAuth.getInstance().currentUser?.let {
             email = it.email
             loadDoc()
+        }
+    }
+
+    // ------------------------------------------------------------------
+    //  Entrar con email y contraseña (sin depender de Google)
+    // ------------------------------------------------------------------
+
+    /**
+     * Traduce los fallos de Firebase Auth a algo que se entienda. El caso más
+     * probable la primera vez es que el método esté sin activar en la consola:
+     * merece su propio mensaje, porque si no parece un fallo de la app.
+     */
+    private fun authError(e: Throwable?): String {
+        val ex = e ?: return "No se pudo iniciar sesión."
+        val code = (ex as? FirebaseAuthException)?.errorCode ?: ""
+        return when {
+            code == "ERROR_OPERATION_NOT_ALLOWED" || code == "CONFIGURATION_NOT_FOUND" ->
+                "Falta activar «Email/contraseña» en Firebase Console → Authentication → " +
+                    "Sign-in method (Métodos de acceso)."
+            code == "ERROR_TOO_MANY_REQUESTS" ->
+                "Demasiados intentos. Espera un rato antes de volver a probar."
+            ex is FirebaseAuthWeakPasswordException ->
+                "La contraseña es demasiado corta (mínimo $MIN_PASS caracteres)."
+            ex is FirebaseAuthUserCollisionException ->
+                "Ya existe una cuenta con ese email. Pulsa «Entrar»."
+            ex is FirebaseAuthInvalidUserException ->
+                "No hay ninguna cuenta con ese email. Pulsa «Crear cuenta»."
+            // Con la protección de enumeración activada, Firebase devuelve lo
+            // mismo para email inexistente y contraseña mala: no se distingue.
+            ex is FirebaseAuthInvalidCredentialsException ->
+                "Email o contraseña incorrectos."
+            ex is FirebaseNetworkException -> "Sin conexión: no se pudo hablar con Firebase."
+            else -> ex.message ?: "No se pudo iniciar sesión."
+        }
+    }
+
+    private fun checkCreds(mail: String, pass: String): String? = when {
+        !firebaseOk -> "Esta compilación no lleva Firebase."
+        mail.isBlank() || !mail.contains('@') -> "Escribe un email válido."
+        pass.length < MIN_PASS -> "La contraseña necesita al menos $MIN_PASS caracteres."
+        else -> null
+    }
+
+    /** Entra con una cuenta de email ya creada. */
+    fun signInEmail(mail: String, pass: String, onDone: (Boolean, String?) -> Unit) {
+        checkCreds(mail, pass)?.let { return onDone(false, it) }
+        FirebaseAuth.getInstance().signInWithEmailAndPassword(mail.trim(), pass)
+            .addOnCompleteListener { t ->
+                if (t.isSuccessful) {
+                    email = FirebaseAuth.getInstance().currentUser?.email
+                    loadDoc()
+                    onDone(true, null)
+                } else onDone(false, authError(t.exception))
+            }
+    }
+
+    /**
+     * Crea la cuenta y entra. Le pone un perfil "Principal" para que la app sea
+     * usable desde el primer momento (los perfiles vienen de la web y una cuenta
+     * nueva no tiene ninguno).
+     */
+    fun signUpEmail(mail: String, pass: String, onDone: (Boolean, String?) -> Unit) {
+        checkCreds(mail, pass)?.let { return onDone(false, it) }
+        FirebaseAuth.getInstance().createUserWithEmailAndPassword(mail.trim(), pass)
+            .addOnCompleteListener { t ->
+                if (!t.isSuccessful) return@addOnCompleteListener onDone(false, authError(t.exception))
+                email = FirebaseAuth.getInstance().currentUser?.email
+                val u = uid()
+                if (u == null) { loadDoc(); return@addOnCompleteListener onDone(true, null) }
+                val p = Profile(java.util.UUID.randomUUID().toString(), "Principal", "🍿", false)
+                writeProfiles(u, listOf(p)) { ok ->
+                    onMain {
+                        if (ok) { profiles.clear(); profiles.add(p); selectProfile(p.id) }
+                    }
+                    onDone(true, null)
+                }
+            }
+    }
+
+    /** Envía el correo para restablecer la contraseña. */
+    fun resetPassword(mail: String, onDone: (Boolean, String?) -> Unit) {
+        if (!firebaseOk) return onDone(false, "Esta compilación no lleva Firebase.")
+        val m = mail.trim()
+        if (m.isBlank() || !m.contains('@')) return onDone(false, "Escribe tu email primero.")
+        FirebaseAuth.getInstance().sendPasswordResetEmail(m).addOnCompleteListener { t ->
+            if (t.isSuccessful) onDone(true, "Te hemos enviado un correo a $m para cambiar la contraseña.")
+            else onDone(false, authError(t.exception))
         }
     }
 
@@ -193,7 +305,7 @@ object Sync {
     }
 
     fun addProfile(name: String, kids: Boolean, avatar: String, onDone: (Boolean, String?) -> Unit) {
-        val u = uid() ?: return onDone(false, "Inicia sesión con Google")
+        val u = uid() ?: return onDone(false, "Inicia sesión primero")
         if (profiles.size >= MAX_PROFILES) return onDone(false, "Máximo $MAX_PROFILES perfiles")
         val nm = name.trim().take(24)
         if (nm.isBlank()) return onDone(false, "Escribe un nombre")
@@ -205,7 +317,7 @@ object Sync {
     }
 
     fun updateProfile(id: String, name: String, kids: Boolean, avatar: String, onDone: (Boolean, String?) -> Unit) {
-        val u = uid() ?: return onDone(false, "Inicia sesión con Google")
+        val u = uid() ?: return onDone(false, "Inicia sesión primero")
         val idx = profiles.indexOfFirst { it.id == id }
         if (idx < 0) return onDone(false, "Perfil no encontrado")
         val nm = name.trim().take(24)
@@ -224,7 +336,7 @@ object Sync {
     }
 
     fun removeProfile(id: String, onDone: (Boolean, String?) -> Unit) {
-        val u = uid() ?: return onDone(false, "Inicia sesión con Google")
+        val u = uid() ?: return onDone(false, "Inicia sesión primero")
         if (profiles.size <= 1) return onDone(false, "Debe quedar al menos un perfil")
         val newList = profiles.filter { it.id != id }
         writeProfiles(u, newList) { ok ->
