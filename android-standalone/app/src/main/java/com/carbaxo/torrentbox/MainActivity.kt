@@ -7,12 +7,12 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -66,6 +66,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        Tv.init(this)          // ¿estamos en una tele? cambia foco y navegación
         Prefs.init(this)
         WatchStore.init(this)
         RealDebrid.init(this)
@@ -248,77 +249,152 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
         return
     }
 
-    Scaffold(
-        containerColor = Bg,
-        // Botón de Chromecast siempre visible: se elige la TV ANTES de abrir
-        // ningún título, igual que en HBO o Netflix.
-        topBar = {
+    // Con el mando, "atrás" vuelve a Descubrir en vez de cerrar la app
+    BackHandler(enabled = tab != Tab.DISCOVER) { tab = Tab.DISCOVER }
+
+    // Botón de Chromecast siempre visible: se elige la TV ANTES de abrir
+    // ningún título, igual que en HBO o Netflix.
+    val topBar: @Composable () -> Unit = {
+        Row(
+            Modifier.fillMaxWidth().background(Bg).padding(start = 14.dp, end = 6.dp, top = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                // En la tele, el título dice también en qué sección estás
+                if (Tv.isTv) "TorrentBox · ${tab.label}" else "TorrentBox",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold, color = Accent, modifier = Modifier.weight(1f)
+            )
+            if (CastManager.connected) {
+                Text(
+                    CastManager.deviceName ?: "TV", color = Color(0xFF34D399),
+                    style = MaterialTheme.typography.labelSmall, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 130.dp)
+                )
+            }
+            CastIconButton()
+        }
+    }
+
+    // Barra "emitiendo": abre el mando de la TV
+    val castBar: @Composable () -> Unit = {
+        if (CastManager.connected && CastManager.title.isNotBlank()) {
             Row(
-                Modifier.fillMaxWidth().background(Bg).padding(start = 14.dp, end = 6.dp, top = 6.dp),
+                Modifier.fillMaxWidth().background(Color(0xFF1B2A25))
+                    .tvClickable(RoundedCornerShape(0.dp), scale = 1f) { showCastScreen = true }
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    "TorrentBox", style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold, color = Accent, modifier = Modifier.weight(1f)
-                )
-                if (CastManager.connected) {
+                Icon(Icons.Filled.Cast, contentDescription = null, tint = Color(0xFF34D399))
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
                     Text(
-                        CastManager.deviceName ?: "TV", color = Color(0xFF34D399),
-                        style = MaterialTheme.typography.labelSmall, maxLines = 1,
-                        overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 130.dp)
+                        CastManager.title, style = MaterialTheme.typography.labelLarge,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        CastManager.status.ifBlank { "Emitiendo en ${CastManager.deviceName ?: "la TV"}" },
+                        style = MaterialTheme.typography.labelSmall, color = Muted,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis
                     )
                 }
-                CastIconButton()
-            }
-        },
-        bottomBar = {
-            Column {
-                // Barra "emitiendo": abre el mando de la TV
-                if (CastManager.connected && CastManager.title.isNotBlank()) {
-                    Row(
-                        Modifier.fillMaxWidth().background(Color(0xFF1B2A25))
-                            .clickable { showCastScreen = true }
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Filled.Cast, contentDescription = null, tint = Color(0xFF34D399))
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                CastManager.title, style = MaterialTheme.typography.labelLarge,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                CastManager.status.ifBlank { "Emitiendo en ${CastManager.deviceName ?: "la TV"}" },
-                                style = MaterialTheme.typography.labelSmall, color = Muted,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        Text("Abrir ›", color = Accent, style = MaterialTheme.typography.labelMedium)
-                    }
-                }
-                NavigationBar(containerColor = Surface1) {
-                    visibleTabs.forEach { t ->
-                        NavigationBarItem(
-                            selected = tab == t,
-                            onClick = { tab = t },
-                            icon = { Icon(t.icon, contentDescription = t.label) },
-                            label = { Text(t.label) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = Accent, selectedTextColor = Accent, indicatorColor = Surface1
-                            )
-                        )
-                    }
-                }
+                Text("Abrir ›", color = Accent, style = MaterialTheme.typography.labelMedium)
             }
         }
-    ) { pad ->
-        Box(Modifier.padding(pad)) {
-            when (tab) {
-                Tab.DISCOVER -> DiscoverScreen(catalogType, { catalogType = it }, kids = kids, onOpen = { detail = it })
-                Tab.SEARCH -> if (kids) DiscoverScreen(catalogType, { catalogType = it }, kids = true, onOpen = { detail = it }) else SearchScreen(onOpen = { detail = it })
-                Tab.DOWNLOADS -> DownloadsScreen(rdDownloads) { u -> play(u, PlayCtx()) }
-                Tab.SETTINGS -> SettingsScreen()
+    }
+
+    val content: @Composable () -> Unit = {
+        when (tab) {
+            Tab.DISCOVER -> DiscoverScreen(catalogType, { catalogType = it }, kids = kids, onOpen = { detail = it })
+            Tab.SEARCH -> if (kids) DiscoverScreen(catalogType, { catalogType = it }, kids = true, onOpen = { detail = it }) else SearchScreen(onOpen = { detail = it })
+            Tab.DOWNLOADS -> DownloadsScreen(rdDownloads) { u -> play(u, PlayCtx()) }
+            Tab.SETTINGS -> SettingsScreen()
+        }
+    }
+
+    if (Tv.isTv) {
+        // TELE: las secciones van en una columna a la izquierda (como Stremio
+        // para TV). Con el mando se llega a ellas yendo a la izquierda desde
+        // cualquier sitio, y siempre se ve cuál está activa.
+        Row(Modifier.fillMaxSize().background(Bg)) {
+            TvNavRail(visibleTabs, tab) { tab = it }
+            Column(Modifier.weight(1f).padding(end = Tv.overscan)) {
+                topBar()
+                castBar()
+                Box(Modifier.weight(1f)) { content() }
+            }
+        }
+    } else {
+        Scaffold(
+            containerColor = Bg,
+            topBar = topBar,
+            bottomBar = {
+                Column {
+                    castBar()
+                    NavigationBar(containerColor = Surface1) {
+                        visibleTabs.forEach { t ->
+                            NavigationBarItem(
+                                selected = tab == t,
+                                onClick = { tab = t },
+                                icon = { Icon(t.icon, contentDescription = t.label) },
+                                label = { Text(t.label) },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = Accent, selectedTextColor = Accent, indicatorColor = Surface1
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        ) { pad ->
+            Box(Modifier.padding(pad)) { content() }
+        }
+    }
+}
+
+/**
+ * Barra de secciones de la tele. La sección activa va marcada con el color de
+ * la app y una barra lateral; la que tiene el foco del mando, con el anillo
+ * blanco. Son dos cosas distintas a propósito: una dice DÓNDE ESTÁS y la otra
+ * QUÉ VAS A PULSAR, que es justo lo que se pierde sin pantalla táctil.
+ */
+@Composable
+private fun TvNavRail(tabs: List<Tab>, current: Tab, onSelect: (Tab) -> Unit) {
+    // El foco arranca en la sección activa: al encender ya se ve dónde estás
+    val first = rememberTvFocus()
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(150)   // hay que esperar a que el nodo esté colocado
+        runCatching { first.requestFocus() }
+    }
+
+    Column(
+        Modifier.width(210.dp).fillMaxHeight().background(Surface1)
+            .padding(start = Tv.overscan, end = 10.dp, top = 18.dp, bottom = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            "TorrentBox", color = Accent, fontWeight = FontWeight.Bold,
+            style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 18.dp)
+        )
+        tabs.forEach { t ->
+            val selected = t == current
+            Row(
+                Modifier.fillMaxWidth()
+                    .tvRow(
+                        RoundedCornerShape(10.dp),
+                        focusRequester = if (selected) first else null
+                    ) { onSelect(t) }
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(t.icon, contentDescription = null, tint = if (selected) Accent else Muted)
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    t.label,
+                    color = if (selected) Accent else Color.White,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                    style = MaterialTheme.typography.bodyLarge
+                )
             }
         }
     }
@@ -381,12 +457,24 @@ fun CastScreen(onClose: () -> Unit) {
         else String.format("%d:%02d", s / 60, s % 60)
     }
 
+    BackHandler { onClose() }
+    // Con el mando, el foco arranca en play/pausa: es lo que se busca al entrar
+    val playFocus = rememberTvFocus()
+    LaunchedEffect(Unit) {
+        if (!Tv.isTv) return@LaunchedEffect
+        kotlinx.coroutines.delay(150)
+        runCatching { playFocus.requestFocus() }
+    }
+
     Column(
-        Modifier.fillMaxSize().background(Bg).padding(20.dp),
+        Modifier.fillMaxSize().background(Bg).padding(if (Tv.isTv) Tv.overscan else 20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("‹ Volver a la app", color = Accent, modifier = Modifier.clickable { onClose() })
+            Text(
+                "‹ Volver a la app", color = Accent,
+                modifier = Modifier.tvClickable(RoundedCornerShape(8.dp)) { onClose() }.padding(6.dp)
+            )
             Spacer(Modifier.weight(1f))
             CastIconButton()
         }
@@ -428,15 +516,18 @@ fun CastScreen(onClose: () -> Unit) {
 
         // Controles
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedButton(onClick = {
-                cp?.let { p -> runCatching { p.seekTo((p.currentPosition - 10_000).coerceAtLeast(0)) } }
-            }) { Text("⏪ 10s") }
-            Button(onClick = {
-                cp?.let { p -> runCatching { if (p.isPlaying) p.pause() else p.play() } }
-            }) { Text(if (playing) "⏸ Pausa" else "▶ Reproducir") }
-            OutlinedButton(onClick = {
-                cp?.let { p -> runCatching { p.seekTo(p.currentPosition + 10_000) } }
-            }) { Text("10s ⏩") }
+            OutlinedButton(
+                modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp)),
+                onClick = { cp?.let { p -> runCatching { p.seekTo((p.currentPosition - 10_000).coerceAtLeast(0)) } } }
+            ) { Text("⏪ 10s") }
+            Button(
+                modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp), focusRequester = playFocus),
+                onClick = { cp?.let { p -> runCatching { if (p.isPlaying) p.pause() else p.play() } } }
+            ) { Text(if (playing) "⏸ Pausa" else "▶ Reproducir") }
+            OutlinedButton(
+                modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp)),
+                onClick = { cp?.let { p -> runCatching { p.seekTo(p.currentPosition + 10_000) } } }
+            ) { Text("10s ⏩") }
         }
 
         Text(
@@ -446,16 +537,22 @@ fun CastScreen(onClose: () -> Unit) {
 
         Spacer(Modifier.weight(1f))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = { CastManager.stop(); onClose() }) { Text("⏹ Parar") }
-            OutlinedButton(onClick = { CastManager.disconnect(); onClose() }) { Text("Desconectar TV") }
+            OutlinedButton(
+                onClick = { CastManager.stop(); onClose() },
+                modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+            ) { Text("⏹ Parar") }
+            OutlinedButton(
+                onClick = { CastManager.disconnect(); onClose() },
+                modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+            ) { Text("Desconectar TV") }
         }
     }
 }
 
 @Composable
-fun PosterCard(t: Tmdb.Title, width: Int = 120, onClick: () -> Unit) {
+fun PosterCard(t: Tmdb.Title, width: Int = if (Tv.isTv) 165 else 120, onClick: () -> Unit) {
     val watched = WatchStore.isWatchedTitle(t.type, t.tmdbId)
-    Column(Modifier.width(width.dp).clickable { onClick() }) {
+    Column(Modifier.width(width.dp).tvClickable(RoundedCornerShape(12.dp), onClick = onClick)) {
         Box {
             AsyncImage(
                 model = t.poster,
@@ -483,7 +580,10 @@ fun PosterCard(t: Tmdb.Title, width: Int = 120, onClick: () -> Unit) {
 @Composable
 fun ContinueCard(p: WatchStore.Prog, onClick: () -> Unit) {
     val pct = if (p.duration > 0) (p.position / p.duration).coerceIn(0.0, 1.0).toFloat() else 0f
-    Column(Modifier.width(120.dp).clickable { onClick() }) {
+    Column(
+        Modifier.width(if (Tv.isTv) 165.dp else 120.dp)
+            .tvClickable(RoundedCornerShape(12.dp), onClick = onClick)
+    ) {
         AsyncImage(
             model = p.poster, contentDescription = p.name, contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(10.dp))
@@ -529,12 +629,16 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, kids: Boolean = false
     }
 
     val ctx = LocalContext.current
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = if (Tv.isTv) 4.dp else 12.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)
+    ) {
         // Aviso de nueva versión (auto-actualización)
         Update.available?.let { up ->
             item {
                 Card(
-                    Modifier.fillMaxWidth().padding(bottom = 10.dp).clickable { Update.downloadAndInstall(ctx) },
+                    Modifier.fillMaxWidth().padding(bottom = 10.dp)
+                        .tvClickable(RoundedCornerShape(12.dp), scale = 1.02f) { Update.downloadAndInstall(ctx) },
                     colors = CardDefaults.cardColors(containerColor = Accent.copy(alpha = 0.18f))
                 ) {
                     Column(Modifier.padding(12.dp)) {
@@ -549,9 +653,12 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, kids: Boolean = false
                 Text("Descubrir", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 if (Sync.enabled) {
                     if (Sync.email == null) {
-                        OutlinedButton(onClick = { Sync.signInIntent()?.let { launcher.launch(it) } }) { Text("Entrar con Google") }
+                        OutlinedButton(
+                            onClick = { Sync.signInIntent()?.let { launcher.launch(it) } },
+                            modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                        ) { Text("Entrar con Google") }
                     } else {
-                        TextButton(onClick = { Sync.signOut() }) { Text("👤 Salir") }
+                        TextButton(onClick = { Sync.signOut() }, modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))) { Text("👤 Salir") }
                     }
                 }
             }
@@ -560,10 +667,16 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, kids: Boolean = false
             }
             Spacer(Modifier.height(12.dp))
             SingleChoiceSegmentedButtonRow {
-                SegmentedButton(selected = type == "movie", onClick = { onType("movie") },
-                    shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("Películas") }
-                SegmentedButton(selected = type == "series", onClick = { onType("series") },
-                    shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Series") }
+                SegmentedButton(
+                    selected = type == "movie", onClick = { onType("movie") },
+                    shape = SegmentedButtonDefaults.itemShape(0, 2),
+                    modifier = Modifier.tvFocusRing(RoundedCornerShape(8.dp))
+                ) { Text("Películas") }
+                SegmentedButton(
+                    selected = type == "series", onClick = { onType("series") },
+                    shape = SegmentedButtonDefaults.itemShape(1, 2),
+                    modifier = Modifier.tvFocusRing(RoundedCornerShape(8.dp))
+                ) { Text("Series") }
             }
             // Explorar por género (oculto en modo infantil: solo catálogos familiares)
             if (Tmdb.hasKey && !kids) {
@@ -582,7 +695,10 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, kids: Boolean = false
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(genres.size) { i ->
                         val (gid, gname) = genres[i]
-                        AssistChip(onClick = { browse = "genre:$gid" to gname }, label = { Text(gname) })
+                        AssistChip(
+                            onClick = { browse = "genre:$gid" to gname }, label = { Text(gname) },
+                            modifier = Modifier.tvFocusRing(RoundedCornerShape(8.dp))
+                        )
                     }
                 }
             }
@@ -641,8 +757,9 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, kids: Boolean = false
                     val prov = Tmdb.PLATFORMS.firstOrNull { it.name == row.name }?.providers
                     if (prov != null) item {
                         Box(
-                            Modifier.width(120.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(10.dp))
-                                .background(Surface1).clickable { browse = prov to row.name },
+                            Modifier.width(if (Tv.isTv) 165.dp else 120.dp).aspectRatio(2f / 3f)
+                                .clip(RoundedCornerShape(10.dp)).background(Surface1)
+                                .tvClickable(RoundedCornerShape(10.dp)) { browse = prov to row.name },
                             contentAlignment = Alignment.Center
                         ) { Text("Ver más ›", color = Accent, fontWeight = FontWeight.Bold) }
                     }
@@ -674,23 +791,24 @@ fun BrowseScreen(provider: String, name: String, type: String, kids: Boolean = f
         }
     }
     LaunchedEffect(provider, type) { items.clear(); page = 0; end = false; loadNext() }
+    BackHandler { onBack() }
 
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("← Volver") }
+            TextButton(onClick = onBack, modifier = Modifier.tvFocusRing()) { Text("← Volver") }
             Text(name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         }
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(110.dp),
+            columns = GridCells.Adaptive(if (Tv.isTv) 150.dp else 110.dp),
             modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(bottom = 24.dp)
         ) {
-            items.forEach { t -> item { PosterCard(t, width = 110) { onOpen(t) } } }
+            items.forEach { t -> item { PosterCard(t, width = if (Tv.isTv) 150 else 110) { onOpen(t) } } }
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                    if (!end) Button(onClick = { loadNext() }, enabled = !loading) {
+                    if (!end) Button(onClick = { loadNext() }, enabled = !loading, modifier = Modifier.tvFocusRing()) {
                         Text(if (loading) "Cargando…" else "Ver más")
                     } else Text("No hay más resultados", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
@@ -728,21 +846,31 @@ fun SearchScreen(onOpen: (Tmdb.Title) -> Unit) {
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 SingleChoiceSegmentedButtonRow {
-                    SegmentedButton(selected = type == "movie", onClick = { type = "movie" },
-                        shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("Películas") }
-                    SegmentedButton(selected = type == "series", onClick = { type = "series" },
-                        shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Series") }
+                    SegmentedButton(
+                        selected = type == "movie", onClick = { type = "movie" },
+                        shape = SegmentedButtonDefaults.itemShape(0, 2),
+                        modifier = Modifier.tvFocusRing(RoundedCornerShape(8.dp))
+                    ) { Text("Películas") }
+                    SegmentedButton(
+                        selected = type == "series", onClick = { type = "series" },
+                        shape = SegmentedButtonDefaults.itemShape(1, 2),
+                        modifier = Modifier.tvFocusRing(RoundedCornerShape(8.dp))
+                    ) { Text("Series") }
                 }
-                Button(onClick = { go() }) { Text("Buscar") }
+                Button(onClick = { go() }, modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))) { Text("Buscar") }
             }
             if (status.isNotBlank()) { Spacer(Modifier.height(10.dp)); Text(status, color = Muted, style = MaterialTheme.typography.bodySmall) }
             Spacer(Modifier.height(10.dp))
         }
         items(results.size) { i ->
-            Row(Modifier.fillMaxWidth().clickable { onOpen(results[i]) }.padding(vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                Modifier.fillMaxWidth()
+                    .tvRow(RoundedCornerShape(10.dp)) { onOpen(results[i]) }
+                    .padding(vertical = 6.dp, horizontal = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 AsyncImage(model = results[i].poster, contentDescription = null, contentScale = ContentScale.Crop,
-                    modifier = Modifier.width(70.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)))
+                    modifier = Modifier.width(if (Tv.isTv) 90.dp else 70.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)))
                 Column(Modifier.weight(1f).align(Alignment.CenterVertically)) {
                     Text(results[i].title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(results[i].year + (if (results[i].rating > 0) "  ⭐ ${results[i].rating}" else ""),
@@ -910,7 +1038,8 @@ fun SettingsScreen() {
                         FilterChip(
                             selected = Prefs.playerMode == mode,
                             onClick = { Prefs.savePlayerMode(mode) },
-                            label = { Text(label) }
+                            label = { Text(label) },
+                            modifier = Modifier.tvFocusRing(RoundedCornerShape(8.dp))
                         )
                     }
                 }
@@ -1108,6 +1237,7 @@ fun DownloadsScreen(rdDownloads: List<RdDownloads.Snap>, onPlayUrl: (String) -> 
         if (ready.isNotEmpty()) {
             item { Text("▶ Listas para ver", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color(0xFF34D399), modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)) }
             items(ready.size) { i -> RdDownloadCard(ready[i], onPlayUrl = { onPlayUrl(RdDownloads.playUri(ctx, ready[i].id) ?: ready[i].localUri ?: "") }, onRemove = { RdDownloads.remove(ctx, ready[i].id) }) }
+
         }
 
         // --- Descargando (actividad) ---
@@ -1260,10 +1390,13 @@ private fun RdCloudSection(onPlayUrl: (String) -> Unit) {
                     modifier = Modifier.fillMaxWidth()
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Button(onClick = { add() }, enabled = input.isNotBlank() && !busy) {
+                    Button(
+                        onClick = { add() }, enabled = input.isNotBlank() && !busy,
+                        modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                    ) {
                         Text("Añadir a Real-Debrid")
                     }
-                    OutlinedButton(onClick = {
+                    OutlinedButton(modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp)), onClick = {
                         val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
                             as? android.content.ClipboardManager
                         val t = cm?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString()
@@ -1277,7 +1410,9 @@ private fun RdCloudSection(onPlayUrl: (String) -> Unit) {
                 Spacer(Modifier.height(2.dp))
                 val working = list.count { it.working }
                 Row(
-                    Modifier.fillMaxWidth().clickable { expanded = !expanded },
+                    Modifier.fillMaxWidth()
+                        .tvClickable(RoundedCornerShape(8.dp), scale = 1f) { expanded = !expanded }
+                        .padding(vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -1324,8 +1459,8 @@ private fun RdCloudSection(onPlayUrl: (String) -> Unit) {
                             f.name + if (f.bytes > 0) "   ·   ${Search.humanSize(f.bytes)}" else "",
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.fillMaxWidth()
-                                .clickable { picker = null; useLink(f.link, download) }
-                                .padding(vertical = 8.dp)
+                                .tvRow(RoundedCornerShape(8.dp)) { picker = null; useLink(f.link, download) }
+                                .padding(vertical = 8.dp, horizontal = 6.dp)
                         )
                     }
                 }
@@ -1366,11 +1501,13 @@ private fun RdCloudRow(
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             if (t.ready) {
-                TextButton(onClick = onPlay) { Text("▶ Ver") }
-                TextButton(onClick = onDownload) { Text("⬇ Descargar") }
+                TextButton(onClick = onPlay, modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))) { Text("▶ Ver") }
+                TextButton(onClick = onDownload, modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))) { Text("⬇ Descargar") }
             }
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, "Quitar de Real-Debrid", tint = Muted) }
+            IconButton(onClick = onDelete, modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))) {
+                Icon(Icons.Filled.Delete, "Quitar de Real-Debrid", tint = Muted)
+            }
         }
         HorizontalDivider(color = Color(0x22FFFFFF))
     }
@@ -1398,8 +1535,8 @@ fun RdDownloadCard(d: RdDownloads.Snap, onPlayUrl: () -> Unit, onRemove: () -> U
                 color = if (d.done) Color(0xFF34D399) else Muted
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (d.done) Button(onClick = onPlayUrl) { Text("▶ Ver") }
-                OutlinedButton(onClick = onRemove) { Text("Borrar") }
+                if (d.done) Button(onClick = onPlayUrl, modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))) { Text("▶ Ver") }
+                OutlinedButton(onClick = onRemove, modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))) { Text("Borrar") }
             }
         }
     }
@@ -1491,7 +1628,8 @@ fun SourcesSection(
                             Text(
                                 Search.engineName(key) + if (sources.isEmpty()) "" else " ($n)"
                             )
-                        }
+                        },
+                        modifier = Modifier.tvFocusRing(RoundedCornerShape(8.dp))
                     )
                 }
             }
@@ -1505,6 +1643,7 @@ fun SourcesSection(
                     FilterChip(
                         selected = qualityFilter == "all",
                         onClick = { qualityFilter = "all" },
+                        modifier = Modifier.tvFocusRing(RoundedCornerShape(8.dp)),
                         label = { Text("Todas") }
                     )
                     present.forEach { q ->
@@ -1529,7 +1668,12 @@ fun SourcesSection(
             color = Color(0xFFFBBF24), style = MaterialTheme.typography.bodySmall
         )
         if (sources.isNotEmpty()) {
-            Row(Modifier.fillMaxWidth().clickable { linksExpanded = !linksExpanded }, verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.fillMaxWidth()
+                    .tvClickable(RoundedCornerShape(8.dp), scale = 1f) { linksExpanded = !linksExpanded }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
                     "Enlaces (${shown.size})" + if (label.isNotBlank()) " · $label" else "",
                     style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)
@@ -1555,15 +1699,21 @@ fun SourcesSection(
                     )
                     if (RealDebrid.configured) {
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = {
-                                if (CastManager.connected) {
-                                    // Con TV conectada va directo a la TV; el
-                                    // CastManager muestra el progreso y elige la
-                                    // versión con audio compatible.
-                                    onCastMagnet(r.magnet, buildCtx().withSource(r))
-                                } else prepare(r, download = false)
-                            }) { Text(if (CastManager.connected) "📺 Ver en la TV" else "▶ Ver") }
-                            OutlinedButton(onClick = { prepare(r, download = true) }) { Text("⬇ Descargar") }
+                            Button(
+                                onClick = {
+                                    if (CastManager.connected) {
+                                        // Con TV conectada va directo a la TV; el
+                                        // CastManager muestra el progreso y elige la
+                                        // versión con audio compatible.
+                                        onCastMagnet(r.magnet, buildCtx().withSource(r))
+                                    } else prepare(r, download = false)
+                                },
+                                modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                            ) { Text(if (CastManager.connected) "📺 Ver en la TV" else "▶ Ver") }
+                            OutlinedButton(
+                                onClick = { prepare(r, download = true) },
+                                modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                            ) { Text("⬇ Descargar") }
                         }
                     } else {
                         Text(
@@ -1751,15 +1901,28 @@ fun DetailScreen(
         )
     }
 
+    BackHandler { onBack() }
+    // En la tele el foco empieza en "Volver": arriba a la izquierda, como en
+    // cualquier app de TV, y desde ahí se baja al contenido.
+    val backFocus = rememberTvFocus()
+    LaunchedEffect(title.tmdbId) {
+        if (!Tv.isTv) return@LaunchedEffect
+        kotlinx.coroutines.delay(150)
+        runCatching { backFocus.requestFocus() }
+    }
+
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         val dt = detail
         Box {
             AsyncImage(
                 model = dt?.backdrop ?: title.poster,
                 contentDescription = null, contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxWidth().height(220.dp)
+                modifier = Modifier.fillMaxWidth().height(if (Tv.isTv) 260.dp else 220.dp)
             )
-            TextButton(onClick = onBack, modifier = Modifier.padding(8.dp)) { Text("← Volver", color = Color.White) }
+            TextButton(
+                onClick = onBack,
+                modifier = Modifier.padding(8.dp).tvFocusRing(focusRequester = backFocus)
+            ) { Text("← Volver", color = Color.White) }
         }
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(title.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -1778,12 +1941,18 @@ fun DetailScreen(
             // Tráiler + favorito
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 trailerKey?.let { k ->
-                    Button(colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF87171)),
-                        onClick = { openTrailer(k) }) { Text("🎬 Tráiler") }
+                    Button(
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF87171)),
+                        onClick = { openTrailer(k) },
+                        modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                    ) { Text("🎬 Tráiler") }
                 }
                 if (Sync.enabled && Sync.email != null) {
                     val fid = "tmdb:${title.tmdbId}"
-                    OutlinedButton(onClick = { Sync.toggleFavorite(title) }) {
+                    OutlinedButton(
+                        onClick = { Sync.toggleFavorite(title) },
+                        modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                    ) {
                         Text(if (Sync.isFav(fid)) "❤ En Mi lista" else "🤍 Añadir a Mi lista")
                     }
                 }
@@ -1794,8 +1963,12 @@ fun DetailScreen(
                 Text("Temporadas", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     dt.seasons.forEach { s ->
-                        FilterChip(selected = selSeason == s.season, onClick = { selSeason = s.season; expandedEpisode = -1 },
-                            label = { Text("T${s.season} · ${s.episodes} ep.") })
+                        FilterChip(
+                            selected = selSeason == s.season,
+                            onClick = { selSeason = s.season; expandedEpisode = -1 },
+                            label = { Text("T${s.season} · ${s.episodes} ep.") },
+                            modifier = Modifier.tvFocusRing(RoundedCornerShape(8.dp))
+                        )
                     }
                 }
                 selSeason?.let { sn ->
@@ -1803,7 +1976,7 @@ fun DetailScreen(
                     // por episodio (los packs de temporada salen entre ellos).
                     episodes.forEach { ep ->
                         Card(
-                            Modifier.fillMaxWidth().clickable {
+                            Modifier.fillMaxWidth().tvClickable(RoundedCornerShape(12.dp), scale = 1.02f) {
                                 expandedEpisode = ep.episode
                                 runSearch("${dt.title} · T${sn}E${ep.episode} · ${ep.name}", sn, ep.episode)
                             },
@@ -1835,7 +2008,9 @@ fun DetailScreen(
                     )
                     if (!loadingSources && dt != null) Text(
                         "🔄 Recargar", color = Accent, style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.clickable { expandedEpisode = -1; loadSources(dt) }
+                        modifier = Modifier
+                            .tvClickable(RoundedCornerShape(8.dp)) { expandedEpisode = -1; loadSources(dt) }
+                            .padding(6.dp)
                     )
                 }
                 SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onPlayUrl, onCastMagnet, onOpenDownloads)
