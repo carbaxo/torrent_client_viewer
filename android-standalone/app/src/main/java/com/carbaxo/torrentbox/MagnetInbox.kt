@@ -19,17 +19,26 @@ object MagnetInbox {
     var pending by mutableStateOf<String?>(null)
         private set
 
+    private val MAGNET = Regex("magnet:\\?[^\\s\"'<>]+", RegexOption.IGNORE_CASE)
+    private val URL = Regex("https?://[^\\s\"'<>]+", RegexOption.IGNORE_CASE)
+
     /**
-     * Guarda un magnet o un enlace. Del texto compartido se extrae el magnet
-     * aunque venga rodeado de más texto (los navegadores comparten el título
-     * junto al enlace). No puede llamarse "setPending": la propiedad ya genera
-     * ese setter en la JVM y chocarían.
+     * Guarda un magnet o un enlace, **sacándolo de dentro** del texto compartido.
+     *
+     * Se busca con expresión regular en vez de exigir que el texto empiece por
+     * `http`: los navegadores comparten «Título de la página \n enlace», así que
+     * exigiendo el principio se descartaba justo lo que el usuario acababa de
+     * compartir. Compartir desde el navegador es además mucho más fiable que
+     * copiar y pegar a mano en el móvil, donde es fácil llevarse el enlace a
+     * medias.
+     *
+     * No puede llamarse "setPending": la propiedad ya genera ese setter en la JVM
+     * y chocarían.
      */
     fun offer(text: String?) {
         val t = text?.trim().orEmpty()
         if (t.isBlank()) return
-        val magnet = Regex("magnet:\\?[^\\s\"'<>]+", RegexOption.IGNORE_CASE).find(t)?.value
-        pending = magnet ?: t.takeIf { it.startsWith("http", ignoreCase = true) }
+        pending = (MAGNET.find(t)?.value ?: URL.find(t)?.value)?.let { Links.tidy(it) }
     }
 
     fun clear() { pending = null }

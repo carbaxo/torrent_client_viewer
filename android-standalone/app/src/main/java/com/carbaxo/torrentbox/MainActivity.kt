@@ -2107,7 +2107,9 @@ private fun RdCloudSection(onPlayUrl: (String) -> Unit) {
     }
 
     fun add() {
-        val v = input.trim()
+        // Se limpia aquí también, para que la decisión de qué camino tomar se haga
+        // sobre el enlace de verdad y no sobre lo que trae pegado el portapapeles.
+        val v = Links.tidy(input)
         busy = true
         when {
             // Seguro que es un torrent
@@ -2188,6 +2190,11 @@ private fun RdCloudSection(onPlayUrl: (String) -> Unit) {
                         "está en ningún buscador, como los dibujos en castellano. Un enlace " +
                         "de hoster (1fichier, Mega…) se prepara y se descarga directamente.",
                     color = Muted, style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    "💡 Más fácil que copiar y pegar: en el navegador, menú → Compartir → " +
+                        "VizPlay. Llega el enlace entero y no hay forma de dejarse un trozo.",
+                    color = OkGreen, style = MaterialTheme.typography.labelSmall
                 )
                 OutlinedTextField(
                     value = input, onValueChange = { input = it },

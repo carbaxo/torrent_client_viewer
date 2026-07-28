@@ -73,10 +73,19 @@ object LinkAdd {
      * @return el resultado, o null y el motivo en el segundo valor.
      */
     fun resolve(input: String): Pair<Found?, String?> {
-        val v = input.trim()
-        if (v.isBlank()) return null to "No has pegado nada."
+        if (input.isBlank()) return null to "No has pegado nada."
+        // Se limpia antes de mirar: el fragmento «#:~:text=…» que añade Chrome al
+        // copiar un enlace no es parte de la dirección, y un enlace sin «https://»
+        // delante sigue siendo un enlace.
+        val v = Links.tidy(input)
         if (v.startsWith("magnet:", true)) return Found.Magnet(v) to null
-        if (!v.startsWith("http", true)) return null to "Eso no es un enlace ni un magnet."
+        if (!v.startsWith("http", true)) {
+            return null to if (Links.looksTruncated(v))
+                "Ese enlace está a medias: le falta el principio (le falta el dominio, " +
+                    "tipo «https://…»). En el móvil es fácil que el copiar y pegar se lleve " +
+                    "solo un trozo. Más seguro: en el navegador usa Compartir → VizPlay."
+            else "Eso no es un enlace ni un magnet."
+        }
 
         // Un .torrent directo
         if (v.substringBefore('?').endsWith(".torrent", true)) {

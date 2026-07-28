@@ -66,6 +66,15 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
   españolas no dan magnet: DonTorrent da `.torrent`. Y lo que se añade aquí
   **aparece luego en la ficha del título** como un enlace más (ver «Mi
   Real-Debrid» más abajo), que es la vía para lo que no está en ningún buscador.
+  Lo más fiable no es copiar y pegar sino **Compartir → VizPlay** desde el
+  navegador: en el móvil es facilísimo que el copiar y pegar se lleve el enlace **a
+  medias**, y entonces no hay forma de reconstruirlo. `Links.kt` limpia lo que
+  llega —quita el `#:~:text=…` que añade Chrome al «copiar enlace al texto
+  resaltado» y pone el `https://` si falta— y detecta el caso del enlace truncado
+  para avisar de que **está a medias**, en vez de un «eso no es un enlace» que no
+  ayuda. Del texto compartido el enlace se **busca dentro** con expresión regular:
+  los navegadores comparten «Título \n enlace», así que exigir que el texto empiece
+  por `http` descartaba justo lo que se acababa de compartir.
   Real-Debrid lo baja a sus servidores; debajo se ve **la lista de la
   cuenta de RD con su estado real** (leyendo el magnet, en cola, descargando
   con su %, listo, sin semillas…) y botones Ver / Descargar / quitar. Es la
