@@ -31,12 +31,18 @@ object LinkAdd {
     }
 
     private val MAGNET = Regex("""magnet:\?[^"'\s<>]+""", RegexOption.IGNORE_CASE)
-    private val TORRENT_HREF = Regex("""(?:href|src)=["']([^"']*?\.torrent[^"']*)["']""", RegexOption.IGNORE_CASE)
+    private val TORRENT_HREF = Regex("""(?:href|src|data-href)=["']([^"']*?\.torrent[^"']*)["']""", RegexOption.IGNORE_CASE)
     /** Botones de descarga que sirven el .torrent sin que la URL lo diga. */
     private val DOWNLOAD_HREF = Regex(
-        """(?:href|src)=["']([^"']*/(?:torrents?|descargar|descarga|download)/[^"']+)["']""",
+        """(?:href|src|data-href)=["']([^"']*/(?:torrents?|descargar|descarga|download|get|dl)/[^"']+)["']""",
         RegexOption.IGNORE_CASE
     )
+    /**
+     * Último recurso: un `.torrent` **en cualquier parte** del HTML, no solo dentro
+     * de un `href`. Pilla los que la página monta desde JavaScript y los que van
+     * en atributos raros o sin comillas, que es donde se atascó el primer intento.
+     */
+    private val TORRENT_ANY = Regex("""[^"'\s<>()]+\.torrent""", RegexOption.IGNORE_CASE)
 
     /** Cabeceras de navegador: sin ellas varias de estas webs responden 403. */
     private fun req(url: String, referer: String?) = Request.Builder().url(url)
@@ -106,13 +112,46 @@ object LinkAdd {
 
         val href = TORRENT_HREF.find(html)?.groupValues?.get(1)
             ?: DOWNLOAD_HREF.find(html)?.groupValues?.get(1)
+            ?: TORRENT_ANY.find(html)?.value
             ?: return null to
                 "La página abre, pero no encuentro dentro ni un magnet ni un .torrent. " +
                 "Prueba a pegar directamente el enlace del botón «Descargar» " +
-                "(mantén pulsado → «Copiar dirección del enlace»)."
+                "(mantén pulsado → «Copiar dirección del enlace»).\n\n" + diagnose(html)
         val data = torrentBytes(abs(href, v), v)
             ?: return null to "Encontré el enlace de descarga ($href) pero no pude bajar el .torrent."
         return Found.TorrentFile(data, href) to null
+    }
+
+    private val ANY_HREF = Regex("""href=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+
+    /**
+     * Cuando no se encuentra el enlace de descarga, dice **qué contiene la página**
+     * en vez de solo que no lo encuentra.
+     *
+     * Existe porque estas webs no se pueden abrir desde el entorno donde se
+     * programa la app: sin esto, cada intento de acertar con el patrón sería un
+     * build a ciegas. Con esto, un solo mensaje pegado por el usuario basta para
+     * saber si el botón lleva otra ruta, si el HTML no trae enlaces (página hecha
+     * con JavaScript, que habría que atacar de otra forma) o si la web ha devuelto
+     * un aviso en vez de la ficha.
+     */
+    private fun diagnose(html: String): String {
+        val hrefs = ANY_HREF.findAll(html).map { it.groupValues[1] }.toList()
+        val interesting = hrefs.filter {
+            Regex("tor|desc|down|get|dl|magnet", RegexOption.IGNORE_CASE).containsMatchIn(it)
+        }.distinct().take(4)
+        val segs = hrefs.mapNotNull {
+            Regex("^/?([a-zA-Z0-9_-]{2,20})/").find(it)?.groupValues?.get(1)?.lowercase()
+        }.distinct().take(10)
+        return buildString {
+            append("Diagnóstico: ${html.length} caracteres, ${hrefs.size} enlaces.")
+            if (segs.isNotEmpty()) append(" Rutas: ${segs.joinToString(", ")}.")
+            if (interesting.isNotEmpty())
+                append(" Candidatos: ${interesting.joinToString(" | ") { it.take(70) }}.")
+            else if (hrefs.size < 5)
+                append(" Casi no hay enlaces: la página se monta con JavaScript, así que " +
+                    "leerla no va a servir. Hará falta el enlace del .torrent a mano.")
+        }
     }
 
     /**
