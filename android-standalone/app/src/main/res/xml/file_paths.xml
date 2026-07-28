@@ -2,4 +2,7 @@
 <paths>
     <!-- APK de auto-actualización -->
     <files-path name="apk" path="apk/" />
+    <!-- Vídeos descargados: hace falta para abrirlos en VLC/MX Player, porque
+         un file:// pasado a otra app lanza FileUriExposedException en API 24+ -->
+    <external-files-path name="movies" path="Movies/" />
 </paths>

@@ -17,8 +17,13 @@ servidor propio. Funciona en **móvil y en Android TV**.
   ficha de detalle con sinopsis, tráiler y fuentes.
 - ▶️ **Ver**: streaming directo desde los servidores de Real-Debrid. El vídeo va
   del CDN de RD al reproductor; no se descarga nada en el móvil.
-- ⬇️ **Descargar**: la encola en el **DownloadManager del sistema**, así que
-  continúa **aunque cierres la app** y queda disponible sin conexión.
+- ⬇️ **Descargar** con **pausa y continuación**: gestor propio (WorkManager en
+  primer plano) que sigue **aunque cierres la app** y sobrevive a reiniciar el
+  móvil. Continuar no reempieza: se pide el fichero **desde el byte que ya hay en
+  disco** (HTTP `Range`). Y si el enlace de Real-Debrid ha caducado a mitad —van
+  atados a tu IP y expiran—, **se pide otro con el magnet guardado** y sigue
+  desde donde iba. Eso es lo que antes se veía como "se para a mitad": lo hacía
+  el DownloadManager de Android, que no sabe pausar ni renovar un enlace muerto.
 - ➕ **Añadir un magnet o un enlace a mano** (pestaña Descargas): se pega el
   magnet y Real-Debrid lo baja a sus servidores; debajo se ve **la lista de la
   cuenta de RD con su estado real** (leyendo el magnet, en cola, descargando
@@ -69,14 +74,18 @@ servidor propio. Funciona en **móvil y en Android TV**.
   familiares), sincronizados con tu cuenta de Google.
 - 🔔 Avisos de episodios nuevos de tus series favoritas y auto-actualización.
 
-## Nada en segundo plano
+## Nada en segundo plano (salvo una descarga en curso)
 
-Al no haber motor de torrents, la app **no tiene servicio en primer plano, ni
-`WAKE_LOCK`, ni notificación permanente**. Cuando la cierras, se cierra: cero
-CPU y cero batería. Las descargas siguen porque las lleva el sistema, no la app.
+Al no haber motor de torrents, la app **no tiene `WAKE_LOCK` ni notificación
+permanente**. En reposo no queda nada corriendo: cero CPU y cero batería.
+
+La única excepción es una **descarga en curso**, que sí necesita un servicio en
+primer plano —es justo lo que impide que el sistema la mate al cerrar la app— con
+su notificación de progreso. Desaparece en cuanto la descarga acaba o se pausa.
 
 Permisos que pide: `INTERNET`, `ACCESS_NETWORK_STATE`, `POST_NOTIFICATIONS`
-(progreso de las descargas) y `REQUEST_INSTALL_PACKAGES` (auto-actualización).
+(progreso de las descargas), `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_DATA_SYNC`
+(la descarga en curso) y `REQUEST_INSTALL_PACKAGES` (auto-actualización).
 
 ## Android TV
 

@@ -71,6 +71,7 @@ class MainActivity : AppCompatActivity() {
 
         Tv.init(this)          // ¿estamos en una tele? cambia foco y navegación
         Prefs.init(this)
+        Downloads.init(this)   // descargas propias (pausar/continuar)
         WatchStore.init(this)
         RealDebrid.init(this)
         // Chromecast: sesión global, se elige la TV antes de abrir nada
@@ -158,7 +159,6 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
     var askPlayer by remember { mutableStateOf<Pair<String, PlayCtx>?>(null) }
     // (título, mensaje, ¿ofrecer instalar VLC?)
     var playerMsg by remember { mutableStateOf<Triple<String, String, Boolean>?>(null) }
-    val rdDownloads = remember { mutableStateListOf<RdDownloads.Snap>() }
     val ctx = LocalContext.current
 
     // Si Play Services no estaba listo al arrancar, se reintenta al pintar
@@ -221,19 +221,6 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
     val kids = Sync.activeProfile?.kids == true
     val visibleTabs = if (kids) listOf(Tab.DISCOVER, Tab.DOWNLOADS, Tab.SETTINGS) else Tab.values().toList()
     LaunchedEffect(kids) { if (kids && tab !in visibleTabs) tab = Tab.DISCOVER }
-
-    // Refresco del progreso de las descargas del DownloadManager. La consulta
-    // es bloqueante, así que va en IO; el estado se actualiza al volver al hilo
-    // principal (fin de withContext).
-    LaunchedEffect(Unit) {
-        while (true) {
-            val rd = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                try { RdDownloads.snapshots(ctx) } catch (_: Throwable) { emptyList() }
-            }
-            rdDownloads.clear(); rdDownloads.addAll(rd)
-            kotlinx.coroutines.delay(1000)
-        }
-    }
 
     // Avisos de episodios nuevos cuando llegan los favoritos de la nube
     LaunchedEffect(Sync.favorites.size) { if (Sync.favorites.isNotEmpty()) EpisodeAlerts.check(ctx) }
@@ -370,7 +357,7 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
         when (tab) {
             Tab.DISCOVER -> DiscoverScreen(catalogType, { catalogType = it }, kids = kids, onOpen = { detail = it })
             Tab.SEARCH -> if (kids) DiscoverScreen(catalogType, { catalogType = it }, kids = true, onOpen = { detail = it }) else SearchScreen(onOpen = { detail = it })
-            Tab.DOWNLOADS -> DownloadsScreen(rdDownloads) { u -> play(u, PlayCtx()) }
+            Tab.DOWNLOADS -> DownloadsScreen { u -> play(u, PlayCtx()) }
             Tab.SETTINGS -> SettingsScreen()
         }
     }
@@ -1387,19 +1374,23 @@ private fun FlowRowSimple(content: @Composable () -> Unit) {
 }
 
 @Composable
-fun DownloadsScreen(rdDownloads: List<RdDownloads.Snap>, onPlayUrl: (String) -> Unit) {
+fun DownloadsScreen(onPlayUrl: (String) -> Unit) {
     val ctx = LocalContext.current
-    // Separa la ACTIVIDAD (descargando) de lo que ya está LISTO PARA VER
-    val ready = rdDownloads.filter { it.done }
-    val active = rdDownloads.filter { !it.done }
+    val all = Downloads.list
+    // Separa la ACTIVIDAD (en curso) de lo que ya está LISTO PARA VER
+    val ready = all.filter { it.done }
+    val active = all.filter { !it.done }
 
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = if (Tv.isTv) 4.dp else 12.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)
+    ) {
         item {
             Text("Descargas", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
-            // Espacio libre en la carpeta donde escribe el DownloadManager
+            // Espacio libre en la carpeta donde se guardan
             var space by remember { mutableStateOf("") }
-            LaunchedEffect(rdDownloads.size) {
+            LaunchedEffect(all.size) {
                 space = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     runCatching {
                         val dir = ctx.getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES) ?: ctx.filesDir
@@ -1418,11 +1409,11 @@ fun DownloadsScreen(rdDownloads: List<RdDownloads.Snap>, onPlayUrl: (String) -> 
                     color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
                 )
             }
-            if (rdDownloads.isEmpty()) {
+            if (all.isEmpty()) {
                 Spacer(Modifier.height(6.dp))
                 Text(
                     "Aún no hay descargas. Abre un título, busca fuentes y pulsa ⬇ Descargar.\n" +
-                        "Las gestiona el sistema: continúan aunque cierres la app.",
+                        "Se pueden pausar y continuar, y siguen aunque cierres la app.",
                     color = Muted, style = MaterialTheme.typography.bodySmall
                 )
             }
@@ -1431,20 +1422,124 @@ fun DownloadsScreen(rdDownloads: List<RdDownloads.Snap>, onPlayUrl: (String) -> 
         // --- Añadir un magnet/enlace a mano + estado de la cuenta de RD ---
         item { Spacer(Modifier.height(10.dp)); RdCloudSection(onPlayUrl = onPlayUrl) }
 
-        // --- Listas para ver ---
-        if (ready.isNotEmpty()) {
-            item { Text("▶ Listas para ver", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color(0xFF34D399), modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)) }
-            items(ready.size) { i -> RdDownloadCard(ready[i], onPlayUrl = { onPlayUrl(RdDownloads.playUri(ctx, ready[i].id) ?: ready[i].localUri ?: "") }, onRemove = { RdDownloads.remove(ctx, ready[i].id) }) }
-
+        // --- Descargando / pausadas (lo que requiere atención va primero) ---
+        if (active.isNotEmpty()) {
+            item {
+                Text(
+                    "⏳ En curso", style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp)
+                )
+            }
+            items(active.size) { i ->
+                val d = active[i]
+                DownloadCard(
+                    d = d,
+                    onPlay = { Downloads.uriFor(ctx, d)?.let(onPlayUrl) },
+                    onPause = { Downloads.pause(ctx, d.id) },
+                    onResume = { Downloads.resume(ctx, d.id) },
+                    onRemove = { Downloads.remove(ctx, d.id) }
+                )
+            }
         }
 
-        // --- Descargando (actividad) ---
-        if (active.isNotEmpty()) {
-            item { Text("⏳ Descargando", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp)) }
-            items(active.size) { i -> RdDownloadCard(active[i], onPlayUrl = { onPlayUrl(RdDownloads.playUri(ctx, active[i].id) ?: active[i].localUri ?: "") }, onRemove = { RdDownloads.remove(ctx, active[i].id) }) }
+        // --- Listas para ver ---
+        if (ready.isNotEmpty()) {
+            item {
+                Text(
+                    "▶ Listas para ver", style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold, color = Color(0xFF34D399),
+                    modifier = Modifier.padding(top = 14.dp, bottom = 4.dp)
+                )
+            }
+            items(ready.size) { i ->
+                val d = ready[i]
+                DownloadCard(
+                    d = d,
+                    onPlay = { Downloads.uriFor(ctx, d)?.let(onPlayUrl) },
+                    onPause = {}, onResume = {},
+                    onRemove = { Downloads.remove(ctx, d.id) }
+                )
+            }
         }
     }
 }
+
+/**
+ * Una descarga: progreso, velocidad y los botones de pausar/continuar.
+ *
+ * "Continuar" no reempieza: la descarga se reanuda desde el byte que haya en
+ * disco, y si el enlace de Real-Debrid ha caducado se pide otro por dentro.
+ */
+@OptIn(ExperimentalLayoutApi::class)   // FlowRow (botones de la descarga)
+@Composable
+private fun DownloadCard(
+    d: Downloads.Job,
+    onPlay: () -> Unit,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
+    onRemove: () -> Unit
+) {
+    Card(
+        Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        colors = CardDefaults.cardColors(containerColor = Surface1)
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(d.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+
+            if (d.done) LinearProgressIndicator(progress = { 1f }, modifier = Modifier.fillMaxWidth())
+            else if (d.known) LinearProgressIndicator(progress = { d.pct }, modifier = Modifier.fillMaxWidth())
+            else if (d.running) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+
+            Text(
+                when {
+                    d.done -> "✓ Disponible sin conexión  ·  ${Search.humanSize(d.total)}"
+                    d.failed -> d.error.ifBlank { "Error en la descarga" }
+                    d.paused -> "⏸ Pausada  ·  ${(d.pct * 100).toInt()}%  ·  ${Search.humanSize(d.bytes)}" +
+                        (if (d.known) " / ${Search.humanSize(d.total)}" else "")
+                    d.known -> "${(d.pct * 100).toInt()}%  ·  ${Search.humanSize(d.bytes)} / ${Search.humanSize(d.total)}" +
+                        (if (d.speed > 0) "  ·  ${Search.humanSize(d.speed)}/s" else "")
+                    d.bytes > 0 -> "Descargando… ${Search.humanSize(d.bytes)}"
+                    else -> "En cola…"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = when {
+                    d.done -> Color(0xFF34D399)
+                    d.failed -> Color(0xFFFBBF24)
+                    else -> Muted
+                }
+            )
+            // Un mensaje informativo mientras corre (p. ej. renovando el enlace)
+            if (!d.failed && !d.done && d.error.isNotBlank()) Text(
+                d.error, style = MaterialTheme.typography.labelSmall, color = Color(0xFFFBBF24)
+            )
+
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (d.done) Button(
+                    onClick = onPlay,
+                    modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                ) { Text("▶ Ver") }
+                if (d.running || d.state == Downloads.QUEUED) OutlinedButton(
+                    onClick = onPause,
+                    modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                ) { Text("⏸ Pausar") }
+                if (d.paused || d.failed) Button(
+                    onClick = onResume,
+                    modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                ) { Text("▶ Continuar") }
+                // Un fichero a medias se puede ir viendo: el reproductor aguanta
+                if (!d.done && d.bytes > 0) OutlinedButton(
+                    onClick = onPlay,
+                    modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                ) { Text("Ver lo bajado") }
+                OutlinedButton(
+                    onClick = onRemove,
+                    modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                ) { Text("Borrar") }
+            }
+        }
+    }
+}
+
 
 /**
  * Añadir un magnet o un enlace a Real-Debrid A MANO, y ver qué está haciendo RD
@@ -1711,35 +1806,6 @@ private fun RdCloudRow(
     }
 }
 
-@Composable
-fun RdDownloadCard(d: RdDownloads.Snap, onPlayUrl: () -> Unit, onRemove: () -> Unit) {
-    Card(Modifier.fillMaxWidth().padding(vertical = 6.dp), colors = CardDefaults.cardColors(containerColor = Surface1)) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(d.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            val known = d.total > 0
-            val prog = if (known) (d.bytes.toFloat() / d.total).coerceIn(0f, 1f) else 0f
-            // Barra indeterminada mientras no se conoce el tamaño (arrancando)
-            if (d.done || known) LinearProgressIndicator(progress = { if (d.done) 1f else prog }, modifier = Modifier.fillMaxWidth())
-            else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            Text(
-                when {
-                    d.failed -> "Error en la descarga"
-                    d.done -> "✓ Disponible sin conexión · ${Search.humanSize(if (known) d.total else d.bytes)}"
-                    known -> "${(prog * 100).toInt()}% · ${Search.humanSize(d.bytes)} / ${Search.humanSize(d.total)}"
-                    d.bytes > 0 -> "Descargando… ${Search.humanSize(d.bytes)}"
-                    else -> "En cola…"
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = if (d.done) Color(0xFF34D399) else Muted
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (d.done) Button(onClick = onPlayUrl, modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))) { Text("▶ Ver") }
-                OutlinedButton(onClick = onRemove, modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))) { Text("Borrar") }
-            }
-        }
-    }
-}
-
 // Lista de enlaces (fuentes) reutilizable: se muestra bajo un episodio, bajo
 // el botón de temporada completa, o (en películas) bajo "Buscar fuentes".
 @OptIn(ExperimentalLayoutApi::class)
@@ -1793,7 +1859,7 @@ fun SourcesSection(
                     url != null -> {
                         prep = null
                         if (download) {
-                            RdDownloads.enqueue(ctx, url, fname ?: title.title)
+                            RdDownloads.enqueue(ctx, url, fname ?: title.title, magnet = r.magnet)
                             onOpenDownloads()
                         } else onPlayUrl(url, buildCtx().withSource(r))
                     }

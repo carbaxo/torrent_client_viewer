@@ -1,18 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!--
       Modo Real-Debrid: la app no torrentea nada. Solo necesita red (buscar en
-      TMDB/Torrentio/apibay y hablar con la API de Real-Debrid) y notificaciones
-      para el progreso de las descargas. Sin servicio en primer plano ni
-      WAKE_LOCK: al cerrar la app no queda NADA corriendo. Las descargas las
-      hace el DownloadManager del sistema, que sigue aunque la app esté cerrada.
+      TMDB/Torrentio y hablar con la API de Real-Debrid) y notificaciones para el
+      progreso de las descargas. Sin WAKE_LOCK y sin nada corriendo en reposo: el
+      único servicio en primer plano es el de una descarga EN CURSO, y desaparece
+      en cuanto acaba o se pausa.
     -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Auto-actualización: instalar el APK nuevo descargado de GitHub -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!--
+      Descargas propias (pausar/continuar). Van en un Worker EN PRIMER PLANO: es
+      lo que impide que el sistema las mate al cerrar la app, y en Android 14 hay
+      que declarar además el tipo del servicio.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <!-- Android TV: instalable en teles (no exige pantalla táctil ni leanback) -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
@@ -82,6 +90,13 @@
         <meta-data
             android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
             android:value="com.carbaxo.torrentbox.CastOptionsProvider" />
+
+        <!-- El servicio de WorkManager necesita el tipo "dataSync" para poder
+             tener la descarga en primer plano en Android 14+ -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
 
         <!-- Servir el APK descargado al instalador del sistema (auto-actualización) -->
         <provider
