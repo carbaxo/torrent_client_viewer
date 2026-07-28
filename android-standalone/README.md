@@ -62,7 +62,10 @@ servidor propio. Funciona en **móvil y en Android TV**.
     Cinecalidad), no solo los de por defecto.
   Los dos buscan **por IMDb id**, así que en series hay que elegir episodio (no
   hay búsqueda de "temporada completa": los packs salen entre los resultados del
-  episodio). Los enlaces se cargan solos al abrir la ficha.
+  episodio). En **películas** los enlaces se cargan solos al abrir la ficha; en
+  **series** la temporada se ve entera y plegada, y los enlaces salen al tocar un
+  episodio (volver a tocarlo lo cierra). Antes se desplegaba solo el primer
+  episodio sin ver y sus enlaces empujaban el resto de la temporada hacia abajo.
 - **Filtros de calidad** (4K/1080p/720p/480p/SD) con el número de enlaces de cada
   una, y un chip **"Otras"** para los que no se puede identificar: así ninguno
   queda escondido. La detección entiende también las formas de las webs españolas

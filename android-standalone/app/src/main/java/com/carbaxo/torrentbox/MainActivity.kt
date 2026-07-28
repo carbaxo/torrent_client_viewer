@@ -2151,19 +2151,12 @@ fun DetailScreen(
         loadSources(dt)
     }
 
-    // Serie: al entrar en una temporada se abre solo el primer episodio sin ver
-    // y se cargan sus enlaces.
-    LaunchedEffect(selSeason, episodes.size, imdbId) {
-        val dt = detail ?: return@LaunchedEffect
-        val sn = selSeason ?: return@LaunchedEffect
-        if (dt.type != "series" || episodes.isEmpty() || expandedEpisode != -1) return@LaunchedEffect
-        if (imdbId == null) kotlinx.coroutines.delay(1500)
-        if (expandedEpisode != -1) return@LaunchedEffect
-        val ep = episodes.firstOrNull { !WatchStore.isWatchedEpisode(title.tmdbId, sn, it.episode) }
-            ?: episodes.first()
-        expandedEpisode = ep.episode
-        runSearch("${dt.title} · T${sn}E${ep.episode} · ${ep.name}", sn, ep.episode)
-    }
+    // En series NO se despliega nada solo. Antes se abría el primer episodio sin
+    // ver y sus enlaces empujaban el resto de la temporada hacia abajo: había que
+    // bajar un montón para llegar al episodio 2. Ahora la lista se ve entera y los
+    // enlaces salen al tocar el episodio que quieras.
+    // Al cambiar de temporada se cierra lo que hubiera abierto.
+    LaunchedEffect(selSeason) { expandedEpisode = -1 }
 
     // Contexto para el reproductor (marcar visto + reanudar) según lo buscado
     fun buildCtx(): PlayCtx {
@@ -2248,29 +2241,40 @@ fun DetailScreen(
                         )
                     }
                 }
+                if (episodes.isNotEmpty()) Text(
+                    "Toca un episodio para ver sus enlaces.",
+                    color = Muted, style = MaterialTheme.typography.labelSmall
+                )
                 selSeason?.let { sn ->
                     // Sin "temporada completa": Peerflix y Torrentio dan enlaces
                     // por episodio (los packs de temporada salen entre ellos).
                     episodes.forEach { ep ->
+                        val open = expandedEpisode == ep.episode
                         Card(
                             Modifier.fillMaxWidth().tvClickable(RoundedCornerShape(12.dp), scale = 1.02f) {
-                                expandedEpisode = ep.episode
-                                runSearch("${dt.title} · T${sn}E${ep.episode} · ${ep.name}", sn, ep.episode)
+                                if (open) {
+                                    // Volver a tocarlo lo cierra: así se sigue
+                                    // navegando la temporada sin estorbos.
+                                    expandedEpisode = -1
+                                } else {
+                                    expandedEpisode = ep.episode
+                                    runSearch("${dt.title} · T${sn}E${ep.episode} · ${ep.name}", sn, ep.episode)
+                                }
                             },
                             colors = CardDefaults.cardColors(containerColor = Surface1)
                         ) {
                             Column(Modifier.padding(10.dp)) {
                                 val seen = WatchStore.isWatchedEpisode(title.tmdbId, sn, ep.episode)
                                 Text(
-                                    (if (seen) "✓ " else "") + "${ep.episode}. ${ep.name}" + (if (expandedEpisode == ep.episode) "  ▾" else ""),
+                                    (if (seen) "✓ " else "") + "${ep.episode}. ${ep.name}" + (if (open) "  ▾" else "  ▸"),
                                     style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
                                     color = if (seen) Color(0xFF34D399) else MaterialTheme.colorScheme.onSurface
                                 )
                                 if (ep.overview.isNotBlank()) Text(ep.overview, style = MaterialTheme.typography.labelSmall, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
                         }
-                        // Enlaces JUSTO debajo del episodio seleccionado
-                        if (expandedEpisode == ep.episode) {
+                        // Enlaces JUSTO debajo del episodio elegido
+                        if (open) {
                             SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onPlayUrl, onCastMagnet, onOpenDownloads)
                         }
                     }
