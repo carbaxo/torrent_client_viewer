@@ -73,14 +73,38 @@ object Search {
     }
 
     /**
-     * Lo que queda del texto descriptivo una vez fuera el nombre: fuente, grupo,
-     * códec… Se aplana a una línea para poder mostrarlo debajo.
+     * Lo que queda del texto descriptivo una vez fuera **todo lo que ya se muestra
+     * en su propio sitio**: el nombre, las semillas y el tamaño. Si no se quitan,
+     * la línea repite el nombre casi igual y saca "👤 0" y el tamaño por segunda
+     * vez, que es ruido en vez de información.
+     *
+     * Lo que sobrevive es lo que de verdad añade algo: la fuente (🌐), el grupo,
+     * el códec, las pistas de audio…
      */
-    fun pickInfo(detail: String, filename: String): String =
-        detail.split('\n').map { it.trim() }
-            .filter { it.isNotBlank() && it != filename }
+    fun pickInfo(detail: String, filename: String): String {
+        fun norm(s: String) = s.lowercase().replace(Regex("[^a-z0-9]"), "")
+        val fn = norm(filename)
+        return detail.split('\n').map { it.trim() }
+            .filter { it.isNotBlank() }
+            // Fuera las líneas que son el nombre otra vez (con o sin extensión)
+            .filterNot { line ->
+                val n = norm(line)
+                n.isNotEmpty() && fn.isNotEmpty() &&
+                    (n == fn || fn.contains(n.take(40)) || n.contains(fn.take(40)))
+            }
+            .map { line ->
+                line
+                    // Semillas y tamaño tienen su propio hueco en la tarjeta
+                    .replace(Regex("👤\\s*[\\d.,]+"), " ")
+                    .replace(Regex("💾\\s*[\\d.,]+\\s*(TB|GB|MB|GiB|MiB)", RegexOption.IGNORE_CASE), " ")
+                    .replace(Regex("\\s{2,}"), " ")
+                    .trim()
+                    .trim('·', '-', '|', ' ')
+            }
+            .filter { it.isNotBlank() }
             .joinToString("  ·  ")
             .take(200)
+    }
 
     /** De dos nombres del mismo torrent, el que informa más (un fichero real). */
     fun bestName(a: String, b: String): String {

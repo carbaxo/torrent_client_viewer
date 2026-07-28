@@ -54,7 +54,9 @@ data class Prep(
     val msg: String,
     val error: String? = null,
     /** Magnet del enlace: si RD falla, se puede añadir a mano a la cuenta. */
-    val magnet: String = ""
+    val magnet: String = "",
+    /** Real-Debrid está bajándolo a sus servidores (no lo tenía en caché). */
+    val atRd: Boolean = false
 )
 
 // Paleta al estilo de la web (morado Stremio)
@@ -2015,7 +2017,18 @@ fun SourcesSection(
                         } else onPlayUrl(url, buildCtx().withSource(r))
                     }
                     progress != null && attempt < 25 -> {
-                        prep = cur.copy(msg = "Real-Debrid lo está preparando… ${progress}%")
+                        // Explicar QUÉ está pasando: no es que el archivo no exista,
+                        // es que RD no lo tenía cacheado y lo está bajando él. Y eso
+                        // depende de las semillas del torrent.
+                        prep = cur.copy(
+                            atRd = true,
+                            msg = "Real-Debrid no lo tenía en caché y lo está bajando a sus " +
+                                "servidores: ${progress}%. Cuando acabe, se verá al instante." +
+                                if (r.seeders == 0)
+                                    "\n\n⚠️ Este enlace no declara semillas. Si nadie lo comparte, " +
+                                        "puede no avanzar: mejor prueba otro con semillas."
+                                else ""
+                        )
                         onMainDelayed(4000) { prepare(r, download, attempt + 1) }
                     }
                     progress != null -> prep = cur.copy(
@@ -2189,12 +2202,17 @@ fun SourcesSection(
             // Si RD no pudo con el enlace (no lo tiene cacheado, o el archivo se
             // borró), se puede meter el magnet en la cuenta y esperar a que lo baje.
             dismissButton = {
-                if (p.error != null && p.magnet.isNotBlank()) {
-                    TextButton(onClick = {
+                when {
+                    p.error != null && p.magnet.isNotBlank() -> TextButton(onClick = {
                         MagnetInbox.offer(p.magnet)
                         prep = null
                         onOpenDownloads()
-                    }) { Text("Añadirlo a Real-Debrid") }
+                    }, modifier = Modifier.tvFocusRing()) { Text("Añadirlo a Real-Debrid") }
+                    // Mientras RD lo baja no hay que quedarse mirando: sigue solo
+                    p.atRd -> TextButton(onClick = {
+                        prep = null
+                        onOpenDownloads()
+                    }, modifier = Modifier.tvFocusRing()) { Text("Ver progreso") }
                 }
             }
         )
