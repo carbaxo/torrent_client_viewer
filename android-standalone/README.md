@@ -140,17 +140,12 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
     **del todo**, porque esta pestaña ya solo existe en el perfil infantil.
   - Hace falta `media3-exoplayer-hls`: HLS va en su propio artefacto y sin él un
     `.m3u8` no se reproduce.
-- 🐷 **Dibujos en YouTube** (`KidsTv.kt`) — dentro de «En directo», solo perfil
-  infantil. Un canal 24/7 emite lo que toca; aquí se **elige serie y capítulo**.
-  Son los canales **oficiales** en español de Bluey, Peppa Pig y Pocoyó: sus
-  dueños publican los episodios completos y doblados, gratis y para siempre. Un
-  canal M3U 24/7 de una sola serie **en castellano no existe** — los hay de Peppa
-  y de Bluey, pero en inglés y para EE. UU. y Reino Unido (se comprobó contra los
-  40.853 canales de la base de datos de iptv-org: de los dedicados a una sola
-  serie infantil, el único con emisión real es Caillou en francés). Se abre la app
-  de YouTube y no se reproduce dentro: meter un stream de YouTube en ExoPlayer no
-  es ni legal ni estable. No se fija el paquete a mano, así que vale igual para el
-  móvil y para Android TV, que usan apps distintas, sin tocar el manifest.
+  - **No** hay accesos a YouTube: se probó y se quitó. Sacaba de la app para
+    llevarte a la de YouTube, y eso no es lo que se quiere aquí. (De paso quedó
+    comprobado que un canal M3U 24/7 de una sola serie **en castellano no
+    existe**: contra los 40.853 canales de la base de datos de iptv-org, de los
+    dedicados a una sola serie infantil el único con emisión real es Caillou, en
+    francés.)
 - 📦 **Packs de temporada** para lo que no existe por capítulos. Las series
   infantiles en castellano (Peppa Pig, Bluey…) casi nunca se publican episodio a
   episodio: van en packs cuyos ficheros internos se llaman `04x12.avi`, que el

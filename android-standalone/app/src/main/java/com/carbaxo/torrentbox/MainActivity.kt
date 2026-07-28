@@ -1713,18 +1713,13 @@ private fun FlowRowSimple(content: @Composable () -> Unit) {
  * los índices de torrents, pero **Clan** (RTVE) los emite 24 h, gratis y en
  * abierto. Aquí no hay que esperar a que un torrent tenga semillas ni a que
  * Real-Debrid lo tenga en caché.
- *
- * Debajo van los canales **oficiales de YouTube** de esas mismas series ([KidsTv]):
- * un canal 24/7 emite lo que toca, y ahí se elige la serie y el capítulo.
  */
 @Composable
 fun LiveScreen(kids: Boolean, onPlay: (Iptv.Channel) -> Unit) {
-    val ctx = LocalContext.current
     // Con perfil infantil, solo los canales de dibujos
     val all = Iptv.list
     val shown = if (kids) all.filter { it.kids }.ifEmpty { all } else all
     val groups = shown.groupBy { it.group?.ifBlank { null } ?: "Canales" }
-    var ytError by remember { mutableStateOf("") }
 
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = if (Tv.isTv) 4.dp else 12.dp),
@@ -1743,48 +1738,6 @@ fun LiveScreen(kids: Boolean, onPlay: (Iptv.Channel) -> Unit) {
             Spacer(Modifier.height(8.dp))
         }
 
-        // --- Series concretas, en sus canales OFICIALES de YouTube ---
-        // Un canal 24/7 emite lo que toca; aquí se elige la serie y el capítulo,
-        // que es lo que se quería para Peppa y Bluey en castellano.
-        if (kids) {
-            item {
-                Text(
-                    "Dibujos en YouTube", style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp, bottom = 2.dp)
-                )
-                Text(
-                    "Canales oficiales, gratis y en español. Se abren en la app de YouTube.",
-                    color = Muted, style = MaterialTheme.typography.labelSmall
-                )
-                if (ytError.isNotBlank()) Text(
-                    ytError, color = WarnAmber, style = MaterialTheme.typography.labelSmall
-                )
-                Spacer(Modifier.height(4.dp))
-            }
-            items(KidsTv.OFFICIAL.size) { i ->
-                val show = KidsTv.OFFICIAL[i]
-                Row(
-                    Modifier.fillMaxWidth()
-                        .tvRow(NfShape) { ytError = KidsTv.open(ctx, show) ?: "" }
-                        .padding(horizontal = 10.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(show.emoji, style = MaterialTheme.typography.headlineSmall)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            show.name, style = MaterialTheme.typography.bodyLarge,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            show.note, color = Muted, style = MaterialTheme.typography.labelSmall,
-                            maxLines = 2, overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    Text("▶", color = Accent, style = MaterialTheme.typography.titleMedium)
-                }
-            }
-        }
         groups.forEach { (grupo, canales) ->
             item {
                 Text(
@@ -2488,21 +2441,21 @@ fun SourcesSection(
         // Un chip por motor, como las pestañas de addons de Stremio
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val engines = listOf(Search.ENGINE_DONTORRENT, Search.ENGINE_PEERFLIX, Search.ENGINE_TORRENTIO)
+            // Se muestran SIEMPRE los tres, incluso con (0). Antes se escondía el
+            // motor sin resultados y eso hacía imposible distinguir "este addon no
+            // ha traído nada" de "este motor no existe en la app".
             (listOf(Search.ENGINE_ALL) + engines).forEach { key ->
                 val n = if (key == Search.ENGINE_ALL) sources.size else sources.count { it.fromEngine(key) }
-                // Los motores sin resultados no se muestran (salvo el elegido)
-                if (key == Search.ENGINE_ALL || n > 0 || engineFilter == key) {
-                    FilterChip(
-                        selected = engineFilter == key,
-                        onClick = { Prefs.selectEngine(key) },
-                        label = {
-                            Text(
-                                Search.engineName(key) + if (sources.isEmpty()) "" else " ($n)"
-                            )
-                        },
-                        modifier = Modifier.tvFocusRing(RoundedCornerShape(8.dp))
-                    )
-                }
+                FilterChip(
+                    selected = engineFilter == key,
+                    onClick = { Prefs.selectEngine(key) },
+                    label = {
+                        Text(
+                            Search.engineName(key) + if (sources.isEmpty()) "" else " ($n)"
+                        )
+                    },
+                    modifier = Modifier.tvFocusRing(RoundedCornerShape(8.dp))
+                )
             }
         }
         // Chips de calidad (solo las presentes en los enlaces de este motor)

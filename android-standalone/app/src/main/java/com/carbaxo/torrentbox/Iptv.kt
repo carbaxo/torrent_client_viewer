@@ -67,7 +67,6 @@ object Iptv {
      */
     private val BUILT_IN = listOf(
         Channel("Clan", "https://ztnr.rtve.es/ztnr/5466990.m3u8", group = "Infantil"),
-        Channel("Clan (alternativo)", "https://rtvelivestream.rtve.es/rtvesec/clan/clan_main.m3u8", group = "Infantil"),
         Channel("La 1", "https://ztnr.rtve.es/ztnr/1688877.m3u8", group = "Generalista"),
         Channel("La 2", "https://ztnr.rtve.es/ztnr/1688885.m3u8", group = "Generalista"),
         Channel("Teledeporte", "https://ztnr.rtve.es/ztnr/1712295.m3u8", group = "Deportes"),
