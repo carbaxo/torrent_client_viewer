@@ -114,11 +114,34 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Deja el magnet/enlace recibido en el buzón; Descargas lo recoge. */
+    /**
+     * Deja lo recibido en el buzón; Descargas lo recoge.
+     *
+     * Puede llegar un magnet (texto), un enlace (texto) o un **fichero .torrent**
+     * (un `content://`). Lo del fichero es lo que hace fácil lo difícil: el
+     * navegador baja el .torrent sin problema, se pulsa y se abre con VizPlay, y la
+     * app no tiene que interpretar el HTML de ninguna web.
+     */
     private fun handleIncoming(i: Intent?) {
-        when (i?.action) {
-            Intent.ACTION_VIEW -> MagnetInbox.offer(i.dataString)
-            Intent.ACTION_SEND -> MagnetInbox.offer(i.getStringExtra(Intent.EXTRA_TEXT))
+        if (i == null) return
+        // Un fichero puede venir como dato del VIEW o como adjunto del SEND. El tipo
+        // se pone a mano en getParcelableExtra: sin él, Kotlin no puede inferirlo.
+        @Suppress("DEPRECATION")
+        val adjunto: android.net.Uri? = i.getParcelableExtra<android.net.Uri>(Intent.EXTRA_STREAM)
+        val stream: android.net.Uri? =
+            i.data?.takeIf { it.scheme == "content" || it.scheme == "file" } ?: adjunto
+        when (i.action) {
+            Intent.ACTION_VIEW -> {
+                val d = i.dataString.orEmpty()
+                // El magnet es un esquema, no un fichero: va por el otro camino
+                if (d.startsWith("magnet:", true)) MagnetInbox.offer(d)
+                else if (stream != null) MagnetInbox.offerFile(stream)
+                else MagnetInbox.offer(d)
+            }
+            Intent.ACTION_SEND -> {
+                val t = i.getStringExtra(Intent.EXTRA_TEXT)
+                if (!t.isNullOrBlank()) MagnetInbox.offer(t) else MagnetInbox.offerFile(stream)
+            }
         }
     }
 
@@ -2155,6 +2178,33 @@ private fun RdCloudSection(onPlayUrl: (String) -> Unit) {
         }
     }
 
+    /** Sube un .torrent del dispositivo. Es la vía que no depende de ninguna web. */
+    fun subirTorrent(uri: android.net.Uri) {
+        busy = true; msg = "Subiendo el .torrent a Real-Debrid…"
+        LinkAdd.addFile(ctx, uri) { id, err ->
+            onMain {
+                busy = false
+                if (id == null) msg = err ?: "No se pudo subir el .torrent."
+                else addedToRd(".torrent del dispositivo")
+            }
+        }
+    }
+
+    // Un .torrent que llega de fuera: el que acaba de bajar el navegador y se abre
+    // con VizPlay, o uno compartido desde el gestor de archivos. Se sube solo: si
+    // el usuario ya ha elegido "abrir con VizPlay", preguntarle otra vez sobra.
+    LaunchedEffect(MagnetInbox.pendingFile) {
+        MagnetInbox.pendingFile?.let { uri ->
+            expanded = true
+            subirTorrent(uri)
+            MagnetInbox.clearFile()
+        }
+    }
+
+    val pickTorrent = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) subirTorrent(uri)
+    }
+
     // Refresco: rápido mientras RD esté trabajando, lento si no hay nada en marcha
     LaunchedEffect(RealDebrid.configured) {
         while (RealDebrid.configured) {
@@ -2192,8 +2242,11 @@ private fun RdCloudSection(onPlayUrl: (String) -> Unit) {
                     color = Muted, style = MaterialTheme.typography.bodySmall
                 )
                 Text(
-                    "💡 Más fácil que copiar y pegar: en el navegador, menú → Compartir → " +
-                        "VizPlay. Llega el enlace entero y no hay forma de dejarse un trozo.",
+                    "💡 Lo más fácil y lo que nunca falla: baja el .torrent con el navegador " +
+                        "y pulsa «Subir un .torrent». O al acabar la descarga, pulsa el " +
+                        "fichero y elige VizPlay: se sube solo. Así no hay que leer ninguna " +
+                        "web. También vale Compartir → VizPlay desde el navegador, que llega " +
+                        "el enlace entero sin riesgo de dejarse un trozo al copiar.",
                     color = OkGreen, style = MaterialTheme.typography.labelSmall
                 )
                 OutlinedTextField(
@@ -2202,7 +2255,7 @@ private fun RdCloudSection(onPlayUrl: (String) -> Unit) {
                     minLines = 2, maxLines = 4,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                FlowRowSimple {
                     Button(
                         onClick = { add() }, enabled = input.isNotBlank() && !busy,
                         shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
@@ -2215,6 +2268,18 @@ private fun RdCloudSection(onPlayUrl: (String) -> Unit) {
                         val t = cm?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString()
                         if (t.isNullOrBlank()) msg = "No hay nada copiado." else { input = t; msg = "" }
                     }) { Text("Pegar") }
+                    // El camino que no depende de leer ninguna web: el navegador baja
+                    // el .torrent y aquí se elige. Se aceptan varios tipos MIME porque
+                    // muchos servidores mandan los .torrent como octet-stream.
+                    OutlinedButton(
+                        enabled = !busy,
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape),
+                        onClick = {
+                            pickTorrent.launch(
+                                arrayOf("application/x-bittorrent", "application/octet-stream", "*/*")
+                            )
+                        }
+                    ) { Text("Subir un .torrent") }
                     if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 }
                 if (msg.isNotBlank()) Text(msg, color = Muted, style = MaterialTheme.typography.labelSmall)

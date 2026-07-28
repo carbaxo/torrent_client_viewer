@@ -172,5 +172,32 @@ object LinkAdd {
         }
     }
 
+    /**
+     * Sube a Real-Debrid un **.torrent que ya está en el dispositivo**: el que ha
+     * bajado el navegador, o uno elegido con el selector de archivos.
+     *
+     * Es la vía más sencilla y la que nunca falla, porque **no hay que leer ninguna
+     * página web**: bajar el fichero ya lo sabe hacer el navegador. Para las webs
+     * que no dan magnet (DonTorrent entre ellas) es lo que hay que usar.
+     *
+     * Los bytes se leen aquí y de una vez: un `content://` compartido por otra app
+     * solo se puede leer mientras vive el permiso del intent, así que guardarlo para
+     * después no serviría.
+     */
+    fun addFile(ctx: android.content.Context, uri: android.net.Uri, onDone: (String?, String?) -> Unit) {
+        io.execute {
+            val data = runCatching {
+                ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            }.getOrNull()
+            when {
+                data == null || data.isEmpty() ->
+                    onDone(null, "No se pudo leer el fichero.")
+                Bencode.infoHash(data) == null ->
+                    onDone(null, "Ese fichero no es un .torrent válido (¿se bajó a medias?).")
+                else -> RealDebrid.addTorrentFile(data) { id, e -> onDone(id, e) }
+            }
+        }
+    }
+
     private val io = java.util.concurrent.Executors.newCachedThreadPool()
 }

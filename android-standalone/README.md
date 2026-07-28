@@ -66,7 +66,17 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
   españolas no dan magnet: DonTorrent da `.torrent`. Y lo que se añade aquí
   **aparece luego en la ficha del título** como un enlace más (ver «Mi
   Real-Debrid» más abajo), que es la vía para lo que no está en ningún buscador.
-  Lo más fiable no es copiar y pegar sino **Compartir → VizPlay** desde el
+  **La vía que nunca falla: subir el `.torrent` desde el dispositivo.** El
+  navegador ya sabe bajar el fichero, así que la app **no tiene que leer ninguna
+  página**. Dos formas: el botón **«Subir un .torrent»** (selector de archivos), o
+  pulsar el `.torrent` recién bajado y **abrirlo con VizPlay** — se sube solo. Hay
+  filtros de intent para el tipo MIME `application/x-bittorrent` y **también por
+  extensión**, porque muchos servidores mandan los `.torrent` como
+  `octet-stream` y con el MIME no basta. Antes de subirlo se comprueba que es un
+  torrent de verdad (que `Bencode` le saque el infohash), y los bytes se leen en el
+  momento: un `content://` de otra app solo se puede leer mientras vive el permiso
+  del intent.
+  Lo más fiable de las vías por enlace no es copiar y pegar sino **Compartir → VizPlay** desde el
   navegador: en el móvil es facilísimo que el copiar y pegar se lleve el enlace **a
   medias**, y entonces no hay forma de reconstruirlo. `Links.kt` limpia lo que
   llega —quita el `#:~:text=…` que añade Chrome al «copiar enlace al texto
