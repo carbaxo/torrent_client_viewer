@@ -76,7 +76,10 @@ object Update {
                     d.optJSONArray("assets")?.let { arr ->
                         for (i in 0 until arr.length()) {
                             val a = arr.getJSONObject(i)
-                            if (a.optString("name") == "TorrentBox.apk") {
+                            // Se acepta cualquier .apk de la Release: al cambiar el
+                            // nombre de la app, exigir un nombre exacto habria dejado
+                            // sin actualizar a las versiones ya instaladas.
+                            if (a.optString("name").endsWith(".apk", ignoreCase = true)) {
                                 url = a.optString("browser_download_url")
                                 apiUrl = a.optString("url")
                                 apkEpoch = parseIso(a.optString("updated_at"))
@@ -147,7 +150,7 @@ object Update {
         io.submit {
             try {
                 val dir = File(app.filesDir, "apk").apply { mkdirs() }
-                val f = File(dir, "TorrentBox.apk")
+                val f = File(dir, "VillazPlay.apk")
                 openAsset(info).use { resp ->
                     if (!resp.isSuccessful) throw RuntimeException("HTTP ${resp.code}")
                     val body = resp.body ?: throw RuntimeException("Respuesta vacía")

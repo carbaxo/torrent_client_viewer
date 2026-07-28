@@ -1,4 +1,4 @@
-# 📱 TorrentBox — app Android (modo Real-Debrid)
+# 📱 VillazPlay — app Android (modo Real-Debrid)
 
 App Android **nativa e independiente** para buscar películas y series y verlas
 por **streaming directo desde Real-Debrid**, sin depender de ningún PC ni
@@ -48,7 +48,7 @@ servidor propio. Funciona en **móvil y en Android TV**.
   con su %, listo, sin semillas…) y botones Ver / Descargar / quitar. Es la
   salida a los dos fallos que no dependen de la app: que RD **aún no tenga el
   torrent cacheado** o que **el archivo se haya borrado** de su caché. También
-  se puede pulsar un magnet **en el navegador** o **compartirlo** con TorrentBox,
+  se puede pulsar un magnet **en el navegador** o **compartirlo** con VillazPlay,
   y cuando un enlace de la ficha falla, el propio aviso ofrece
   **«Añadirlo a Real-Debrid»**. Un enlace de hoster (1fichier, Mega…) se
   desbloquea y se descarga igual que en el "Descargador" de la web de RD.
@@ -132,7 +132,7 @@ Permisos que pide: `INTERNET`, `ACCESS_NETWORK_STATE`, `POST_NOTIFICATIONS`
 
 El manifiesto ya declara `LEANBACK_LAUNCHER`, banner y `leanback`/`touchscreen`
 como no obligatorios, así que **el mismo APK se instala en una Android TV o
-Google TV y aparece en su launcher**. Reproduciendo en la propia TV no hace
+Google TV y aparece en su launcher** con su banner propio. Reproduciendo en la propia TV no hace
 falta castear nada, y ExoPlayer se encarga de los MKV con DTS/AC3 que un
 Chromecast no acepta.
 
@@ -236,7 +236,7 @@ No necesitas compilar nada: **GitHub Actions lo compila y lo publica**.
 1. En el repo, pestaña **Actions → "Build Android APK" → Run workflow** (o se
    lanza solo al hacer push a `android-standalone/`).
 2. Cuando termine (verde), descarga el APK desde:
-   - la **Release** `android-latest` (`TorrentBox.apk`), o
+   - la **Release** `android-latest` (`VillazPlay.apk`), o
    - los **Artifacts** de la ejecución del workflow.
 3. En el móvil o la TV: abre el APK, permite **"Instalar apps desconocidas"** e
    instálalo.

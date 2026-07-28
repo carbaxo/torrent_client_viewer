@@ -60,10 +60,13 @@ data class Prep(
 )
 
 // Paleta al estilo de la web (morado Stremio)
-private val Accent = Color(0xFF7B5BF5)
-private val Bg = Color(0xFF0C0B11)
-private val Surface1 = Color(0xFF15141D)
-private val Muted = Color(0xFF8F8BA1)
+// Paleta granate. El acento se usa tanto de relleno de boton (con texto blanco
+// encima) como de texto sobre el fondo oscuro, asi que no puede ser un granate
+// apagado: dejaria de leerse. Los fondos llevan el tinte hacia el rojo.
+private val Accent = Color(0xFFC62B45)
+private val Bg = Color(0xFF0E0A0C)
+private val Surface1 = Color(0xFF1B1317)
+private val Muted = Color(0xFF9C8E92)
 
 // AppCompatActivity: el diálogo "emitir a…" de Chromecast lo exige
 class MainActivity : AppCompatActivity() {
@@ -89,7 +92,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Magnets que llegan de fuera: al pulsar uno en el navegador o al
-        // compartir un texto con TorrentBox. Se usa el listener de androidx en
+        // compartir un texto con VillazPlay. Se usa el listener de androidx en
         // vez de sobrescribir onNewIntent (la app es singleTop).
         handleIncoming(intent)
         addOnNewIntentListener { handleIncoming(it) }
@@ -313,7 +316,7 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
         ) {
             Text(
                 // En la tele, el título dice también en qué sección estás
-                if (Tv.isTv) "TorrentBox · ${tab.label}" else "TorrentBox",
+                if (Tv.isTv) "VillazPlay · ${tab.label}" else "VillazPlay",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold, color = Accent, modifier = Modifier.weight(1f)
             )
@@ -425,7 +428,7 @@ private fun TvNavRail(tabs: List<Tab>, current: Tab, onSelect: (Tab) -> Unit) {
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Text(
-            "TorrentBox", color = Accent, fontWeight = FontWeight.Bold,
+            "VillazPlay", color = Accent, fontWeight = FontWeight.Bold,
             style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 18.dp)
         )
         tabs.forEach { t ->
@@ -1278,7 +1281,7 @@ fun SettingsScreen() {
                     Text(
                         "⚠️ El «Ahorro de datos» de Android está activo y bloquea las descargas " +
                             "con datos móviles aunque la app las permita. Desactívalo, o excluye " +
-                            "TorrentBox en Ajustes de Android → Red → Ahorro de datos → Datos sin restricción.",
+                            "VillazPlay en Ajustes de Android → Red → Ahorro de datos → Datos sin restricción.",
                         color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
                     )
                 }
@@ -1480,7 +1483,7 @@ fun DownloadsScreen(onPlayUrl: (String) -> Unit) {
             if (active.isNotEmpty() && RdDownloads.dataSaverBlocks(ctx)) {
                 Text(
                     "⚠️ El «Ahorro de datos» de Android puede tener parada la descarga con " +
-                        "datos móviles. Excluye TorrentBox en Ajustes de Android → Red → " +
+                        "datos móviles. Excluye VillazPlay en Ajustes de Android → Red → " +
                         "Ahorro de datos, o conéctate a WiFi.",
                     color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
                 )

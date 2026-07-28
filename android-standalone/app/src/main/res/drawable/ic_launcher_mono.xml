@@ -2,23 +2,14 @@
 <!-- Generado por scripts/logo.py: la geometria esta calculada, no dibujada a
      mano, para que la V del icono y la del banner coincidan. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path android:pathData="M0,0 L108,0 L108,108 L0,108 Z">
-        <aapt:attr name="android:fillColor">
-            <gradient android:type="linear"
-                android:startX="0" android:startY="0"
-                android:endX="108" android:endY="108"
-                android:startColor="#D93650" android:endColor="#5A0A18" />
-        </aapt:attr>
-    </path>
     <path
         android:fillColor="#FFFFFF"
         android:pathData="M30,34 L54,76 L54,53.25 L43,34 Z" />
     <path
-        android:fillColor="#F2A7B3"
+        android:fillColor="#FFFFFF"
         android:pathData="M78,34 L54,76 L54,53.25 L65,34 Z" />
 </vector>

@@ -171,7 +171,7 @@ object CastManager {
 
     private fun begin(ctx: PlayCtx) {
         playCtx = ctx
-        title = ctx.name.ifBlank { "TorrentBox" }
+        title = ctx.name.ifBlank { "VillazPlay" }
         poster = ctx.poster
         startMs = ctx.resumeMs
         warning = ""
