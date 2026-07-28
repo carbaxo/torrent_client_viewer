@@ -2383,122 +2383,185 @@ fun DetailScreen(
         runCatching { backFocus.requestFocus() }
     }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        val dt = detail
-        Box {
-            AsyncImage(
-                model = dt?.backdrop ?: title.poster,
-                contentDescription = null, contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxWidth().height(if (Tv.isTv) 260.dp else 220.dp)
-            )
-            TextButton(
-                onClick = onBack,
-                modifier = Modifier.padding(8.dp).tvFocusRing(focusRequester = backFocus)
-            ) { Text("← Volver", color = Color.White) }
+    val dt = detail
+
+    // --- Piezas de la ficha, para poder colocarlas de dos formas distintas ---
+
+    val backButton: @Composable () -> Unit = {
+        TextButton(
+            onClick = onBack,
+            modifier = Modifier.padding(8.dp).tvFocusRing(focusRequester = backFocus)
+        ) { Text("← Volver", color = Color.White) }
+    }
+
+    val heading: @Composable () -> Unit = {
+        Text(title.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text(
+            listOfNotNull(
+                if (title.type == "series") "Serie" else "Película",
+                title.year.ifBlank { null },
+                if (title.rating > 0) "⭐ ${title.rating}" else null,
+                dt?.genres?.joinToString(" · ")?.ifBlank { null }
+            ).joinToString("  ·  "),
+            style = MaterialTheme.typography.bodySmall, color = Muted
+        )
+        if (dt != null && dt.overview.isNotBlank()) Text(dt.overview, style = MaterialTheme.typography.bodyMedium)
+        if (status.isNotBlank()) Text(status, color = Muted, style = MaterialTheme.typography.bodySmall)
+    }
+
+    // Tráiler + favorito. En la tele van en columna bajo la carátula; en el móvil,
+    // en fila con el resto del contenido.
+    val actions: @Composable (Boolean) -> Unit = { stacked ->
+        val trailerBtn: @Composable () -> Unit = {
+            trailerKey?.let { k ->
+                Button(
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF87171)),
+                    onClick = { openTrailer(k) },
+                    modifier = (if (stacked) Modifier.fillMaxWidth() else Modifier)
+                        .tvFocusRing(RoundedCornerShape(20.dp))
+                ) { Text("🎬 Tráiler") }
+            }
         }
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(title.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text(
-                listOfNotNull(
-                    if (title.type == "series") "Serie" else "Película",
-                    title.year.ifBlank { null },
-                    if (title.rating > 0) "⭐ ${title.rating}" else null,
-                    dt?.genres?.joinToString(" · ")?.ifBlank { null }
-                ).joinToString("  ·  "),
-                style = MaterialTheme.typography.bodySmall, color = Muted
-            )
-            if (dt != null && dt.overview.isNotBlank()) Text(dt.overview, style = MaterialTheme.typography.bodyMedium)
-            if (status.isNotBlank()) Text(status, color = Muted, style = MaterialTheme.typography.bodySmall)
+        val favBtn: @Composable () -> Unit = {
+            if (Sync.enabled && Sync.email != null) {
+                val fid = "tmdb:${title.tmdbId}"
+                OutlinedButton(
+                    onClick = { Sync.toggleFavorite(title) },
+                    modifier = (if (stacked) Modifier.fillMaxWidth() else Modifier)
+                        .tvFocusRing(RoundedCornerShape(20.dp))
+                ) {
+                    Text(if (Sync.isFav(fid)) "❤ En Mi lista" else "🤍 Añadir a Mi lista")
+                }
+            }
+        }
+        if (stacked) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { trailerBtn(); favBtn() }
+        } else {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { trailerBtn(); favBtn() }
+        }
+    }
 
-            // Tráiler + favorito
+    // Fuentes: película, o serie organizada por temporadas/episodios
+    val sourcesBlock: @Composable () -> Unit = {
+        if (dt != null && dt.type == "series" && dt.seasons.isNotEmpty()) {
+            Text("Temporadas", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                trailerKey?.let { k ->
-                    Button(
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF87171)),
-                        onClick = { openTrailer(k) },
-                        modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
-                    ) { Text("🎬 Tráiler") }
-                }
-                if (Sync.enabled && Sync.email != null) {
-                    val fid = "tmdb:${title.tmdbId}"
-                    OutlinedButton(
-                        onClick = { Sync.toggleFavorite(title) },
-                        modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
-                    ) {
-                        Text(if (Sync.isFav(fid)) "❤ En Mi lista" else "🤍 Añadir a Mi lista")
-                    }
+                dt.seasons.forEach { s ->
+                    FilterChip(
+                        selected = selSeason == s.season,
+                        onClick = { selSeason = s.season; expandedEpisode = -1 },
+                        label = { Text("T${s.season} · ${s.episodes} ep.") },
+                        modifier = Modifier.tvFocusRing(RoundedCornerShape(8.dp))
+                    )
                 }
             }
-
-            // --- Fuentes: película, o serie organizada por temporadas/episodios ---
-            if (dt != null && dt.type == "series" && dt.seasons.isNotEmpty()) {
-                Text("Temporadas", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    dt.seasons.forEach { s ->
-                        FilterChip(
-                            selected = selSeason == s.season,
-                            onClick = { selSeason = s.season; expandedEpisode = -1 },
-                            label = { Text("T${s.season} · ${s.episodes} ep.") },
-                            modifier = Modifier.tvFocusRing(RoundedCornerShape(8.dp))
-                        )
-                    }
-                }
-                if (episodes.isNotEmpty()) Text(
-                    "Toca un episodio para ver sus enlaces.",
-                    color = Muted, style = MaterialTheme.typography.labelSmall
-                )
-                selSeason?.let { sn ->
-                    // Sin "temporada completa": Peerflix y Torrentio dan enlaces
-                    // por episodio (los packs de temporada salen entre ellos).
-                    episodes.forEach { ep ->
-                        val open = expandedEpisode == ep.episode
-                        Card(
-                            Modifier.fillMaxWidth().tvClickable(RoundedCornerShape(12.dp), scale = 1.02f) {
-                                if (open) {
-                                    // Volver a tocarlo lo cierra: así se sigue
-                                    // navegando la temporada sin estorbos.
-                                    expandedEpisode = -1
-                                } else {
-                                    expandedEpisode = ep.episode
-                                    runSearch("${dt.title} · T${sn}E${ep.episode} · ${ep.name}", sn, ep.episode)
-                                }
-                            },
-                            colors = CardDefaults.cardColors(containerColor = Surface1)
-                        ) {
-                            Column(Modifier.padding(10.dp)) {
-                                val seen = WatchStore.isWatchedEpisode(title.tmdbId, sn, ep.episode)
-                                Text(
-                                    (if (seen) "✓ " else "") + "${ep.episode}. ${ep.name}" + (if (open) "  ▾" else "  ▸"),
-                                    style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                    color = if (seen) Color(0xFF34D399) else MaterialTheme.colorScheme.onSurface
-                                )
-                                if (ep.overview.isNotBlank()) Text(ep.overview, style = MaterialTheme.typography.labelSmall, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (episodes.isNotEmpty()) Text(
+                "Toca un episodio para ver sus enlaces.",
+                color = Muted, style = MaterialTheme.typography.labelSmall
+            )
+            selSeason?.let { sn ->
+                // Sin "temporada completa": Peerflix y Torrentio dan enlaces
+                // por episodio (los packs de temporada salen entre ellos).
+                episodes.forEach { ep ->
+                    val open = expandedEpisode == ep.episode
+                    Card(
+                        Modifier.fillMaxWidth().tvClickable(RoundedCornerShape(12.dp), scale = 1.02f) {
+                            if (open) {
+                                // Volver a tocarlo lo cierra: así se sigue
+                                // navegando la temporada sin estorbos.
+                                expandedEpisode = -1
+                            } else {
+                                expandedEpisode = ep.episode
+                                runSearch("${dt.title} · T${sn}E${ep.episode} · ${ep.name}", sn, ep.episode)
                             }
-                        }
-                        // Enlaces JUSTO debajo del episodio elegido
-                        if (open) {
-                            SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onPlayUrl, onCastMagnet, onOpenDownloads)
+                        },
+                        colors = CardDefaults.cardColors(containerColor = Surface1)
+                    ) {
+                        Column(Modifier.padding(10.dp)) {
+                            val seen = WatchStore.isWatchedEpisode(title.tmdbId, sn, ep.episode)
+                            Text(
+                                (if (seen) "✓ " else "") + "${ep.episode}. ${ep.name}" + (if (open) "  ▾" else "  ▸"),
+                                style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                color = if (seen) Color(0xFF34D399) else MaterialTheme.colorScheme.onSurface
+                            )
+                            if (ep.overview.isNotBlank()) Text(ep.overview, style = MaterialTheme.typography.labelSmall, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }
                     }
+                    // Enlaces JUSTO debajo del episodio elegido
+                    if (open) {
+                        SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onPlayUrl, onCastMagnet, onOpenDownloads)
+                    }
                 }
-            } else {
-                // Los enlaces se cargan solos; esto es solo para reintentar
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        if (loadingSources) "Buscando fuentes…" else "Enlaces",
-                        style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f)
-                    )
-                    if (!loadingSources && dt != null) Text(
-                        "🔄 Recargar", color = Accent, style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier
-                            .tvClickable(RoundedCornerShape(8.dp)) { expandedEpisode = -1; loadSources(dt) }
-                            .padding(6.dp)
-                    )
-                }
-                SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onPlayUrl, onCastMagnet, onOpenDownloads)
             }
-            Spacer(Modifier.height(24.dp))
+        } else {
+            // Los enlaces se cargan solos; esto es solo para reintentar
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (loadingSources) "Buscando fuentes…" else "Enlaces",
+                    style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                if (!loadingSources && dt != null) Text(
+                    "🔄 Recargar", color = Accent, style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier
+                        .tvClickable(RoundedCornerShape(8.dp)) { expandedEpisode = -1; loadSources(dt) }
+                        .padding(6.dp)
+                )
+            }
+            SourcesSection(sources, loadingSources, sourcesLabel, title, ctx, { buildCtx() }, onPlayUrl, onCastMagnet, onOpenDownloads)
+        }
+    }
+
+    if (Tv.isTv) {
+        // TELE (al estilo de Stremio para TV): la carátula ENTERA a la izquierda
+        // con sus acciones debajo, y a la derecha la ficha y los enlaces. Así los
+        // enlaces se ven de entrada, en vez de quedar por debajo de un banner que
+        // se comía la pantalla y obligaba a bajar mucho.
+        Row(
+            Modifier.fillMaxSize().padding(
+                start = Tv.overscan, end = Tv.overscan, top = 10.dp, bottom = 10.dp
+            ),
+            horizontalArrangement = Arrangement.spacedBy(20.dp)
+        ) {
+            Column(
+                Modifier.width(210.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                backButton()
+                AsyncImage(
+                    model = title.poster,
+                    contentDescription = title.title,
+                    // Fit y no Crop: la carátula se ve completa, sin recortar
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(12.dp))
+                )
+                actions(true)
+            }
+            Column(
+                Modifier.weight(1f).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                heading()
+                sourcesBlock()
+                Spacer(Modifier.height(24.dp))
+            }
+        }
+    } else {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+            Box {
+                AsyncImage(
+                    model = dt?.backdrop ?: title.poster,
+                    contentDescription = null, contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxWidth().height(220.dp)
+                )
+                backButton()
+            }
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                heading()
+                actions(false)
+                sourcesBlock()
+                Spacer(Modifier.height(24.dp))
+            }
         }
     }
 }

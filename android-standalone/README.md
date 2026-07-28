@@ -181,6 +181,10 @@ es el foco, así que:
   cualquier pestaña vuelve a Descubrir (antes cerraba la app).
 - Carátulas más grandes (165 dp) y margen de **overscan** para los bordes que
   recortan las teles.
+- **Ficha en dos columnas** al estilo de Stremio para TV: la **carátula entera**
+  (sin recortar) a la izquierda con el tráiler y «Añadir a Mi lista» debajo, y a
+  la derecha la sinopsis y **los enlaces**. Antes el banner ocupaba media
+  pantalla y había que bajar mucho para ver un solo enlace.
 
 ## Configuración
 
