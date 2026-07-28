@@ -12,7 +12,13 @@ object Search {
         val lang: String? = null,  // código de idioma detectado (Lang), o null
         val quality: String = "Unknown", // 4K/1080p/720p/480p/SD/Unknown
         /** Motor que lo devolvió: TORRENTIO, PEERFLIX, o los dos unidos con "+". */
-        val engine: String = ""
+        val engine: String = "",
+        /**
+         * Texto extra que da el addon (fuente, códec, grupo…). Se muestra tal cual
+         * bajo el nombre: es lo único que distingue dos enlaces cuando el addon no
+         * manda el nombre del fichero.
+         */
+        val info: String = ""
     ) {
         /** ¿Lo devolvió este motor? (un enlace puede venir de los dos). */
         fun fromEngine(e: String) = e == Search.ENGINE_ALL || engine.contains(e)
@@ -33,6 +39,58 @@ object Search {
         ENGINE_PEERFLIX -> "Peerflix"
         ENGINE_ALL -> "Todos"
         else -> e.replaceFirstChar { it.uppercase() }
+    }
+
+    /**
+     * Texto descriptivo de un stream de addon. Los addons viejos lo ponen en
+     * `title` y los nuevos en `description` (el SDK de Stremio lo renombró). Si se
+     * lee solo `title`, los enlaces de un addon moderno salen SIN nombre de
+     * fichero, SIN tamaño y con 0 seeders: parecen enlaces muertos cuando no lo
+     * son.
+     */
+    fun pickDetail(title: String, description: String): String {
+        val t = title.trim()
+        val d = description.trim()
+        return when {
+            t.isBlank() -> d
+            d.isBlank() || d == t -> t
+            else -> "$t\n$d"
+        }
+    }
+
+    /**
+     * Nombre a mostrar. Por orden de fiabilidad: el que declara el propio addon
+     * (`behaviorHints.filename`), la primera línea del texto descriptivo, y como
+     * último recurso la etiqueta del addon ("Peerflix 🇪🇸 1080p"), que informa poco
+     * pero es mejor que nada.
+     */
+    fun pickFilename(hintedName: String, detail: String, label: String): String {
+        hintedName.trim().takeIf { it.isNotBlank() }?.let { return it }
+        detail.split('\n').map { it.trim() }
+            .firstOrNull { it.isNotBlank() && !it.startsWith("👤") && !it.startsWith("💾") }
+            ?.let { return it }
+        return label.replace('\n', ' ').trim()
+    }
+
+    /**
+     * Lo que queda del texto descriptivo una vez fuera el nombre: fuente, grupo,
+     * códec… Se aplana a una línea para poder mostrarlo debajo.
+     */
+    fun pickInfo(detail: String, filename: String): String =
+        detail.split('\n').map { it.trim() }
+            .filter { it.isNotBlank() && it != filename }
+            .joinToString("  ·  ")
+            .take(200)
+
+    /** De dos nombres del mismo torrent, el que informa más (un fichero real). */
+    fun bestName(a: String, b: String): String {
+        fun score(s: String): Int {
+            var n = s.length.coerceAtMost(80)
+            if (Regex("\\.(mkv|mp4|avi|webm|m4v)\\b", RegexOption.IGNORE_CASE).containsMatchIn(s)) n += 100
+            if (Regex("(19|20)\\d{2}").containsMatchIn(s)) n += 20
+            return n
+        }
+        return if (score(b) > score(a)) b else a
     }
 
     /** Une los motores de dos resultados con el mismo infoHash. */

@@ -2096,11 +2096,20 @@ fun SourcesSection(
                             if (r.engineLabel.isNotBlank()) add("⚙ ${r.engineLabel}")
                             add("${Lang.flag(r.lang)} ${Lang.label(r.lang)}")
                             if (r.quality != Search.QUALITY_OTHER) add(r.quality)
-                            add("▲ ${r.seeders} seeders")
+                            // "0 seeders" no significa que esté muerto: significa que
+                            // el addon no manda el dato. Mostrarlo hacía parecer
+                            // inservibles todos los enlaces de Peerflix.
+                            if (r.seeders > 0) add("▲ ${r.seeders} seeders")
                             // El tamaño no siempre lo da el addon: si no, no se pone
                             if (r.sizeBytes > 0) add("💾 ${Search.humanSize(r.sizeBytes)}")
                         }.joinToString("  ·  "),
                         style = MaterialTheme.typography.labelSmall, color = Muted
+                    )
+                    // Lo demás que diga el addon (fuente, grupo, códec…): es lo único
+                    // que distingue dos enlaces cuando no manda el nombre del fichero.
+                    if (r.info.isNotBlank()) Text(
+                        r.info, style = MaterialTheme.typography.labelSmall,
+                        color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis
                     )
                     if (RealDebrid.configured) {
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2264,10 +2273,14 @@ fun DetailScreen(
                     byHash[r.infoHash] = if (prev == null) r
                     else (if (r.seeders > prev.seeders) r else prev).copy(
                         engine = Search.mergeEngines(prev.engine, r.engine),
-                        // si uno de los dos trae el tamaño, se conserva
+                        // De cada campo se queda el que informa: un motor puede dar
+                        // el nombre del fichero y el otro solo su etiqueta.
+                        name = Search.bestName(prev.name, r.name),
                         sizeBytes = maxOf(prev.sizeBytes, r.sizeBytes),
-                        // y la calidad que se haya podido identificar
-                        quality = if (prev.quality != Search.QUALITY_OTHER) prev.quality else r.quality
+                        seeders = maxOf(prev.seeders, r.seeders),
+                        quality = if (prev.quality != Search.QUALITY_OTHER) prev.quality else r.quality,
+                        lang = prev.lang ?: r.lang,
+                        info = prev.info.ifBlank { r.info }
                     )
                 }
                 loadingSources = false

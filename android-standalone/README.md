@@ -87,6 +87,15 @@ servidor propio. Funciona en **móvil y en Android TV**.
 - **Tamaño de cada enlace** tomado del dato exacto del addon
   (`behaviorHints.videoSize`) y, si no lo trae, del texto (`💾 4.38 GB`). Si el
   addon no lo da, simplemente no se muestra.
+- **Toda la información que dé el addon**: se leen `title` **y** `description`
+  (el SDK de Stremio renombró el campo, y los addons modernos usan el segundo),
+  más `behaviorHints.filename`, `videoSize` y `bingeGroup`, y las semillas tanto
+  del campo numérico como del texto. Leyendo solo `title`, los enlaces de
+  Peerflix salían **sin nombre de fichero, sin tamaño y con 0 seeders**. Lo que
+  el addon diga de más (fuente, grupo, códec) sale en una línea aparte, y
+  **"0 seeders" ya no se muestra**: significaba "el addon no da el dato", pero
+  se leía como "enlace muerto". Al unir un torrent que devuelven los dos
+  motores, de cada campo se queda el que informa.
 - **Perfiles** (crear/editar/borrar) con **modo infantil** (solo catálogos
   familiares), sincronizados con tu cuenta de Google.
 - 🔔 Avisos de episodios nuevos de tus series favoritas y auto-actualización.

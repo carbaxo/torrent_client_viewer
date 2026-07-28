@@ -34,7 +34,7 @@ object Torrentio {
         .connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).build()
     private val io = Executors.newCachedThreadPool()
 
-    private val SEEDERS = Regex("👤\\s*(\\d+)")
+    private val SEEDERS = Regex("(?:👤|seeders?\\s*:?)\\s*(\\d+)", RegexOption.IGNORE_CASE)
     // "💾 4.38 GB", "💾 696,71 MB" y variantes sin emoji
     private val SIZE = Regex("([\\d]+[.,]?[\\d]*)\\s*(TB|GB|MB|GiB|MiB)\\b", RegexOption.IGNORE_CASE)
 
@@ -95,13 +95,16 @@ object Torrentio {
                 val hash = s.optString("infoHash", "")
                 if (hash.isBlank()) continue
                 val name = s.optString("name", "")     // p.ej. "Torrentio\n1080p"
-                val title = s.optString("title", "")   // nombre del fichero + 👤 💾 ⚙️ + banderas
-                val combined = "$name\n$title"
-                val filename = title.substringBefore('\n').ifBlank { name.replace("\n", " ") }
+                // title (addons viejos) o description (nuevos): se leen los dos
+                val detail = Search.pickDetail(s.optString("title", ""), s.optString("description", ""))
+                val bh = s.optJSONObject("behaviorHints")
+                val combined = "$name\n$detail\n${bh?.optString("bingeGroup", "") ?: ""}"
+                val filename = Search.pickFilename(bh?.optString("filename", "") ?: "", detail, name)
                 // 👤 0 seeders NO se descarta: con Real-Debrid puede estar en
                 // caché y reproducirse igual (Stremio también los muestra).
-                val seeders = SEEDERS.find(title)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                val sizeBytes = streamSize(s, title)
+                val seeders = s.optInt("seeders", -1).takeIf { it >= 0 }
+                    ?: SEEDERS.find(detail)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                val sizeBytes = streamSize(s, detail)
                 out.add(
                     Search.Result(
                         name = filename,
@@ -111,7 +114,8 @@ object Torrentio {
                         magnet = Search.buildMagnet(hash.lowercase(), filename),
                         lang = Lang.detectFromTitle(combined),
                         quality = Search.quality(combined),
-                        engine = Search.ENGINE_TORRENTIO
+                        engine = Search.ENGINE_TORRENTIO,
+                        info = Search.pickInfo(detail, filename)
                     )
                 )
             }

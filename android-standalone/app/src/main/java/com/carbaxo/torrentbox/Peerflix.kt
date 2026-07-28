@@ -27,7 +27,8 @@ object Peerflix {
         .connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).build()
     private val io = Executors.newCachedThreadPool()
 
-    private val SEEDERS = Regex("👤\\s*(\\d+)")
+    // Los addons marcan las semillas de varias formas; ninguna es obligatoria
+    private val SEEDERS = Regex("(?:👤|seeders?\\s*:?)\\s*(\\d+)", RegexOption.IGNORE_CASE)
 
     /** Base del addon: la de Ajustes si la hay, y si no la pública. */
     private fun base(): String {
@@ -59,19 +60,28 @@ object Peerflix {
                         val hash = s.optString("infoHash", "")
                         if (hash.isBlank()) continue
                         val name = s.optString("name", "")   // "Peerflix 🇪🇸 720p"
-                        val title = s.optString("title", "") // fichero + 👤 💾 ⚙ + banderas
-                        val combined = "$name\n$title"
-                        val filename = title.substringBefore('\n').ifBlank { name.replace("\n", " ") }
+                        // Este addon manda el detalle en "description", no en
+                        // "title": leyendo solo title salían sin nombre de fichero,
+                        // sin tamaño y con 0 seeders.
+                        val detail = Search.pickDetail(s.optString("title", ""), s.optString("description", ""))
+                        val bh = s.optJSONObject("behaviorHints")
+                        val binge = bh?.optString("bingeGroup", "") ?: ""
+                        val combined = "$name\n$detail\n$binge"
+                        val filename = Search.pickFilename(bh?.optString("filename", "") ?: "", detail, name)
+                        // Algunos addons dan las semillas como número, no en el texto
+                        val seeders = s.optInt("seeders", -1).takeIf { it >= 0 }
+                            ?: SEEDERS.find(detail)?.groupValues?.get(1)?.toIntOrNull() ?: 0
                         out.add(
                             Search.Result(
                                 name = filename,
                                 infoHash = hash.lowercase(),
-                                seeders = SEEDERS.find(title)?.groupValues?.get(1)?.toIntOrNull() ?: 0,
-                                sizeBytes = Torrentio.streamSize(s, title),
+                                seeders = seeders,
+                                sizeBytes = Torrentio.streamSize(s, detail),
                                 magnet = Search.buildMagnet(hash.lowercase(), filename),
                                 lang = Lang.detectFromTitle(combined),
                                 quality = Search.quality(combined),
-                                engine = Search.ENGINE_PEERFLIX
+                                engine = Search.ENGINE_PEERFLIX,
+                                info = Search.pickInfo(detail, filename)
                             )
                         )
                     }
