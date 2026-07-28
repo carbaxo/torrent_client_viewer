@@ -46,6 +46,19 @@ object Prefs {
         private set
 
     /**
+     * Dominio de la web de DonTorrent para la búsqueda por texto. Vacío = no se
+     * busca ahí. Es editable porque esa web **cambia de dominio a menudo** por
+     * bloqueos, y un dominio fijo en el código quedaría muerto cada pocos meses.
+     */
+    var donSiteUrl by mutableStateOf("")
+        private set
+
+    fun saveDonSiteUrl(u: String) {
+        donSiteUrl = u.trim().removeSuffix("/")
+        sp().edit().putString("donSiteUrl", donSiteUrl).apply()
+    }
+
+    /**
      * Token de GitHub (solo lectura) para la auto-actualización. Hace falta
      * porque el repositorio es PRIVADO: sin él, la API de Releases responde 404
      * y la app no puede saber si hay una versión nueva. Se guarda cifrado.
@@ -157,6 +170,7 @@ object Prefs {
         engine = sp.getString("engine", Search.ENGINE_ALL) ?: Search.ENGINE_ALL
         peerflixUrl = sp.getString("peerflixUrl", "") ?: ""
         extraAddonUrl = sp.getString("extraAddonUrl", "") ?: ""
+        donSiteUrl = sp.getString("donSiteUrl", "") ?: ""
         githubToken = runCatching { secureStore().getString("ghToken", "") ?: "" }.getOrDefault("")
         downloadOverMobile = sp.getBoolean("dlOverMobile", true)
         downloadTree = sp.getString("dlTree", "") ?: ""

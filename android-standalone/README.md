@@ -103,6 +103,24 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
     ranura genérica en vez de un addon concreto porque estos addons **cambian de
     dominio y mueren**; así no hace falta una versión nueva de la app cada vez.
     Lleva botón **«Probar»** para distinguir «no hay enlaces» de «la URL no vale».
+  - **Búsqueda por texto en la web de DonTorrent** (`DonSite.kt`), con el dominio
+    como ajuste y vacía por defecto. Existe porque los addons buscan **por IMDb
+    id** (`tt…:temporada:episodio`) y un pack español como «Peppa Pig 1 Temporada
+    (1x01 al 1x13)» no lleva esa numeración: el addon no lo sabe asociar y nunca
+    aparece, aunque el torrent esté ahí. Buscando por texto sí sale — y funciona
+    **incluso sin IMDb id**, así que salva los títulos que TMDB no sabe mapear.
+    - Escrita **sin poder ver el HTML** de la web (bloqueada desde el entorno de
+      compilación), así que a propósito **no depende de la maquetación**: busca los
+      enlaces por su forma (`/serie/…`, `magnet:`, `.torrent`) en vez de por clases
+      CSS, y prueba varias formas de query quedándose con la que dé resultados.
+    - «Probar» dice **en qué paso** falla (dominio / búsqueda / enlace de
+      descarga), para poder arreglarlo sin adivinar.
+    - La web da `.torrent`, no magnet. `Bencode.kt` le calcula el **infohash**
+      (SHA-1 de los bytes crudos del valor `info`, sin re-serializar: cambiar un
+      byte cambiaría el hash) y con él se construye el magnet, así **el resto de la
+      app no cambia** — Real-Debrid, descargas, Chromecast y packs ya van por magnet.
+    - **Se romperá cada cierto tiempo**: esa web cambia de dominio por bloqueos y
+      hay que escribir el nuevo a mano. Es el precio de esta vía.
   Los chips de motor se muestran **siempre, incluso con (0)**. Antes se escondía
   el motor sin resultados, y eso hacía imposible saber si un addon no había
   traído nada o si el motor no existía en la app.

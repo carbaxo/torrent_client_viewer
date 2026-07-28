@@ -1567,6 +1567,56 @@ fun SettingsScreen() {
                         "app manda el magnet a tu cuenta ella sola.",
                     color = Muted, style = MaterialTheme.typography.labelSmall
                 )
+
+                HorizontalDivider(color = Surface2)
+
+                // --- Buscar por TEXTO en la web de DonTorrent ---
+                var ds by remember { mutableStateOf(Prefs.donSiteUrl) }
+                var dsTest by remember { mutableStateOf("") }
+                Text("Buscar en la web de DonTorrent", fontWeight = FontWeight.Bold)
+                Text(
+                    "Los addons buscan por ficha de IMDb, y un pack español como «Peppa Pig 1 " +
+                        "Temporada (1x01 al 1x13)» no lleva esa numeración: el addon no lo sabe " +
+                        "asociar y nunca aparece, aunque el torrent esté ahí. Esto busca por " +
+                        "texto, como lo harías tú en la web.",
+                    color = Muted, style = MaterialTheme.typography.bodySmall
+                )
+                OutlinedTextField(
+                    value = ds, onValueChange = { ds = it },
+                    label = { Text("Dominio de DonTorrent (opcional)") },
+                    placeholder = { Text(DonSite.DEFAULT_BASE) },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { Prefs.saveDonSiteUrl(ds); dsTest = "" },
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
+                    ) { Text("Guardar") }
+                    OutlinedButton(
+                        onClick = { ds = DonSite.DEFAULT_BASE; Prefs.saveDonSiteUrl(ds); dsTest = "" },
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
+                    ) { Text("Poner el de ahora") }
+                    OutlinedButton(
+                        onClick = { dsTest = "Probando…"; DonSite.test { r -> onMain { dsTest = r } } },
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
+                    ) { Text("Probar") }
+                    if (Prefs.donSiteUrl.isNotBlank()) OutlinedButton(
+                        onClick = { Prefs.saveDonSiteUrl(""); ds = ""; dsTest = "" },
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
+                    ) { Text("Quitar") }
+                }
+                if (dsTest.isNotBlank()) Text(
+                    dsTest,
+                    color = if (dsTest.startsWith("✅")) OkGreen else WarnAmber,
+                    style = MaterialTheme.typography.labelSmall
+                )
+                Text(
+                    "«Probar» dice en qué paso falla (dominio, búsqueda o enlace de descarga), " +
+                        "no un simple «no hay enlaces». Aviso: esta web CAMBIA DE DOMINIO cada " +
+                        "cierto tiempo por bloqueos, y cuando pase habrá que escribir el nuevo " +
+                        "aquí a mano. Vacío = no se busca en la web.",
+                    color = WarnAmber, style = MaterialTheme.typography.labelSmall
+                )
             }
         }
 
@@ -2446,6 +2496,7 @@ fun SourcesSection(
             // resultados y eso hacía imposible distinguir "este addon no ha traído
             // nada" de "este motor no existe en la app".
             val engines = listOfNotNull(
+                Search.ENGINE_DONWEB.takeIf { DonSite.enabled },
                 Search.ENGINE_EXTRA.takeIf { ExtraAddon.configured },
                 Search.ENGINE_PEERFLIX, Search.ENGINE_TORRENTIO
             )
@@ -2737,13 +2788,25 @@ fun DetailScreen(
         loadingSources = true; sources = emptyList(); sourcesLabel = label
         ctxSeason = season ?: -1; ctxEpisode = episode ?: -1
         val id = imdbId
-        // Los dos motores buscan por IMDb id: hace falta tenerlo, y en series
-        // hace falta el episodio concreto.
+        // Los addons buscan por IMDb id: hace falta tenerlo, y en series hace falta
+        // el episodio concreto. La web de DonTorrent NO: busca por texto, así que
+        // funciona incluso sin IMDb id, y es la única que puede salvar el caso.
         val usable = id != null && (title.type == "movie" || episode != null)
         if (!usable) {
-            loadingSources = false
-            status = if (id == null) "No se pudo identificar el título (sin IMDb id)"
-            else "Elige un episodio para ver sus enlaces"
+            if (!DonSite.enabled) {
+                loadingSources = false
+                status = if (id == null) "No se pudo identificar el título (sin IMDb id)"
+                else "Elige un episodio para ver sus enlaces"
+                return
+            }
+            // Solo la web: se busca por el nombre del título
+            DonSite.streams(title.title) { l, e ->
+                onMain {
+                    loadingSources = false
+                    sources = Search.sortByEngineAndLang(l.orEmpty(), Prefs.languageOrder)
+                    if (sources.isEmpty()) status = e ?: "Sin fuentes"
+                }
+            }
             return
         }
         val acc = mutableListOf<Search.Result>()
@@ -2752,13 +2815,18 @@ fun DetailScreen(
         // no capitulo a capitulo: van en packs que el addon no sabe asociar a un
         // episodio, asi que preguntando solo por el episodio no sale nada.
         //
-        // El addon extra responde igual aunque no este configurado (con una lista
-        // vacia), asi que la cuenta no depende de si esta puesto o no: si dependiera
-        // y se descontara mal, el contador nunca llegaria a cero y la busqueda se
-        // quedaria "Buscando fuentes..." para siempre.
+        // El addon extra y la web de DonTorrent responden igual aunque no esten
+        // configurados (con una lista vacia), asi que la cuenta no depende de si
+        // estan puestos: si dependiera y se descontara mal, el contador nunca
+        // llegaria a cero y la busqueda se quedaria "Buscando fuentes..." para
+        // siempre.
+        //
+        // La web va aparte de los packs: busca por texto, y su resultado ya incluye
+        // los packs de temporada (que es justo para lo que se anadio), asi que no
+        // hay una segunda pasada para ella.
         val engineCount = 3
         val wantPacks = title.type == "series"
-        var remaining = if (wantPacks) engineCount * 2 else engineCount
+        var remaining = (if (wantPacks) engineCount * 2 else engineCount) + 1
         var lastErr: String? = null
         fun part(list: List<Search.Result>?, err: String?) = onMain {
             if (list != null) acc.addAll(list) else lastErr = err
@@ -2792,6 +2860,9 @@ fun DetailScreen(
         ExtraAddon.streams(title.type, id!!, season, episode) { l, e -> part(l, e) }
         Peerflix.streams(title.type, id, season, episode) { l, e -> part(l, e) }
         Torrentio.streams(title.type, id, season, episode) { l, e -> part(l, e) }
+        // La web, por TEXTO. Con series se busca el nombre a secas para que salgan
+        // los packs de temporada, que es donde estan los dibujos en castellano.
+        DonSite.streams(title.title) { l, e -> part(l, e) }
         if (wantPacks) {
             // Lo que falle aqui no importa: si los addons no contestan a un id de
             // serie, simplemente no habra packs y nada empeora.

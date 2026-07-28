@@ -37,6 +37,7 @@ object Search {
     const val ENGINE_TORRENTIO = "torrentio"
     const val ENGINE_PEERFLIX = "peerflix"   // addon de Stremio (webs españolas)
     const val ENGINE_EXTRA = "extra"         // addon de Stremio a elección del usuario
+    const val ENGINE_DONWEB = "donweb"       // búsqueda por TEXTO en la web de DonTorrent
     const val ENGINE_ALL = "all"
 
     /** Nombre bonito de un motor para los chips y las insignias. */
@@ -44,6 +45,7 @@ object Search {
         ENGINE_TORRENTIO -> "Torrentio"
         ENGINE_PEERFLIX -> "Peerflix"
         ENGINE_EXTRA -> "Extra"
+        ENGINE_DONWEB -> "DonTorrent"
         ENGINE_ALL -> "Todos"
         else -> e.replaceFirstChar { it.uppercase() }
     }
@@ -151,7 +153,7 @@ object Search {
      * los otros no le dan, así que sus enlaces son los que quiere ver arriba.
      * Peerflix antes de Torrentio porque indexa las webs españolas.
      */
-    private val ENGINE_ORDER = listOf(ENGINE_EXTRA, ENGINE_PEERFLIX, ENGINE_TORRENTIO)
+    private val ENGINE_ORDER = listOf(ENGINE_DONWEB, ENGINE_EXTRA, ENGINE_PEERFLIX, ENGINE_TORRENTIO)
 
     /**
      * Posición del motor en ese orden. Si un torrent lo devuelven varios, cuenta
