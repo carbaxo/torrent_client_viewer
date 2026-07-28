@@ -1507,7 +1507,9 @@ fun SettingsScreen() {
                 Text("Buscadores", fontWeight = FontWeight.Bold)
                 Text(
                     "Peerflix (DonTorrent, MejorTorrent, Wolfmax4k, Popcorntime, Bitsearch: " +
-                        "las webs españolas) y Torrentio. Se puede añadir un tercero.",
+                        "las webs españolas) y Torrentio. Se puede añadir un tercero. Además " +
+                        "se busca siempre en TU Real-Debrid: lo que añadas en Descargas sale " +
+                        "en la ficha como un enlace más, y es el que va primero.",
                     color = Muted, style = MaterialTheme.typography.bodySmall
                 )
                 var pf by remember { mutableStateOf(Prefs.peerflixUrl) }
@@ -1568,57 +1570,6 @@ fun SettingsScreen() {
                     color = Muted, style = MaterialTheme.typography.labelSmall
                 )
 
-                HorizontalDivider(color = Surface2)
-
-                // --- Buscar por TEXTO en la web de DonTorrent ---
-                var ds by remember { mutableStateOf(Prefs.donSiteUrl) }
-                var dsTest by remember { mutableStateOf("") }
-                Text("Buscar en la web de DonTorrent", fontWeight = FontWeight.Bold)
-                Text(
-                    "Los addons buscan por ficha de IMDb, y un pack español como «Peppa Pig 1 " +
-                        "Temporada (1x01 al 1x13)» no lleva esa numeración: el addon no lo sabe " +
-                        "asociar y nunca aparece, aunque el torrent esté ahí. Esto busca por " +
-                        "texto, como lo harías tú en la web.",
-                    color = Muted, style = MaterialTheme.typography.bodySmall
-                )
-                OutlinedTextField(
-                    value = ds, onValueChange = { ds = it },
-                    label = { Text("Dominio de DonTorrent (opcional)") },
-                    placeholder = { Text(DonSite.DEFAULT_BASE) },
-                    singleLine = true, modifier = Modifier.fillMaxWidth()
-                )
-                // Fila que ENVUELVE: cuatro botones no caben en el ancho de un
-                // móvil y el último salía con las letras en vertical, una a una.
-                FlowRowSimple {
-                    Button(
-                        onClick = { Prefs.saveDonSiteUrl(ds); dsTest = "" },
-                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
-                    ) { Text("Guardar") }
-                    OutlinedButton(
-                        onClick = { ds = DonSite.DEFAULT_BASE; Prefs.saveDonSiteUrl(ds); dsTest = "" },
-                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
-                    ) { Text("Poner el de ahora") }
-                    OutlinedButton(
-                        onClick = { dsTest = "Probando…"; DonSite.test { r -> onMain { dsTest = r } } },
-                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
-                    ) { Text("Probar") }
-                    if (Prefs.donSiteUrl.isNotBlank()) OutlinedButton(
-                        onClick = { Prefs.saveDonSiteUrl(""); ds = ""; dsTest = "" },
-                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
-                    ) { Text("Quitar") }
-                }
-                if (dsTest.isNotBlank()) Text(
-                    dsTest,
-                    color = if (dsTest.startsWith("✅")) OkGreen else WarnAmber,
-                    style = MaterialTheme.typography.labelSmall
-                )
-                Text(
-                    "«Probar» dice en qué paso falla (dominio, búsqueda o enlace de descarga), " +
-                        "no un simple «no hay enlaces». Aviso: esta web CAMBIA DE DOMINIO cada " +
-                        "cierto tiempo por bloqueos, y cuando pase habrá que escribir el nuevo " +
-                        "aquí a mano. Vacío = no se busca en la web.",
-                    color = WarnAmber, style = MaterialTheme.typography.labelSmall
-                )
             }
         }
 
@@ -2132,33 +2083,61 @@ private fun RdCloudSection(onPlayUrl: (String) -> Unit) {
         }
     }
 
+    /** Lo añadido a RD sale ya en la ficha: hay que olvidar la copia del motor. */
+    fun addedToRd(what: String) {
+        input = ""; expanded = true
+        RdEngine.invalidate()
+        msg = "✅ Añadido ($what). Real-Debrid lo está bajando a sus servidores; " +
+            "cuando ponga «listo» ya se puede ver. Y a partir de ahora saldrá en la " +
+            "ficha del título, en el buscador, como un enlace más."
+        refresh()
+    }
+
+    /** Torrent (magnet o .torrent, directo o dentro de una página) → a la cuenta. */
+    fun addTorrentish(v: String) {
+        msg = if (v.startsWith("magnet:", true)) "Añadiendo el magnet a Real-Debrid…"
+        else "Buscando el torrent en ese enlace…"
+        LinkAdd.addToRd(v) { id, err, what ->
+            onMain {
+                busy = false
+                if (id == null) msg = err ?: "No se pudo añadir."
+                else addedToRd(what)
+            }
+        }
+    }
+
     fun add() {
         val v = input.trim()
         busy = true
-        if (v.startsWith("magnet:", ignoreCase = true)) {
-            msg = "Añadiendo el magnet a Real-Debrid…"
-            RealDebrid.addMagnet(v) { id, err ->
-                onMain {
-                    busy = false
-                    if (id == null) msg = err ?: "No se pudo añadir."
-                    else {
-                        input = ""; expanded = true
-                        msg = "✅ Añadido. Real-Debrid lo está bajando a sus servidores; " +
-                            "cuando ponga «listo» ya se puede ver."
-                        refresh()
-                    }
-                }
-            }
-        } else {
-            // Enlace de hoster (1fichier, Mega…): es el "Descargador" de la web de RD
-            msg = "Preparando el enlace con Real-Debrid…"
-            RealDebrid.unrestrict(v) { url, name, err ->
-                onMain {
-                    busy = false
-                    if (url == null) msg = err ?: "No se pudo preparar el enlace."
-                    else {
-                        RdDownloads.enqueue(ctx, url, name ?: "video")
-                        input = ""; msg = "⬇ Descarga encolada: ${name ?: ""}"
+        when {
+            // Seguro que es un torrent
+            v.startsWith("magnet:", true) || v.substringBefore('?').endsWith(".torrent", true) ->
+                addTorrentish(v)
+            // Cualquier otro enlace: primero se prueba como HOSTER (1fichier, Mega…),
+            // que es el "Descargador" de la web de RD. Si RD no lo reconoce, se
+            // prueba como PÁGINA de una web de torrents y se busca dentro el magnet
+            // o el .torrent. Se hace en este orden y con reserva en vez de adivinar
+            // por la pinta de la URL: adivinando, una web nueva no funcionaria.
+            else -> {
+                msg = "Preparando el enlace con Real-Debrid…"
+                RealDebrid.unrestrict(v) { url, name, err ->
+                    onMain {
+                        if (url != null) {
+                            busy = false
+                            RdDownloads.enqueue(ctx, url, name ?: "video")
+                            input = ""; msg = "⬇ Descarga encolada: ${name ?: ""}"
+                        } else {
+                            msg = "No es un enlace de hoster; miro si la página tiene un torrent…"
+                            LinkAdd.addToRd(v) { id, err2, what ->
+                                onMain {
+                                    busy = false
+                                    if (id != null) addedToRd(what)
+                                    // Se da el error de la PÁGINA, no el del hoster:
+                                    // es el del camino que el usuario buscaba.
+                                    else msg = err2 ?: err ?: "No se pudo añadir."
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -2201,15 +2180,18 @@ private fun RdCloudSection(onPlayUrl: (String) -> Unit) {
                 )
             } else {
                 Text(
-                    "Pega un magnet y Real-Debrid lo baja a sus servidores; luego se ve al " +
-                        "instante. Sirve para lo que falla en la ficha: cuando RD todavía no " +
-                        "lo tiene o el archivo se borró de su caché. Un enlace de hoster " +
-                        "(1fichier, Mega…) se prepara y se descarga directamente.",
+                    "Acepta un magnet, un .torrent y también la PÁGINA de la ficha de una " +
+                        "web de torrents: si le pegas la página, abre y busca dentro el " +
+                        "magnet o el .torrent. Real-Debrid lo baja a sus servidores y luego " +
+                        "se ve al instante. Y lo que añadas aquí aparecerá después en la " +
+                        "ficha del título, como un enlace más — es la vía para lo que no " +
+                        "está en ningún buscador, como los dibujos en castellano. Un enlace " +
+                        "de hoster (1fichier, Mega…) se prepara y se descarga directamente.",
                     color = Muted, style = MaterialTheme.typography.bodySmall
                 )
                 OutlinedTextField(
                     value = input, onValueChange = { input = it },
-                    label = { Text("magnet:?xt=… o un enlace") },
+                    label = { Text("magnet:, .torrent, la página de la ficha o un enlace") },
                     minLines = 2, maxLines = 4,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -2498,7 +2480,7 @@ fun SourcesSection(
             // resultados y eso hacía imposible distinguir "este addon no ha traído
             // nada" de "este motor no existe en la app".
             val engines = listOfNotNull(
-                Search.ENGINE_DONWEB.takeIf { DonSite.enabled },
+                Search.ENGINE_RD.takeIf { RealDebrid.configured },
                 Search.ENGINE_EXTRA.takeIf { ExtraAddon.configured },
                 Search.ENGINE_PEERFLIX, Search.ENGINE_TORRENTIO
             )
@@ -2791,18 +2773,18 @@ fun DetailScreen(
         ctxSeason = season ?: -1; ctxEpisode = episode ?: -1
         val id = imdbId
         // Los addons buscan por IMDb id: hace falta tenerlo, y en series hace falta
-        // el episodio concreto. La web de DonTorrent NO: busca por texto, así que
-        // funciona incluso sin IMDb id, y es la única que puede salvar el caso.
+        // el episodio concreto. Tu cuenta de Real-Debrid NO: se busca por nombre, así
+        // que funciona incluso sin IMDb id y salva los títulos que TMDB no mapea.
         val usable = id != null && (title.type == "movie" || episode != null)
         if (!usable) {
-            if (!DonSite.enabled) {
+            if (!RealDebrid.configured) {
                 loadingSources = false
                 status = if (id == null) "No se pudo identificar el título (sin IMDb id)"
                 else "Elige un episodio para ver sus enlaces"
                 return
             }
-            // Solo la web: se busca por el nombre del título
-            DonSite.streams(title.title) { l, e ->
+            // Sin IMDb id solo se puede mirar en tu cuenta, por nombre
+            RdEngine.streams(title.title) { l, e ->
                 onMain {
                     loadingSources = false
                     sources = Search.sortByEngineAndLang(l.orEmpty(), Prefs.languageOrder)
@@ -2862,9 +2844,9 @@ fun DetailScreen(
         ExtraAddon.streams(title.type, id!!, season, episode) { l, e -> part(l, e) }
         Peerflix.streams(title.type, id, season, episode) { l, e -> part(l, e) }
         Torrentio.streams(title.type, id, season, episode) { l, e -> part(l, e) }
-        // La web, por TEXTO. Con series se busca el nombre a secas para que salgan
-        // los packs de temporada, que es donde estan los dibujos en castellano.
-        DonSite.streams(title.title) { l, e -> part(l, e) }
+        // Tu propia cuenta de RD, por NOMBRE. Es lo que hace que un torrent
+        // anadido a mano salga luego aqui como un enlace mas.
+        RdEngine.streams(title.title) { l, e -> part(l, e) }
         if (wantPacks) {
             // Lo que falle aqui no importa: si los addons no contestan a un id de
             // serie, simplemente no habra packs y nada empeora.

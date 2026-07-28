@@ -37,7 +37,7 @@ object Search {
     const val ENGINE_TORRENTIO = "torrentio"
     const val ENGINE_PEERFLIX = "peerflix"   // addon de Stremio (webs españolas)
     const val ENGINE_EXTRA = "extra"         // addon de Stremio a elección del usuario
-    const val ENGINE_DONWEB = "donweb"       // búsqueda por TEXTO en la web de DonTorrent
+    const val ENGINE_RD = "rd"               // tu propia cuenta de Real-Debrid
     const val ENGINE_ALL = "all"
 
     /** Nombre bonito de un motor para los chips y las insignias. */
@@ -45,7 +45,7 @@ object Search {
         ENGINE_TORRENTIO -> "Torrentio"
         ENGINE_PEERFLIX -> "Peerflix"
         ENGINE_EXTRA -> "Extra"
-        ENGINE_DONWEB -> "DonTorrent"
+        ENGINE_RD -> "Mi Real-Debrid"
         ENGINE_ALL -> "Todos"
         else -> e.replaceFirstChar { it.uppercase() }
     }
@@ -148,12 +148,14 @@ object Search {
         (a.split('+') + b.split('+')).filter { it.isNotBlank() }.distinct().sorted().joinToString("+")
 
     /**
-     * Orden de preferencia de los motores al listar los enlaces. El addon extra va
-     * primero: si alguien se ha molestado en configurarlo es porque busca algo que
-     * los otros no le dan, así que sus enlaces son los que quiere ver arriba.
+     * Orden de preferencia de los motores al listar los enlaces.
+     *
+     * Primero lo que ya está en **tu** Real-Debrid: se ve al instante y no depende
+     * de semillas ni de la caché de nadie. Luego el addon extra, que si alguien se
+     * molestó en configurarlo es porque busca algo que los otros no le dan. Y
      * Peerflix antes de Torrentio porque indexa las webs españolas.
      */
-    private val ENGINE_ORDER = listOf(ENGINE_DONWEB, ENGINE_EXTRA, ENGINE_PEERFLIX, ENGINE_TORRENTIO)
+    private val ENGINE_ORDER = listOf(ENGINE_RD, ENGINE_EXTRA, ENGINE_PEERFLIX, ENGINE_TORRENTIO)
 
     /**
      * Posición del motor en ese orden. Si un torrent lo devuelven varios, cuenta

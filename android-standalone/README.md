@@ -56,8 +56,17 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
   una app no puede escribir por ruta fuera de lo suyo. Si la carpeta deja de
   estar disponible (tarjeta fuera, permiso revocado), la descarga **cae a la
   carpeta de la app en vez de fallar**.
-- ➕ **Añadir un magnet o un enlace a mano** (pestaña Descargas): se pega el
-  magnet y Real-Debrid lo baja a sus servidores; debajo se ve **la lista de la
+- ➕ **Añadir un magnet, un .torrent o la página de una ficha** (pestaña
+  Descargas): acepta las tres cosas. Si le pegas la **página** de la ficha de una
+  web de torrents, la abre y busca dentro el magnet o el `.torrent`
+  (`LinkAdd.kt`); si es un `.torrent`, lo **sube a la cuenta** con
+  `PUT /torrents/addTorrent`, que es más fiable que sacarle el infohash y mandar un
+  magnet — el fichero ya trae los metadatos, así que RD no se queda en «leyendo el
+  magnet» con los torrents de pocas semillas. Es lo que hacía falta porque las webs
+  españolas no dan magnet: DonTorrent da `.torrent`. Y lo que se añade aquí
+  **aparece luego en la ficha del título** como un enlace más (ver «Mi
+  Real-Debrid» más abajo), que es la vía para lo que no está en ningún buscador.
+  Real-Debrid lo baja a sus servidores; debajo se ve **la lista de la
   cuenta de RD con su estado real** (leyendo el magnet, en cola, descargando
   con su %, listo, sin semillas…) y botones Ver / Descargar / quitar. Es la
   salida a los dos fallos que no dependen de la app: que RD **aún no tenga el
@@ -85,8 +94,8 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
 - 📺 **Chromecast**: se elige la TV en la barra superior (antes de abrir nada) y
   luego cada título va a esa TV; envía la versión con **audio AAC** convertida
   por Real-Debrid para que suene (el Chromecast no decodifica Dolby/DTS).
-- Buscador con **dos motores fijos y uno opcional**, los mismos addons que usa
-  Stremio, con un chip por motor en cada ficha y los enlaces **ordenados Extra →
+- Buscador con **cuatro motores** (dos fijos, dos que aparecen si aplican), con un
+  chip por motor en cada ficha y los enlaces **ordenados Mi Real-Debrid → Extra →
   Peerflix → Torrentio**:
   - **Peerflix**: es donde están las versiones en español. Sus proveedores son
     **DonTorrent, MejorTorrent, Wolfmax4K, Popcorntime y Bitsearch** — o sea que
@@ -103,24 +112,23 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
     ranura genérica en vez de un addon concreto porque estos addons **cambian de
     dominio y mueren**; así no hace falta una versión nueva de la app cada vez.
     Lleva botón **«Probar»** para distinguir «no hay enlaces» de «la URL no vale».
-  - **Búsqueda por texto en la web de DonTorrent** (`DonSite.kt`), con el dominio
-    como ajuste y vacía por defecto. Existe porque los addons buscan **por IMDb
-    id** (`tt…:temporada:episodio`) y un pack español como «Peppa Pig 1 Temporada
-    (1x01 al 1x13)» no lleva esa numeración: el addon no lo sabe asociar y nunca
-    aparece, aunque el torrent esté ahí. Buscando por texto sí sale — y funciona
-    **incluso sin IMDb id**, así que salva los títulos que TMDB no sabe mapear.
-    - Escrita **sin poder ver el HTML** de la web (bloqueada desde el entorno de
-      compilación), así que a propósito **no depende de la maquetación**: busca los
-      enlaces por su forma (`/serie/…`, `magnet:`, `.torrent`) en vez de por clases
-      CSS, y prueba varias formas de query quedándose con la que dé resultados.
-    - «Probar» dice **en qué paso** falla (dominio / búsqueda / enlace de
-      descarga), para poder arreglarlo sin adivinar.
-    - La web da `.torrent`, no magnet. `Bencode.kt` le calcula el **infohash**
-      (SHA-1 de los bytes crudos del valor `info`, sin re-serializar: cambiar un
-      byte cambiaría el hash) y con él se construye el magnet, así **el resto de la
-      app no cambia** — Real-Debrid, descargas, Chromecast y packs ya van por magnet.
-    - **Se romperá cada cierto tiempo**: esa web cambia de dominio por bloqueos y
-      hay que escribir el nuevo a mano. Es el precio de esta vía.
+  - **Mi Real-Debrid** (`RdEngine.kt`): se busca **por nombre** en tu propia cuenta
+    y sus torrents salen como enlaces más, los primeros de la lista. Esto es lo que
+    cierra el círculo con lo de los dibujos en castellano: cuando un título no
+    aparece en ningún addon, se añade el torrent **a mano una vez** en Descargas y a
+    partir de ahí sale solo en la ficha, con reproducción, descarga y selector de
+    capítulos si es un pack (varios ficheros = pack, aunque el nombre no lo diga).
+    Es el motor más fiable: API oficial, y lo que sale ya está en tu cuenta, así que
+    no depende de semillas ni de la caché de nadie. Funciona **sin IMDb id**, así que
+    salva los títulos que TMDB no sabe mapear.
+    - Se compara exigiendo que **todas** las palabras del título estén en el nombre
+      del torrent, no que se parezcan: los nombres traen mucha morralla (grupo,
+      códec, año) y comparar el conjunto entero no casaría nunca.
+    - Antes hubo aquí un motor que **rastreaba la web** de DonTorrent buscando por
+      texto. Se quitó: adivinar el formato de búsqueda de una web que no se puede
+      abrir desde el entorno de compilación era un pozo sin fondo. Resolver **un**
+      enlace que el usuario ya encontró es un problema pequeño y cerrado, y hace lo
+      mismo con muchísimo menos que romperse.
   Los chips de motor se muestran **siempre, incluso con (0)**. Antes se escondía
   el motor sin resultados, y eso hacía imposible saber si un addon no había
   traído nada o si el motor no existía en la app.
