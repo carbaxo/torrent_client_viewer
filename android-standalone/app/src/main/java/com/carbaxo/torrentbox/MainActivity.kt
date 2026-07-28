@@ -1269,6 +1269,61 @@ fun SettingsScreen() {
                         "de red con la que se encoló cada una.",
                     color = Muted, style = MaterialTheme.typography.labelSmall
                 )
+
+                HorizontalDivider(color = Color(0x22FFFFFF), modifier = Modifier.padding(vertical = 4.dp))
+
+                // --- Dónde se guardan ---
+                var folderMsg by remember { mutableStateOf("") }
+                val pickFolder = rememberLauncherForActivityResult(
+                    ActivityResultContracts.OpenDocumentTree()
+                ) { uri ->
+                    if (uri == null) return@rememberLauncherForActivityResult
+                    // Sin el permiso PERSISTENTE, la carpeta deja de valer al
+                    // reiniciar la app y las descargas fallarían al día siguiente.
+                    val ok = runCatching {
+                        ctx.contentResolver.takePersistableUriPermission(
+                            uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                        )
+                    }.isSuccess
+                    if (ok) { Prefs.saveDownloadTree(uri.toString()); folderMsg = "" }
+                    else folderMsg = "Android no dio permiso permanente sobre esa carpeta. Prueba con otra."
+                }
+                Text("Carpeta de descargas", style = MaterialTheme.typography.bodyMedium)
+                Text(Downloads.folderLabel(), color = Color(0xFF34D399), style = MaterialTheme.typography.labelSmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            folderMsg = ""
+                            // En una Android TV puede no haber selector de ficheros
+                            runCatching { pickFolder.launch(null) }.onFailure {
+                                folderMsg = "Este dispositivo no tiene selector de carpetas " +
+                                    "(pasa en algunas teles). Se seguirá usando la carpeta de la app."
+                            }
+                        },
+                        modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                    ) { Text("Elegir carpeta…") }
+                    if (Prefs.downloadTree.isNotBlank()) OutlinedButton(
+                        onClick = { Prefs.saveDownloadTree(""); folderMsg = "" },
+                        modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                    ) { Text("Usar la de la app") }
+                }
+                if (folderMsg.isNotBlank()) Text(
+                    folderMsg, color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
+                )
+                Text(
+                    if (Downloads.usingAppFolder)
+                        "Ahora se guardan en la carpeta privada de la app " +
+                            "(Android/data/com.carbaxo.torrentbox/files/Movies): no la ve la galería y " +
+                            "se borra si desinstalas la app. Elige otra carpeta (Descargas, Películas, " +
+                            "la tarjeta SD…) para que los vídeos queden accesibles y sobrevivan."
+                    else
+                        "Los vídeos se guardan ahí, visibles para la galería y otras apps, y no se " +
+                            "borran al desinstalar. Afecta a las descargas NUEVAS; las que ya están " +
+                            "siguen donde estaban. Si la carpeta deja de estar disponible (tarjeta " +
+                            "fuera), la descarga cae a la carpeta de la app en vez de fallar.",
+                    color = Muted, style = MaterialTheme.typography.labelSmall
+                )
             }
         }
 
@@ -1390,11 +1445,14 @@ fun DownloadsScreen(onPlayUrl: (String) -> Unit) {
             Spacer(Modifier.height(4.dp))
             // Espacio libre en la carpeta donde se guardan
             var space by remember { mutableStateOf("") }
-            LaunchedEffect(all.size) {
+            LaunchedEffect(all.size, Prefs.downloadTree) {
                 space = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     runCatching {
                         val dir = ctx.getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES) ?: ctx.filesDir
-                        "Libre: ${Search.humanSize(dir.usableSpace)}"
+                        // Con carpeta propia el hueco de la carpeta de la app no dice
+                        // nada útil: mejor decir dónde se guardan.
+                        if (Downloads.usingAppFolder) "Libre: ${Search.humanSize(dir.usableSpace)}"
+                        else "Se guardan en: ${Downloads.folderLabel()}"
                     }.getOrDefault("")
                 }
             }

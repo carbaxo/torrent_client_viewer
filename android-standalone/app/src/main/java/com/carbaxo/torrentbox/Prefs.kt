@@ -11,9 +11,8 @@ import androidx.compose.runtime.setValue
  * las fuentes. El orden también puede venir de la nube (settings del perfil);
  * aquí se guarda la copia efectiva.
  *
- * En modo Real-Debrid no hay carpetas ni límites de velocidad que configurar:
- * el streaming va directo desde los servidores de RD y las descargas las
- * coloca el DownloadManager del sistema en la carpeta privada de la app.
+ * También: dónde guardar las descargas, si valen los datos móviles, con qué
+ * reproductor abrir el vídeo y cómo emitir a la TV.
  */
 object Prefs {
     private const val FILE = "tcv_prefs"
@@ -47,10 +46,26 @@ object Prefs {
 
     /**
      * Descargar también con datos móviles (y en roaming). Activado por defecto:
-     * si se desactiva, el DownloadManager espera a tener WiFi.
+     * si se desactiva, la descarga espera a tener WiFi.
      */
     var downloadOverMobile by mutableStateOf(true)
         private set
+
+    /**
+     * Carpeta elegida por el usuario para las descargas, como Uri de árbol del
+     * Storage Access Framework. Vacío = la carpeta privada de la app.
+     *
+     * Se guarda el Uri y no una ruta porque desde Android 10 una app no puede
+     * escribir por ruta fuera de lo suyo: hay que pasar por el permiso
+     * persistente que concede el propio selector del sistema.
+     */
+    var downloadTree by mutableStateOf("")
+        private set
+
+    fun saveDownloadTree(uri: String) {
+        downloadTree = uri.trim()
+        sp().edit().putString("dlTree", downloadTree).apply()
+    }
 
     fun saveDownloadOverMobile(on: Boolean) {
         downloadOverMobile = on
@@ -122,6 +137,7 @@ object Prefs {
         peerflixUrl = sp.getString("peerflixUrl", "") ?: ""
         githubToken = runCatching { secureStore().getString("ghToken", "") ?: "" }.getOrDefault("")
         downloadOverMobile = sp.getBoolean("dlOverMobile", true)
+        downloadTree = sp.getString("dlTree", "") ?: ""
         playerMode = sp.getString("playerMode", PLAYER_APP) ?: PLAYER_APP
         castWithVlc = sp.getBoolean("castWithVlc", false)
     }

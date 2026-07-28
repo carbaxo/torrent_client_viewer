@@ -223,11 +223,10 @@ object Downloads {
      */
     fun add(ctx: Context, url: String, name: String, magnet: String = ""): String {
         init(ctx)
-        val dir = ctx.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
-        val file = File(dir, uniqueName(dir, safeName(name)))
+        val target = createTarget(ctx, name)
         val id = java.util.UUID.randomUUID().toString()
         synchronized(jobs) {
-            jobs.add(Job(id = id, name = name.ifBlank { file.name }, file = file.absolutePath, url = url, magnet = magnet))
+            jobs.add(Job(id = id, name = name.ifBlank { safeName(name) }, file = target, url = url, magnet = magnet))
         }
         save(force = true); publish()
         start(ctx, id)
@@ -244,6 +243,109 @@ object Downloads {
         while (File(dir, "$base ($n)$ext").exists()) n++
         return "$base ($n)$ext"
     }
+
+    /** El tipo importa: el selector del sistema añade extensión según el mime. */
+    private fun mimeOf(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
+        "mp4", "m4v" -> "video/mp4"
+        "mkv" -> "video/x-matroska"
+        "avi" -> "video/x-msvideo"
+        "webm" -> "video/webm"
+        "mov" -> "video/quicktime"
+        "ts" -> "video/mp2t"
+        else -> "application/octet-stream"
+    }
+
+    /**
+     * Crea el fichero de destino y devuelve dónde escribir: una **ruta** si se usa
+     * la carpeta de la app, o un **Uri de documento** si el usuario ha elegido
+     * carpeta (Ajustes → Descargas).
+     *
+     * Si la carpeta elegida ya no sirve (tarjeta fuera, permiso revocado), no se
+     * pierde la descarga: cae a la carpeta de la app.
+     */
+    private fun createTarget(ctx: Context, name: String): String {
+        val fname = safeName(name)
+        val tree = Prefs.downloadTree
+        if (tree.isNotBlank()) {
+            val made = runCatching {
+                val treeUri = android.net.Uri.parse(tree)
+                val dirUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(
+                    treeUri, android.provider.DocumentsContract.getTreeDocumentId(treeUri)
+                )
+                // createDocument ya evita pisar: renombra si el nombre existe
+                android.provider.DocumentsContract.createDocument(
+                    ctx.contentResolver, dirUri, mimeOf(fname), fname
+                )
+            }.getOrNull()
+            if (made != null) return made.toString()
+        }
+        val dir = ctx.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
+        return File(dir, uniqueName(dir, fname)).absolutePath
+    }
+
+    /** ¿El destino es un documento del sistema en vez de una ruta nuestra? */
+    private fun isDoc(target: String) = target.startsWith("content://")
+
+    /** Bytes ya escritos en el destino: es de donde se continúa. */
+    internal fun existing(ctx: Context, target: String): Long = runCatching {
+        if (!isDoc(target)) return@runCatching File(target).length()
+        ctx.contentResolver.query(
+            android.net.Uri.parse(target), arrayOf(android.provider.OpenableColumns.SIZE), null, null, null
+        )?.use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else 0L } ?: 0L
+    }.getOrDefault(0L)
+
+    internal fun deleteTarget(ctx: Context, target: String) {
+        runCatching {
+            if (isDoc(target)) android.provider.DocumentsContract
+                .deleteDocument(ctx.contentResolver, android.net.Uri.parse(target))
+            else File(target).delete()
+        }
+    }
+
+    /**
+     * Destino abierto y colocado en el byte [at], recortado a esa longitud. Se usa
+     * un canal (y no un FileOutputStream en modo "append") porque así vale igual
+     * para una ruta y para un documento del sistema, y porque posicionar
+     * explícitamente deja el fichero exactamente como debe estar al continuar.
+     */
+    internal class Writer(
+        private val toClose: List<java.io.Closeable>,
+        val channel: java.nio.channels.FileChannel
+    ) : java.io.Closeable {
+        override fun close() { toClose.forEach { runCatching { it.close() } } }
+    }
+
+    internal fun openAt(ctx: Context, target: String, at: Long): Writer {
+        if (isDoc(target)) {
+            val pfd = ctx.contentResolver.openFileDescriptor(android.net.Uri.parse(target), "rw")
+                ?: throw java.io.IOException("La carpeta elegida no permite escribir.")
+            val fos = FileOutputStream(pfd.fileDescriptor)
+            val ch = fos.channel
+            ch.truncate(at); ch.position(at)
+            return Writer(listOf(fos, pfd), ch)
+        }
+        val f = File(target)
+        f.parentFile?.mkdirs()
+        val raf = java.io.RandomAccessFile(f, "rw")
+        raf.setLength(at); raf.seek(at)
+        return Writer(listOf(raf), raf.channel)
+    }
+
+    /** Nombre legible de la carpeta de descargas, para Ajustes. */
+    fun folderLabel(): String {
+        val tree = Prefs.downloadTree
+        if (tree.isBlank()) return "Carpeta privada de la app"
+        return runCatching {
+            val id = android.provider.DocumentsContract.getTreeDocumentId(android.net.Uri.parse(tree))
+            val vol = id.substringBefore(':', "")
+            val path = id.substringAfter(':', "")
+            val where = if (vol == "primary") "Memoria interna" else "Tarjeta SD"
+            if (path.isBlank()) where else "$where / $path"
+        }.getOrDefault("Carpeta elegida")
+    }
+
+    /** Se usa la carpeta privada de la app (y por tanto se puede medir el hueco). */
+    val usingAppFolder: Boolean get() = Prefs.downloadTree.isBlank()
 
     private fun workName(id: String) = "dl-$id"
 
@@ -275,13 +377,16 @@ object Downloads {
     fun remove(ctx: Context, id: String) {
         val job = get(id)
         WorkManager.getInstance(ctx.applicationContext).cancelUniqueWork(workName(id))
-        job?.let { runCatching { File(it.file).delete() } }
+        job?.let { deleteTarget(ctx, it.file) }
         synchronized(jobs) { jobs.removeAll { it.id == id } }
         save(force = true); publish()
     }
 
     /** Uri para reproducir: content:// vía FileProvider, que VLC también acepta. */
     fun uriFor(ctx: Context, job: Job): String? {
+        // Un documento del sistema ya es un content:// que vale para el
+        // reproductor propio y para VLC (se le pasa el permiso de lectura).
+        if (isDoc(job.file)) return job.file.takeIf { existing(ctx, it) > 0 }
         val f = File(job.file)
         if (!f.exists()) return null
         return runCatching {
@@ -303,9 +408,9 @@ object Downloads {
     internal fun progress(id: String, bytes: Long, total: Long, speed: Long) =
         edit(id, force = false) { it.copy(bytes = bytes, total = if (total > 0) total else it.total, speed = speed, state = RUNNING) }
 
-    internal fun finish(id: String) = edit(id) {
-        val len = runCatching { File(it.file).length() }.getOrDefault(it.bytes)
-        it.copy(state = DONE, bytes = len, total = if (it.total > 0) it.total else len, speed = 0L, error = "")
+    internal fun finish(id: String) = edit(id) { j ->
+        val len = appCtx?.let { existing(it, j.file) }?.takeIf { n -> n > 0 } ?: j.bytes
+        j.copy(state = DONE, bytes = len, total = if (j.total > 0) j.total else len, speed = 0L, error = "")
     }
 
     /**
@@ -401,9 +506,9 @@ class DownloadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
             // Como maximo: intento normal + intento con enlace renovado
             var pass = 0
             while (pass++ < 2) {
-                val file = File(job.file)
-                file.parentFile?.mkdirs()
-                val have = if (file.exists()) file.length() else 0L
+                // El destino puede ser una ruta nuestra o un documento en la
+                // carpeta que haya elegido el usuario: Downloads se encarga.
+                val have = Downloads.existing(applicationContext, job.file)
 
                 val b = Request.Builder().url(url).header("User-Agent", "TorrentBox")
                 if (have > 0) b.header("Range", "bytes=$have-")
@@ -451,9 +556,9 @@ class DownloadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
                 }
 
                 // 206 = nos da el trozo pedido. 200 con have>0 = ignoró el Range y
-                // manda el fichero entero: hay que empezar de cero.
+                // manda el fichero entero: hay que empezar de cero (openAt(…, 0)
+                // recorta el fichero, así que no hace falta borrarlo).
                 val partial = resp.code == 206 && have > 0
-                if (!partial && have > 0) runCatching { file.delete() }
                 val len = body.contentLength()
                 val total = if (partial) have + len else len
                 if (total > 0) Downloads.setTotal(id, total)
@@ -462,14 +567,16 @@ class DownloadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
                 var lastTick = System.currentTimeMillis()
                 var lastBytes = written
 
-                FileOutputStream(file, partial).use { out ->
+                Downloads.openAt(applicationContext, job.file, if (partial) have else 0L).use { w ->
                     body.byteStream().use { ins ->
                         val buf = ByteArray(256 * 1024)
+                        val bb = java.nio.ByteBuffer.wrap(buf)
                         while (true) {
                             if (!isActive) throw CancellationException("pausada")
                             val n = ins.read(buf)
                             if (n <= 0) break
-                            out.write(buf, 0, n)
+                            bb.clear(); bb.limit(n)
+                            while (bb.hasRemaining()) w.channel.write(bb)
                             written += n
                             val now = System.currentTimeMillis()
                             if (now - lastTick >= 800) {
@@ -480,7 +587,7 @@ class DownloadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
                                 lastTick = now; lastBytes = written
                             }
                         }
-                        out.flush()
+                        runCatching { w.channel.force(false) }
                     }
                 }
                 resp.close()

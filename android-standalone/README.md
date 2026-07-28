@@ -24,6 +24,14 @@ servidor propio. Funciona en **móvil y en Android TV**.
   atados a tu IP y expiran—, **se pide otro con el magnet guardado** y sigue
   desde donde iba. Eso es lo que antes se veía como "se para a mitad": lo hacía
   el DownloadManager de Android, que no sabe pausar ni renovar un enlace muerto.
+- 📂 **Carpeta de descargas elegible** (Ajustes → Descargas): por defecto van a la
+  carpeta privada de la app, que no ve la galería y **se borra al desinstalar**.
+  Con «Elegir carpeta…» se puede apuntar a Descargas, Películas o la **tarjeta
+  SD**, y ahí quedan visibles para otras apps y sobreviven a desinstalar. Se usa
+  el selector del sistema (SAF) con permiso permanente, porque desde Android 10
+  una app no puede escribir por ruta fuera de lo suyo. Si la carpeta deja de
+  estar disponible (tarjeta fuera, permiso revocado), la descarga **cae a la
+  carpeta de la app en vez de fallar**.
 - ➕ **Añadir un magnet o un enlace a mano** (pestaña Descargas): se pega el
   magnet y Real-Debrid lo baja a sus servidores; debajo se ve **la lista de la
   cuenta de RD con su estado real** (leyendo el magnet, en cola, descargando
@@ -210,8 +218,9 @@ cd android-standalone
 ## Notas
 
 - Requiere Android 7.0 (API 24) o superior.
-- Las descargas van a la carpeta privada de la app
-  (`Android/data/com.carbaxo.torrentbox/files/Movies`).
+- Las descargas van, por defecto, a la carpeta privada de la app
+  (`Android/data/com.carbaxo.torrentbox/files/Movies`); se puede cambiar en
+  **Ajustes → Descargas → Carpeta de descargas**.
 - Formatos: ExoPlayer reproduce mp4/webm y la mayoría de mkv/avi según los
   códecs del dispositivo. Al emitir, el Chromecast no admite MKV ni audio
   Dolby/DTS: la app lo resuelve enviando la versión convertida de Real-Debrid
