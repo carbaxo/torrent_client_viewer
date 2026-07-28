@@ -92,7 +92,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Magnets que llegan de fuera: al pulsar uno en el navegador o al
-        // compartir un texto con VillazPlay. Se usa el listener de androidx en
+        // compartir un texto con CaViPlay. Se usa el listener de androidx en
         // vez de sobrescribir onNewIntent (la app es singleTop).
         handleIncoming(intent)
         addOnNewIntentListener { handleIncoming(it) }
@@ -160,6 +160,7 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
     var detail by remember { mutableStateOf<Tmdb.Title?>(null) }
     var catalogType by remember { mutableStateOf("movie") }
     var showCastScreen by remember { mutableStateOf(false) }
+    var showProfiles by remember { mutableStateOf(false) }
     // "Preguntar cada vez" con qué reproductor abrir, y errores al lanzarlo
     var askPlayer by remember { mutableStateOf<Pair<String, PlayCtx>?>(null) }
     // (título, mensaje, ¿ofrecer instalar VLC?)
@@ -285,6 +286,11 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
         )
     }
 
+    if (showProfiles) ProfilePicker(
+        onClose = { showProfiles = false },
+        onManage = { showProfiles = false; detail = null; tab = Tab.SETTINGS }
+    )
+
     // Mando de la TV a pantalla completa (mientras se emite)
     if (showCastScreen && CastManager.connected) {
         CastScreen(onClose = { showCastScreen = false })
@@ -316,7 +322,7 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
         ) {
             Text(
                 // En la tele, el título dice también en qué sección estás
-                if (Tv.isTv) "VillazPlay · ${tab.label}" else "VillazPlay",
+                if (Tv.isTv) "CaViPlay · ${tab.label}" else "CaViPlay",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold, color = Accent, modifier = Modifier.weight(1f)
             )
@@ -327,6 +333,8 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
                     overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 130.dp)
                 )
             }
+            // Cambiar de perfil desde cualquier pestaña, sin pasar por Ajustes
+            ProfileChip { showProfiles = true }
             CastIconButton()
         }
     }
@@ -372,7 +380,7 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
         // para TV). Con el mando se llega a ellas yendo a la izquierda desde
         // cualquier sitio, y siempre se ve cuál está activa.
         Row(Modifier.fillMaxSize().background(Bg)) {
-            TvNavRail(visibleTabs, tab) { tab = it }
+            TvNavRail(visibleTabs, tab, onProfiles = { showProfiles = true }) { tab = it }
             Column(Modifier.weight(1f).padding(end = Tv.overscan)) {
                 topBar()
                 castBar()
@@ -414,7 +422,12 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
  * QUÉ VAS A PULSAR, que es justo lo que se pierde sin pantalla táctil.
  */
 @Composable
-private fun TvNavRail(tabs: List<Tab>, current: Tab, onSelect: (Tab) -> Unit) {
+private fun TvNavRail(
+    tabs: List<Tab>,
+    current: Tab,
+    onProfiles: () -> Unit,
+    onSelect: (Tab) -> Unit
+) {
     // El foco arranca en la sección activa: al encender ya se ve dónde estás
     val first = rememberTvFocus()
     LaunchedEffect(Unit) {
@@ -428,7 +441,7 @@ private fun TvNavRail(tabs: List<Tab>, current: Tab, onSelect: (Tab) -> Unit) {
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Text(
-            "VillazPlay", color = Accent, fontWeight = FontWeight.Bold,
+            "CaViPlay", color = Accent, fontWeight = FontWeight.Bold,
             style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 18.dp)
         )
         tabs.forEach { t ->
@@ -452,7 +465,118 @@ private fun TvNavRail(tabs: List<Tab>, current: Tab, onSelect: (Tab) -> Unit) {
                 )
             }
         }
+
+        // El perfil activo, al fondo de la barra: en la tele es donde se busca y
+        // hasta ahora estaba enterrado en Ajustes → Cuenta.
+        Sync.activeProfile?.let { p ->
+            Spacer(Modifier.weight(1f))
+            Row(
+                Modifier.fillMaxWidth()
+                    .tvRow(RoundedCornerShape(10.dp)) { onProfiles() }
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(p.avatar, style = MaterialTheme.typography.titleLarge)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Perfil", color = Muted, style = MaterialTheme.typography.labelSmall)
+                    Text(
+                        p.name, color = Color.White, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                Icon(Icons.Filled.KeyboardArrowRight, contentDescription = "Cambiar de perfil", tint = Muted)
+            }
+        }
     }
+}
+
+/** Quién está viendo: el avatar del perfil activo, en la barra superior. */
+@Composable
+private fun ProfileChip(onClick: () -> Unit) {
+    val p = Sync.activeProfile ?: return
+    Row(
+        Modifier.tvClickable(RoundedCornerShape(20.dp)) { onClick() }
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(p.avatar, style = MaterialTheme.typography.titleMedium)
+        // En la tele cabe el nombre; en el móvil la barra va justa de sitio
+        if (Tv.isTv) {
+            Spacer(Modifier.width(6.dp))
+            Text(
+                p.name, color = Color.White, maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.widthIn(max = 140.dp)
+            )
+        }
+    }
+}
+
+/**
+ * "¿Quién está viendo?" al estilo de Netflix. Se llega desde la barra superior en
+ * cualquier pestaña y, en la tele, desde el fondo de la barra de secciones.
+ */
+@Composable
+private fun ProfilePicker(onClose: () -> Unit, onManage: () -> Unit) {
+    val activeFocus = rememberTvFocus()
+    LaunchedEffect(Unit) {
+        if (!Tv.isTv) return@LaunchedEffect
+        kotlinx.coroutines.delay(150)
+        runCatching { activeFocus.requestFocus() }
+    }
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("¿Quién está viendo?") },
+        text = {
+            Column(
+                Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                if (Sync.profiles.isEmpty()) Text(
+                    "Todavía no hay perfiles. Se crean en Ajustes → Cuenta.",
+                    color = Muted, style = MaterialTheme.typography.bodySmall
+                )
+                Sync.profiles.forEach { p ->
+                    val active = Sync.activeProfile?.id == p.id
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .tvRow(
+                                RoundedCornerShape(12.dp),
+                                // El foco empieza en el perfil activo
+                                focusRequester = if (active) activeFocus else null
+                            ) { Sync.selectProfile(p.id); onClose() }
+                            .padding(horizontal = 10.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(p.avatar, style = MaterialTheme.typography.headlineSmall)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                p.name + if (p.kids) "  🧒" else "",
+                                color = if (active) Accent else MaterialTheme.colorScheme.onSurface,
+                                fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                            if (p.kids) Text(
+                                "Modo infantil", color = Muted,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                        if (active) Icon(Icons.Filled.Check, contentDescription = "Activo", tint = Accent)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onClose, modifier = Modifier.tvFocusRing()) { Text("Cerrar") }
+        },
+        dismissButton = {
+            TextButton(onClick = onManage, modifier = Modifier.tvFocusRing()) { Text("Gestionar") }
+        }
+    )
 }
 
 /** Botón nativo de Chromecast (abre el diálogo "emitir a…" del sistema). */
@@ -1281,7 +1405,7 @@ fun SettingsScreen() {
                     Text(
                         "⚠️ El «Ahorro de datos» de Android está activo y bloquea las descargas " +
                             "con datos móviles aunque la app las permita. Desactívalo, o excluye " +
-                            "VillazPlay en Ajustes de Android → Red → Ahorro de datos → Datos sin restricción.",
+                            "CaViPlay en Ajustes de Android → Red → Ahorro de datos → Datos sin restricción.",
                         color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
                     )
                 }
@@ -1483,7 +1607,7 @@ fun DownloadsScreen(onPlayUrl: (String) -> Unit) {
             if (active.isNotEmpty() && RdDownloads.dataSaverBlocks(ctx)) {
                 Text(
                     "⚠️ El «Ahorro de datos» de Android puede tener parada la descarga con " +
-                        "datos móviles. Excluye VillazPlay en Ajustes de Android → Red → " +
+                        "datos móviles. Excluye CaViPlay en Ajustes de Android → Red → " +
                         "Ahorro de datos, o conéctate a WiFi.",
                     color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
                 )

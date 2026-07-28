@@ -79,6 +79,12 @@ def glyph(ch, x, y, w, h, s):
         P.append(rect(x, y + h - s, w, s))
         P.append(poly([(x + w - s, y + s), (x + w, y + s),
                        (x + s, y + h - s), (x, y + h - s)]))
+    elif ch == "C":
+        # C "cuadrada", del mismo estilo geometrico que la P: barra vertical con
+        # los remates arriba y abajo. Sin curvas, para que case con la V.
+        P.append(rect(x, y, s, h))
+        P.append(rect(x, y, w * 0.9, s))
+        P.append(rect(x, y + h - s, w * 0.9, s))
     elif ch == "P":
         bowl = h * 0.58
         P.append(rect(x, y, s, h))
@@ -172,18 +178,24 @@ HUECO = 20.0                   # separacion entre la marca y el logotipo
 
 mh = 52.0                      # alto de la V en el banner
 mw = mh * (48.0 / 42.0)        # mismas proporciones que en el icono
-mx = MARGEN + mw / 2.0
 my = (BH - mh) / 2.0
+
+# El tamano de las letras se DESPEJA del hueco disponible, en vez de fijarlo a
+# ojo, y despues el conjunto (marca + logotipo) se CENTRA: si no, al cambiar el
+# numero de letras el bloque queda descolocado o se sale del banner.
+TEXTO = "CAVIPLAY"
+def ancho_texto(cap):
+    return cap * (len(TEXTO) * 0.65 + (len(TEXTO) - 1) * 0.22)
+
+libre = BW - 2 * MARGEN - mw - HUECO
+cap = min(libre / (len(TEXTO) * 0.65 + (len(TEXTO) - 1) * 0.22), 26.0)
+total = mw + HUECO + ancho_texto(cap)
+x0 = (BW - total) / 2.0                    # centrado horizontal del conjunto
+
+mx = x0 + mw / 2.0
 bizq, bder = v_mark(cx=mx, top=my, height=mh, width=mw, thick=13 * (mh / 42.0))
 
-# El tamano de las letras se DESPEJA del hueco que queda, en vez de fijarlo a
-# ojo: asi el logotipo nunca se sale del banner.
-TEXTO = "VILLAZPLAY"
-wx = MARGEN + mw + HUECO
-libre = BW - wx - MARGEN
-# ancho = n*0.65*cap + (n-1)*0.22*cap
-cap = libre / (len(TEXTO) * 0.65 + (len(TEXTO) - 1) * 0.22)
-cap = min(cap, 26.0)
+wx = x0 + mw + HUECO
 wy = (BH - cap) / 2.0
 letras, ancho = wordmark(TEXTO, x=wx, y=wy, cap=cap, gap=cap * 0.22)
 
@@ -197,7 +209,7 @@ open(f"{RES}/drawable/tv_banner.xml", "w").write(
 
 print("logotipo: ancho %.1f, termina en x=%.1f (margen derecho %.1f)"
       % (ancho, wx + ancho, BW - (wx + ancho)))
-print("marca: x %.1f..%.1f, y %.1f..%.1f" % (34.0, 34.0 + mw, my, my + mh))
+print("marca: x %.1f..%.1f, y %.1f..%.1f" % (x0, x0 + mw, my, my + mh))
 
 # =====================================================================
 #  5) Icono adaptativo

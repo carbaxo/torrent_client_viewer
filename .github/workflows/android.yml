@@ -41,14 +41,13 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace --no-daemon
 
-      # Se publican los DOS nombres a proposito: las versiones ya instaladas
-      # buscaban el asset llamado exactamente "TorrentBox.apk", asi que si solo
-      # se publicara el nombre nuevo se quedarian sin auto-actualizacion y habria
-      # que reinstalar a mano en cada dispositivo. Cuando todo este en 75+ se
-      # puede quitar el alias.
+      # El alias TorrentBox.apk sigue publicandose porque las versiones <=74
+      # buscaban ese nombre EXACTO; sin el se quedarian sin auto-actualizacion y
+      # habria que reinstalar a mano en cada dispositivo. Desde la 75 la app
+      # acepta cualquier .apk, asi que en cuanto todo este en 75+ se puede quitar.
       - name: Rename APK
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk VillazPlay.apk
+          cp app/build/outputs/apk/debug/app-debug.apk CaViPlay.apk
           cp app/build/outputs/apk/debug/app-debug.apk TorrentBox.apk
 
       # El artefacto es solo una comodidad: si la cuenta se queda sin cuota de
@@ -58,8 +57,8 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: VillazPlay-apk
-          path: android-standalone/VillazPlay.apk
+          name: CaViPlay-apk
+          path: android-standalone/CaViPlay.apk
           retention-days: 7
 
       # Borra el release/tag anterior para que la FECHA en GitHub se refresque
@@ -76,14 +75,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: android-latest
-          name: VillazPlay (Android APK)
+          name: CaViPlay (Android APK)
           make_latest: true
           body: |
-            APK de VillazPlay: streaming y descargas vía Real-Debrid, en el móvil y en la Android TV.
+            APK de CaViPlay: streaming y descargas vía Real-Debrid, en el móvil y en la Android TV.
             Requiere una cuenta de Real-Debrid (se configura en Ajustes).
-            Descarga `VillazPlay.apk`, actívalo en Ajustes → "Instalar apps desconocidas" e instálalo.
+            Descarga `CaViPlay.apk`, actívalo en Ajustes → "Instalar apps desconocidas" e instálalo.
             (`TorrentBox.apk` es el mismo fichero, para que se actualicen las versiones antiguas.)
             Build ${{ github.run_number }} — commit ${{ github.sha }}
           files: |
-            android-standalone/VillazPlay.apk
+            android-standalone/CaViPlay.apk
             android-standalone/TorrentBox.apk
