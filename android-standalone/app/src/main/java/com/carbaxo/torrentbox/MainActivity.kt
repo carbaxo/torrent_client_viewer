@@ -226,9 +226,11 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
     // Modo infantil: el perfil activo marca kids. Oculta Buscar (búsqueda libre);
     // los catálogos se filtran a géneros familiares.
     val kids = Sync.activeProfile?.kids == true
+    // "En directo" es SOLO del perfil infantil: nace para los dibujos y ahí se
+    // queda. En los demás perfiles se busca por título, que es lo que se espera.
     val visibleTabs = if (kids) listOf(Tab.DISCOVER, Tab.LIVE, Tab.DOWNLOADS, Tab.SETTINGS)
-    else Tab.values().toList()
-    LaunchedEffect(kids) { if (kids && tab !in visibleTabs) tab = Tab.DISCOVER }
+    else Tab.values().filter { it != Tab.LIVE }
+    LaunchedEffect(kids) { if (tab !in visibleTabs) tab = Tab.DISCOVER }
 
     // Avisos de episodios nuevos cuando llegan los favoritos de la nube
     LaunchedEffect(Sync.favorites.size) { if (Sync.favorites.isNotEmpty()) EpisodeAlerts.check(ctx) }
@@ -1501,10 +1503,51 @@ fun SettingsScreen() {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Buscadores", fontWeight = FontWeight.Bold)
                 Text(
-                    "Se consultan Peerflix (el mismo addon que Stremio: Dontorrent, " +
-                        "MejorTorrent, Wolfmax4k, Popcorntime…) y Torrentio.",
+                    "Se consultan tres addons a la vez: DonTorrent (castellano), Peerflix " +
+                        "(MejorTorrent, Wolfmax4k, Popcorntime…) y Torrentio.",
                     color = Muted, style = MaterialTheme.typography.bodySmall
                 )
+
+                // --- DonTorrent: el que trae los doblajes al castellano ---
+                var dt by remember { mutableStateOf(Prefs.donTorrentUrl) }
+                var dtTest by remember { mutableStateOf("") }
+                OutlinedTextField(
+                    value = dt, onValueChange = { dt = it },
+                    label = { Text("URL propia de DonTorrent (opcional)") },
+                    placeholder = { Text(DonTorrent.DEFAULT_BASE) },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { Prefs.saveDonTorrentUrl(dt); dtTest = "" },
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
+                    ) { Text("Guardar") }
+                    OutlinedButton(
+                        onClick = { dtTest = "Probando…"; DonTorrent.test { r -> onMain { dtTest = r } } },
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
+                    ) { Text("Probar") }
+                    if (Prefs.donTorrentUrl.isNotBlank()) OutlinedButton(
+                        onClick = { Prefs.saveDonTorrentUrl(""); dt = ""; dtTest = "" },
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
+                    ) { Text("Usar el público") }
+                }
+                if (dtTest.isNotBlank()) Text(
+                    dtTest,
+                    color = if (dtTest.startsWith("✅")) OkGreen else WarnAmber,
+                    style = MaterialTheme.typography.labelSmall
+                )
+                Text(
+                    "DonTorrent es el que trae los doblajes al castellano (series de " +
+                        "Netflix, anime como Oliver y Benji, dibujos…), que es justo lo que " +
+                        "no indexan bien los otros dos. No hay que configurarlo con " +
+                        "Real-Debrid: la app ya manda el magnet a tu cuenta ella sola. Eso sí, " +
+                        "la web de DonTorrent se cae o se bloquea cada cierto tiempo; usa " +
+                        "«Probar» para saber si el problema es del addon o es que no hay enlaces.",
+                    color = Muted, style = MaterialTheme.typography.labelSmall
+                )
+
+                HorizontalDivider(color = Surface2)
+
                 var pf by remember { mutableStateOf(Prefs.peerflixUrl) }
                 OutlinedTextField(
                     value = pf, onValueChange = { pf = it },
@@ -1531,12 +1574,35 @@ fun SettingsScreen() {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Canales (TV en directo)", fontWeight = FontWeight.Bold)
                 Text(
-                    "De serie van los canales de RTVE, que son públicos y en abierto: Clan " +
-                        "emite dibujos en castellano 24 h y es la vía más fiable para los niños. " +
-                        "Se ven solo desde España.",
+                    "Solo se ven con perfil infantil. De serie van los canales de RTVE, que " +
+                        "son públicos y en abierto: Clan emite dibujos en castellano 24 h y es " +
+                        "la vía más fiable para los niños. Se ven solo desde España.",
                     color = Muted, style = MaterialTheme.typography.bodySmall
                 )
                 var m3u by remember { mutableStateOf(Prefs.iptvUrl) }
+
+                // Atajos a las plataformas FAST: es donde está Dragon Ball en
+                // castellano, que no aparece en ningún índice de torrents.
+                Text(
+                    "Añadir canales gratis:", style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+                Iptv.PRESETS.forEach { p ->
+                    Column {
+                        OutlinedButton(
+                            onClick = { m3u = p.url; Prefs.saveIptvUrl(p.url) },
+                            shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
+                        ) { Text(p.name) }
+                        Text(p.note, color = Muted, style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+                Text(
+                    "Estos canales se SUMAN a los de RTVE, no los sustituyen: Clan sigue ahí. " +
+                        "No he podido comprobar estas listas al programarlo, así que si una no " +
+                        "trae nada, dale a «Volver a RTVE».",
+                    color = Muted, style = MaterialTheme.typography.labelSmall
+                )
+
                 OutlinedTextField(
                     value = m3u, onValueChange = { m3u = it },
                     label = { Text("Tu lista M3U (opcional)") },
@@ -1640,19 +1706,25 @@ private fun FlowRowSimple(content: @Composable () -> Unit) {
 }
 
 /**
- * Canales de TV en directo.
+ * Canales de TV en directo. **Solo aparece con perfil infantil**, que es para lo
+ * que se hizo.
  *
- * Nace del problema de los dibujos: Peppa Pig y Bluey en castellano no están en
- * los índices de Peerflix ni de Torrentio, pero **Clan** (RTVE) los emite 24 h,
- * gratis y en abierto. Para los niños esto funciona hoy y siempre, sin depender
- * de semillas ni de la caché de Real-Debrid.
+ * Nace del problema de los dibujos: Peppa Pig y Bluey en castellano no salían en
+ * los índices de torrents, pero **Clan** (RTVE) los emite 24 h, gratis y en
+ * abierto. Aquí no hay que esperar a que un torrent tenga semillas ni a que
+ * Real-Debrid lo tenga en caché.
+ *
+ * Debajo van los canales **oficiales de YouTube** de esas mismas series ([KidsTv]):
+ * un canal 24/7 emite lo que toca, y ahí se elige la serie y el capítulo.
  */
 @Composable
 fun LiveScreen(kids: Boolean, onPlay: (Iptv.Channel) -> Unit) {
+    val ctx = LocalContext.current
     // Con perfil infantil, solo los canales de dibujos
     val all = Iptv.list
     val shown = if (kids) all.filter { it.kids }.ifEmpty { all } else all
     val groups = shown.groupBy { it.group?.ifBlank { null } ?: "Canales" }
+    var ytError by remember { mutableStateOf("") }
 
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = if (Tv.isTv) 4.dp else 12.dp),
@@ -1669,6 +1741,49 @@ fun LiveScreen(kids: Boolean, onPlay: (Iptv.Channel) -> Unit) {
                 color = Muted, style = MaterialTheme.typography.labelSmall
             )
             Spacer(Modifier.height(8.dp))
+        }
+
+        // --- Series concretas, en sus canales OFICIALES de YouTube ---
+        // Un canal 24/7 emite lo que toca; aquí se elige la serie y el capítulo,
+        // que es lo que se quería para Peppa y Bluey en castellano.
+        if (kids) {
+            item {
+                Text(
+                    "Dibujos en YouTube", style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp, bottom = 2.dp)
+                )
+                Text(
+                    "Canales oficiales, gratis y en español. Se abren en la app de YouTube.",
+                    color = Muted, style = MaterialTheme.typography.labelSmall
+                )
+                if (ytError.isNotBlank()) Text(
+                    ytError, color = WarnAmber, style = MaterialTheme.typography.labelSmall
+                )
+                Spacer(Modifier.height(4.dp))
+            }
+            items(KidsTv.OFFICIAL.size) { i ->
+                val show = KidsTv.OFFICIAL[i]
+                Row(
+                    Modifier.fillMaxWidth()
+                        .tvRow(NfShape) { ytError = KidsTv.open(ctx, show) ?: "" }
+                        .padding(horizontal = 10.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(show.emoji, style = MaterialTheme.typography.headlineSmall)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            show.name, style = MaterialTheme.typography.bodyLarge,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            show.note, color = Muted, style = MaterialTheme.typography.labelSmall,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Text("▶", color = Accent, style = MaterialTheme.typography.titleMedium)
+                }
+            }
         }
         groups.forEach { (grupo, canales) ->
             item {
@@ -2372,7 +2487,7 @@ fun SourcesSection(
     Column(Modifier.padding(top = 4.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         // Un chip por motor, como las pestañas de addons de Stremio
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            val engines = listOf(Search.ENGINE_PEERFLIX, Search.ENGINE_TORRENTIO)
+            val engines = listOf(Search.ENGINE_DONTORRENT, Search.ENGINE_PEERFLIX, Search.ENGINE_TORRENTIO)
             (listOf(Search.ENGINE_ALL) + engines).forEach { key ->
                 val n = if (key == Search.ENGINE_ALL) sources.size else sources.count { it.fromEngine(key) }
                 // Los motores sin resultados no se muestran (salvo el elegido)
@@ -2657,7 +2772,7 @@ fun DetailScreen(
         Tmdb.episodes(title.tmdbId, s) { list, _ -> onMain { episodes = list ?: emptyList() } }
     }
 
-    // Busca en Peerflix (addon de Stremio) y en Torrentio a la vez, por IMDb id;
+    // Busca en DonTorrent, Peerflix y Torrentio a la vez, por IMDb id;
     // combina, deduplica por infoHash (gana el de más seeders) y ordena por
     // motor e idioma. La combinación se hace en el hilo principal (onMain).
     fun runSearch(label: String, season: Int? = null, episode: Int? = null) {
@@ -2674,12 +2789,13 @@ fun DetailScreen(
             return
         }
         val acc = mutableListOf<Search.Result>()
-        // Peerflix + Torrentio por episodio, y en series los dos otra vez a por
-        // PACKS de temporada. Las series infantiles en castellano casi nunca se
-        // publican por capitulos: van en packs que el addon no sabe asociar a un
-        // episodio, asi que por episodio no sale nada.
+        // Los TRES motores por episodio, y en series los tres otra vez a por PACKS
+        // de temporada. En castellano lo normal es que una serie se publique entera
+        // y no capitulo a capitulo: van en packs que el addon no sabe asociar a un
+        // episodio, asi que preguntando solo por el episodio no sale nada.
+        val engineCount = 3
         val wantPacks = title.type == "series"
-        var remaining = if (wantPacks) 4 else 2
+        var remaining = if (wantPacks) engineCount * 2 else engineCount
         var lastErr: String? = null
         fun part(list: List<Search.Result>?, err: String?) = onMain {
             if (list != null) acc.addAll(list) else lastErr = err
@@ -2710,11 +2826,13 @@ fun DetailScreen(
                 if (sources.isEmpty()) status = lastErr ?: "Sin fuentes"
             }
         }
-        Peerflix.streams(title.type, id!!, season, episode) { l, e -> part(l, e) }
+        DonTorrent.streams(title.type, id!!, season, episode) { l, e -> part(l, e) }
+        Peerflix.streams(title.type, id, season, episode) { l, e -> part(l, e) }
         Torrentio.streams(title.type, id, season, episode) { l, e -> part(l, e) }
         if (wantPacks) {
             // Lo que falle aqui no importa: si los addons no contestan a un id de
             // serie, simplemente no habra packs y nada empeora.
+            DonTorrent.packs(id, season) { l -> part(l, null) }
             Peerflix.packs(id, season) { l -> part(l, null) }
             Torrentio.packs(id, season) { l -> part(l, null) }
         }

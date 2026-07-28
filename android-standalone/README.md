@@ -85,34 +85,72 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
 - 📺 **Chromecast**: se elige la TV en la barra superior (antes de abrir nada) y
   luego cada título va a esa TV; envía la versión con **audio AAC** convertida
   por Real-Debrid para que suene (el Chromecast no decodifica Dolby/DTS).
-- Buscador con **dos motores**, los mismos addons que usa Stremio, con un chip
-  por motor en cada ficha y los enlaces **ordenados Peerflix → Torrentio**:
-  - **Peerflix** (Dontorrent, MejorTorrent, Wolfmax4k, Popcorntime, Bitsearch):
-    es donde están las versiones en español. Se puede apuntar a tu propia URL de
-    `config.peerflix.mov` desde **Ajustes → Buscadores**.
+- Buscador con **tres motores**, los mismos addons que usa Stremio, con un chip
+  por motor en cada ficha y los enlaces **ordenados DonTorrent → Peerflix →
+  Torrentio** (primero el que publica en castellano):
+  - **DonTorrent**: el que trae los **doblajes al castellano** — series de
+    Netflix, anime tipo Oliver y Benji, dibujos. Existe porque los otros dos
+    indexan sobre todo releases en inglés, y ese es el motivo de fondo de que no
+    aparecieran enlaces en español. **No hay que configurarlo con Real-Debrid**:
+    la app manda el magnet a RD ella sola, así que basta con el `infoHash` que
+    devuelve el addon. En **Ajustes → Buscadores** hay un botón **«Probar»**,
+    porque la web de DonTorrent se cae y se bloquea cada cierto tiempo y sin eso
+    no se distingue «no hay enlaces» de «el addon no responde».
+  - **Peerflix** (MejorTorrent, Wolfmax4k, Popcorntime, Bitsearch): más versiones
+    en español. Se puede apuntar a tu propia URL de `config.peerflix.mov` desde
+    **Ajustes → Buscadores**.
   - **Torrentio** con todos los proveedores (incluidos MejorTorrent, Wolfmax4k y
     Cinecalidad), no solo los de por defecto.
-  Los dos buscan **por IMDb id**, así que en series hay que elegir episodio (no
+  El trozo común del protocolo de addon está en `Addon.kt` (una sola copia de la
+  lectura de `title`/`description`, del `behaviorHints` y del cálculo de tamaño):
+  así un arreglo vale para los tres motores a la vez.
+  Al pasar de episodio automáticamente se **repregunta al mismo motor**: si lo que
+  se está viendo vino de DonTorrent está en castellano, y seguir con Torrentio lo
+  dejaría en inglés a mitad de serie.
+  Los tres buscan **por IMDb id**, así que en series hay que elegir episodio (no
   hay búsqueda de "temporada completa": los packs salen entre los resultados del
   episodio). En **películas** los enlaces se cargan solos al abrir la ficha; en
   **series** la temporada se ve entera y plegada, y los enlaces salen al tocar un
   episodio (volver a tocarlo lo cierra). Antes se desplegaba solo el primer
   episodio sin ver y sus enlaces empujaban el resto de la temporada hacia abajo.
-- 📺 **TV en directo (listas M3U)** — pestaña «En directo». Nació del problema de
-  los dibujos: Peppa Pig y Bluey en castellano **no están** en los índices de
-  Peerflix ni de Torrentio (se probó también por packs y no aparecía nada), pero
-  **Clan de RTVE emite dibujos en castellano 24 h**, gratis y en abierto. Para los
-  niños esto funciona hoy y siempre, sin depender de semillas ni de la caché de RD.
+- 📺 **TV en directo (listas M3U)** — pestaña «En directo», **solo con perfil
+  infantil**. Nació del problema de los dibujos: Peppa Pig y Bluey en castellano
+  no salían en los índices de torrents (se probó también por packs y no aparecía
+  nada), pero **Clan de RTVE emite dibujos en castellano 24 h**, gratis y en
+  abierto, sin depender de semillas ni de la caché de RD.
   - De serie va una lista **integrada solo con canales de RTVE** (Clan, La 1, La 2,
     Teledeporte, 24h), que son de la televisión pública. Se ven **solo desde
     España**: RTVE bloquea por país.
+  - **Atajos a las plataformas FAST** en Ajustes → Canales (Pluto TV España,
+    Samsung TV Plus España): televisión gratuita y legal, y es donde está
+    **Dragon Ball en castellano y sin censura 24 h**, más Dragon Ball Z y Saint
+    Seiya. Esas URL son listas mantenidas por terceros y **no se han podido
+    verificar** al programarlo, así que se puede volver a RTVE de un toque.
+  - Una lista propia **se suma** a los canales de RTVE, no los sustituye (sin
+    repetidos, por nombre). Si los sustituyera, elegir una plataforma FAST dejaría
+    al perfil infantil sin Clan, que es el canal que más se usa.
   - Se puede poner **cualquier lista M3U propia** en Ajustes → Canales. Ahí se
     avisa de que las listas públicas de Internet mezclan emisiones oficiales de
     televisiones públicas con **retransmisiones no autorizadas de canales de
     pago**; por eso la integrada no las trae.
-  - Con **perfil infantil** solo se muestran los canales de dibujos.
+  - Con **perfil infantil** solo se muestran los canales de dibujos. El filtro
+    lleva los nombres de las series concretas (Dragon Ball, Saint Seiya, los
+    clásicos de Pluto TV) y no un «anime» a secas, que arrastraría canales de
+    anime para adultos. Si el filtro se queda corto, un canal válido desaparece
+    **del todo**, porque esta pestaña ya solo existe en el perfil infantil.
   - Hace falta `media3-exoplayer-hls`: HLS va en su propio artefacto y sin él un
     `.m3u8` no se reproduce.
+- 🐷 **Dibujos en YouTube** (`KidsTv.kt`) — dentro de «En directo», solo perfil
+  infantil. Un canal 24/7 emite lo que toca; aquí se **elige serie y capítulo**.
+  Son los canales **oficiales** en español de Bluey, Peppa Pig y Pocoyó: sus
+  dueños publican los episodios completos y doblados, gratis y para siempre. Un
+  canal M3U 24/7 de una sola serie **en castellano no existe** — los hay de Peppa
+  y de Bluey, pero en inglés y para EE. UU. y Reino Unido (se comprobó contra los
+  40.853 canales de la base de datos de iptv-org: de los dedicados a una sola
+  serie infantil, el único con emisión real es Caillou en francés). Se abre la app
+  de YouTube y no se reproduce dentro: meter un stream de YouTube en ExoPlayer no
+  es ni legal ni estable. No se fija el paquete a mano, así que vale igual para el
+  móvil y para Android TV, que usan apps distintas, sin tocar el manifest.
 - 📦 **Packs de temporada** para lo que no existe por capítulos. Las series
   infantiles en castellano (Peppa Pig, Bluey…) casi nunca se publican episodio a
   episodio: van en packs cuyos ficheros internos se llaman `04x12.avi`, que el

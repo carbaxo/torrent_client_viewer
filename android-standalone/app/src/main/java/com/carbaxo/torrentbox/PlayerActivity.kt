@@ -361,11 +361,18 @@ class PlayerActivity : AppCompatActivity() {
                 else { onDone(true); playEpisode(best, s, e) }
             }
         }
-        // Mismo motor que el episodio que se estaba viendo (como Stremio)
-        val onlyPeerflix = srcEngine.contains(Search.ENGINE_PEERFLIX) &&
-            !srcEngine.contains(Search.ENGINE_TORRENTIO)
-        if (onlyPeerflix) Peerflix.streams("series", imdbId, s, e) { l, _ -> handle(l) }
-        else Torrentio.streams("series", imdbId, s, e) { l, _ -> handle(l) }
+        // Mismo motor que el episodio que se estaba viendo (como Stremio). Importa
+        // para el idioma: si lo que se está viendo vino de DonTorrent es que está
+        // en castellano, y continuar con un enlace de Torrentio lo dejaría en
+        // inglés a mitad de serie.
+        val noTorrentio = !srcEngine.contains(Search.ENGINE_TORRENTIO)
+        when {
+            srcEngine.contains(Search.ENGINE_DONTORRENT) && noTorrentio ->
+                DonTorrent.streams("series", imdbId, s, e) { l, _ -> handle(l) }
+            srcEngine.contains(Search.ENGINE_PEERFLIX) && noTorrentio ->
+                Peerflix.streams("series", imdbId, s, e) { l, _ -> handle(l) }
+            else -> Torrentio.streams("series", imdbId, s, e) { l, _ -> handle(l) }
+        }
     }
 
     /** Resuelve el enlace elegido en Real-Debrid y lo pone en marcha. */

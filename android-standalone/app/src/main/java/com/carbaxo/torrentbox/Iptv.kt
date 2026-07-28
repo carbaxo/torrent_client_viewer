@@ -35,10 +35,24 @@ object Iptv {
         val clean: String
             get() = name.replace(Regex("\\s*\\[(?:Geo-blocked|Not 24/7)\\]", RegexOption.IGNORE_CASE), "").trim()
 
-        /** ¿Parece un canal infantil? Sirve para el modo infantil del perfil. */
+        /**
+         * ¿Parece un canal infantil? Es lo que decide qué se ve con perfil
+         * infantil, y ahí se juega en los dos sentidos: si se queda corto,
+         * desaparecen canales que sí valen (y como «En directo» solo existe en el
+         * perfil infantil, desaparecen del todo); si se pasa de ancho, entra
+         * cualquier cosa.
+         *
+         * Por eso van los nombres de las series concretas — Dragon Ball, los
+         * clásicos de Pluto TV — en vez de un «anime» a secas, que arrastraría
+         * canales de anime para adultos.
+         */
         val kids: Boolean
-            get() = Regex("clan|kids|infantil|junior|jr\\b|cartoon|boing|nick|disney|panda|baby|super3|súper3",
-                RegexOption.IGNORE_CASE).containsMatchIn("$name ${group ?: ""}")
+            get() = Regex(
+                "clan|kids|infantil|junior|jr\\b|cartoon|boing|nick|disney|panda|baby|super3|súper3|" +
+                    "toons|dibujo|peppa|bluey|pocoy|reino infantil|dragon ?ball|saint seiya|" +
+                    "caballeros del zodiaco|abeja maya|heidi|doraemon|pok[eé]mon",
+                RegexOption.IGNORE_CASE
+            ).containsMatchIn("$name ${group ?: ""}")
     }
 
     /**
@@ -58,6 +72,33 @@ object Iptv {
         Channel("La 2", "https://ztnr.rtve.es/ztnr/1688885.m3u8", group = "Generalista"),
         Channel("Teledeporte", "https://ztnr.rtve.es/ztnr/1712295.m3u8", group = "Deportes"),
         Channel("Canal 24h", "https://ztnr.rtve.es/ztnr/1694255.m3u8", group = "Noticias")
+    )
+
+    /** Lista M3U que se puede poner de un toque en Ajustes → Canales. */
+    data class Preset(val name: String, val url: String, val note: String)
+
+    /**
+     * Atajos a las plataformas **FAST** españolas: televisión gratuita, legal y
+     * con publicidad, de Paramount (Pluto TV) y Samsung. Sus canales son oficiales
+     * — nada de reemisiones piratas —, y ahí está lo que no hay en los índices de
+     * torrents: Pluto TV España emite **Dragon Ball en castellano y sin censura**
+     * 24 h, más Dragon Ball Z y Saint Seiya, y varios canales de dibujos.
+     *
+     * Las URL son listas mantenidas por terceros que recogen los canales de esas
+     * plataformas; **no se han podido verificar** al programar esto. Por eso se
+     * suman a los canales de RTVE en vez de sustituirlos, y por eso se puede
+     * volver a RTVE de un toque: si una lista deja de funcionar, no se queda el
+     * perfil infantil sin nada.
+     */
+    val PRESETS = listOf(
+        Preset(
+            "Pluto TV España", "https://i.mjh.nz/PlutoTV/es.m3u8",
+            "Dragon Ball y Dragon Ball Z en castellano, Saint Seiya y canales de dibujos."
+        ),
+        Preset(
+            "Samsung TV Plus España", "https://i.mjh.nz/SamsungTVPlus/es.m3u8",
+            "Canales gratis de Samsung, con varios infantiles."
+        )
     )
 
     val list = mutableStateListOf<Channel>()
@@ -103,7 +144,23 @@ object Iptv {
         return out
     }
 
-    /** Carga la lista: la propia del usuario si la hay, y si no la integrada. */
+    /**
+     * Une los canales integrados con los de una lista propia, sin repetidos.
+     *
+     * Se SUMAN en vez de sustituirse a propósito: si poner una lista propia
+     * borrase los canales de RTVE, elegir la de una plataforma FAST dejaría al
+     * perfil infantil sin Clan, que es justo el canal que más se usa. Los
+     * integrados van primero; de un canal repetido se queda el integrado, que es
+     * el oficial de RTVE.
+     */
+    private fun merge(extra: List<Channel>): List<Channel> {
+        val out = ArrayList<Channel>(BUILT_IN)
+        val seen = BUILT_IN.mapTo(HashSet()) { it.clean.lowercase() }
+        for (c in extra) if (seen.add(c.clean.lowercase())) out.add(c)
+        return out
+    }
+
+    /** Carga la lista: los canales integrados más la propia del usuario si la hay. */
     fun load() {
         val url = Prefs.iptvUrl.trim()
         if (url.isBlank()) {
@@ -129,8 +186,9 @@ object Iptv {
                         list.clear(); list.addAll(BUILT_IN)
                         status = "Esa lista no tenía canales reconocibles; se usan los de RTVE."
                     } else {
-                        list.clear(); list.addAll(ch)
-                        status = "${ch.size} canales"
+                        val todos = merge(ch)
+                        list.clear(); list.addAll(todos)
+                        status = "${todos.size} canales (${ch.size} de tu lista + RTVE)"
                     }
                 }
             } catch (e: Throwable) {

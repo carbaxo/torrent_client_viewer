@@ -1,10 +1,8 @@
 package com.carbaxo.torrentbox
 
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 
 /**
  * Addon **Peerflix** de Stremio: el mismo que usa la app de Stremio, así que
@@ -23,64 +21,17 @@ import java.util.concurrent.TimeUnit
 object Peerflix {
     const val DEFAULT_BASE = "https://peerflix.mov"
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).build()
     private val io = Executors.newCachedThreadPool()
-
-    // Los addons marcan las semillas de varias formas; ninguna es obligatoria
-    private val SEEDERS = Regex("(?:👤|seeders?\\s*:?)\\s*(\\d+)", RegexOption.IGNORE_CASE)
 
     /** Base del addon: la de Ajustes si la hay, y si no la pública. */
     private fun base(): String {
         val custom = Prefs.peerflixUrl.trim()
-        val b = if (custom.isNotBlank()) custom else DEFAULT_BASE
-        // Acepta que peguen la URL del manifest o con barra final
-        return b.removeSuffix("/").removeSuffix("/manifest.json").removeSuffix("/")
-    }
-
-    /** Convierte la respuesta del addon en resultados. */
-    private fun parse(body: JSONObject): List<Search.Result> {
-        val arr = body.optJSONArray("streams") ?: return emptyList()
-        val out = ArrayList<Search.Result>()
-        for (i in 0 until arr.length()) {
-            val s = arr.getJSONObject(i)
-            val hash = s.optString("infoHash", "")
-            if (hash.isBlank()) continue
-            val name = s.optString("name", "")   // "Peerflix 🇪🇸 720p"
-            // Este addon manda el detalle en "description", no en "title": leyendo
-            // solo title salían sin nombre de fichero, sin tamaño y con 0 seeders.
-            val detail = Search.pickDetail(s.optString("title", ""), s.optString("description", ""))
-            val bh = s.optJSONObject("behaviorHints")
-            val binge = bh?.optString("bingeGroup", "") ?: ""
-            val combined = "$name\n$detail\n$binge"
-            val filename = Search.pickFilename(bh?.optString("filename", "") ?: "", detail, name)
-            // Algunos addons dan las semillas como número, no en el texto
-            val seeders = s.optInt("seeders", -1).takeIf { it >= 0 }
-                ?: SEEDERS.find(detail)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-            out.add(
-                Search.Result(
-                    name = filename,
-                    infoHash = hash.lowercase(),
-                    seeders = seeders,
-                    sizeBytes = Torrentio.streamSize(s, detail),
-                    magnet = Search.buildMagnet(hash.lowercase(), filename),
-                    lang = Lang.detectFromTitle(combined),
-                    quality = Search.quality(combined),
-                    engine = Search.ENGINE_PEERFLIX,
-                    info = Search.pickInfo(detail, filename)
-                )
-            )
-        }
-        return out
+        return Addon.cleanBase(if (custom.isNotBlank()) custom else DEFAULT_BASE)
     }
 
     /** Pide una URL del addon. Devuelve null si no se pudo (no lanza). */
-    private fun get(url: String): List<Search.Result>? = runCatching {
-        val req = Request.Builder().url(url).header("User-Agent", "VizPlay").build()
-        client.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) null else parse(JSONObject(resp.body?.string() ?: "{}"))
-        }
-    }.getOrNull()
+    private fun get(url: String): List<Search.Result>? =
+        Addon.get(url, Search.ENGINE_PEERFLIX)
 
     /**
      * PACKS de temporada o de serie completa. Ver [Torrentio.packs] para el motivo:
@@ -105,14 +56,14 @@ object Peerflix {
     fun streams(type: String, imdbId: String, season: Int?, episode: Int?, onResult: (List<Search.Result>?, String?) -> Unit) {
         io.submit {
             try {
-                val kind = if (type == "series") "series" else "movie"
-                val id = if (kind == "series" && season != null)
-                    "$imdbId:$season:${episode ?: 1}" else imdbId
-                val url = "${base()}/stream/$kind/$id.json"
+                val url = base() + Addon.streamPath(type, imdbId, season, episode)
                 val req = Request.Builder().url(url).header("User-Agent", "VizPlay").build()
-                client.newCall(req).execute().use { resp ->
+                Addon.client.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@submit onResult(null, "Peerflix respondió ${resp.code}")
-                    onResult(parse(JSONObject(resp.body?.string() ?: "{}")), null)
+                    onResult(
+                        Addon.parseStreams(JSONObject(resp.body?.string() ?: "{}"), Search.ENGINE_PEERFLIX),
+                        null
+                    )
                 }
             } catch (e: Throwable) {
                 onResult(null, e.message ?: "Error de red (Peerflix).")

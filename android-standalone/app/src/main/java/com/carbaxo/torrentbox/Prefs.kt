@@ -37,6 +37,14 @@ object Prefs {
         private set
 
     /**
+     * URL propia del addon DonTorrent. Vacío = la pública
+     * ([DonTorrent.DEFAULT_BASE]). No hace falta configurarlo con Real-Debrid: la
+     * app manda el magnet a RD por su cuenta.
+     */
+    var donTorrentUrl by mutableStateOf("")
+        private set
+
+    /**
      * Token de GitHub (solo lectura) para la auto-actualización. Hace falta
      * porque el repositorio es PRIVADO: sin él, la API de Releases responde 404
      * y la app no puede saber si hay una versión nueva. Se guarda cifrado.
@@ -147,6 +155,7 @@ object Prefs {
         languageOrder.clear(); languageOrder.addAll(order)
         engine = sp.getString("engine", Search.ENGINE_ALL) ?: Search.ENGINE_ALL
         peerflixUrl = sp.getString("peerflixUrl", "") ?: ""
+        donTorrentUrl = sp.getString("donTorrentUrl", "") ?: ""
         githubToken = runCatching { secureStore().getString("ghToken", "") ?: "" }.getOrDefault("")
         downloadOverMobile = sp.getBoolean("dlOverMobile", true)
         downloadTree = sp.getString("dlTree", "") ?: ""
@@ -158,6 +167,11 @@ object Prefs {
     fun savePeerflixUrl(u: String) {
         peerflixUrl = u.trim()
         sp().edit().putString("peerflixUrl", peerflixUrl).apply()
+    }
+
+    fun saveDonTorrentUrl(u: String) {
+        donTorrentUrl = u.trim()
+        sp().edit().putString("donTorrentUrl", donTorrentUrl).apply()
     }
 
     /**
