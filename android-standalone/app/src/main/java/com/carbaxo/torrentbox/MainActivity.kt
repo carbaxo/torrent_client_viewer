@@ -34,7 +34,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -60,13 +64,7 @@ data class Prep(
 )
 
 // Paleta al estilo de la web (morado Stremio)
-// Paleta granate. El acento se usa tanto de relleno de boton (con texto blanco
-// encima) como de texto sobre el fondo oscuro, asi que no puede ser un granate
-// apagado: dejaria de leerse. Los fondos llevan el tinte hacia el rojo.
-private val Accent = Color(0xFFC62B45)
-private val Bg = Color(0xFF0E0A0C)
-private val Surface1 = Color(0xFF1B1317)
-private val Muted = Color(0xFF9C8E92)
+// La paleta, la tipografia y la forma de los botones estan en Theme.kt
 
 // AppCompatActivity: el diálogo "emitir a…" de Chromecast lo exige
 class MainActivity : AppCompatActivity() {
@@ -92,14 +90,15 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Magnets que llegan de fuera: al pulsar uno en el navegador o al
-        // compartir un texto con CaViPlay. Se usa el listener de androidx en
+        // compartir un texto con VizPlay. Se usa el listener de androidx en
         // vez de sobrescribir onNewIntent (la app es singleTop).
         handleIncoming(intent)
         addOnNewIntentListener { handleIncoming(it) }
 
         setContent {
             MaterialTheme(
-                colorScheme = darkColorScheme(primary = Accent, background = Bg, surface = Surface1)
+                colorScheme = vizColorScheme(),
+                typography = vizTypography(Tv.isTv)
             ) {
                 Surface(Modifier.fillMaxSize(), color = Bg) {
                     AppScreen(
@@ -252,15 +251,15 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
                     )
                     Button(
                         onClick = { askPlayer = null; onPlayUrl(url, c) },
-                        modifier = Modifier.fillMaxWidth().tvFocusRing(RoundedCornerShape(20.dp))
+                        modifier = Modifier.fillMaxWidth().tvFocusRing(NfShape)
                     ) { Text("Reproductor de la app") }
                     if (hasVlc) OutlinedButton(
                         onClick = { askPlayer = null; openExternal(url, c, ExternalPlayer.VLC) },
-                        modifier = Modifier.fillMaxWidth().tvFocusRing(RoundedCornerShape(20.dp))
+                        modifier = Modifier.fillMaxWidth().tvFocusRing(NfShape)
                     ) { Text("VLC") }
                     OutlinedButton(
                         onClick = { askPlayer = null; openExternal(url, c) },
-                        modifier = Modifier.fillMaxWidth().tvFocusRing(RoundedCornerShape(20.dp))
+                        modifier = Modifier.fillMaxWidth().tvFocusRing(NfShape)
                     ) { Text("Otra app…") }
                 }
             },
@@ -320,15 +319,17 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
             Modifier.fillMaxWidth().background(Bg).padding(start = 14.dp, end = 6.dp, top = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                Wordmark(MaterialTheme.typography.titleLarge)
                 // En la tele, el título dice también en qué sección estás
-                if (Tv.isTv) "CaViPlay · ${tab.label}" else "CaViPlay",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold, color = Accent, modifier = Modifier.weight(1f)
-            )
+                if (Tv.isTv) Text(
+                    "  ·  ${tab.label}", color = Muted,
+                    style = MaterialTheme.typography.titleMedium
+                )
+            }
             if (CastManager.connected) {
                 Text(
-                    CastManager.deviceName ?: "TV", color = Color(0xFF34D399),
+                    CastManager.deviceName ?: "TV", color = OkGreen,
                     style = MaterialTheme.typography.labelSmall, maxLines = 1,
                     overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 130.dp)
                 )
@@ -348,7 +349,7 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
                     .padding(horizontal = 14.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Filled.Cast, contentDescription = null, tint = Color(0xFF34D399))
+                Icon(Icons.Filled.Cast, contentDescription = null, tint = OkGreen)
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
@@ -401,8 +402,14 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
                                 onClick = { tab = t },
                                 icon = { Icon(t.icon, contentDescription = t.label) },
                                 label = { Text(t.label) },
+                                // Netflix marca la seccion activa en BLANCO y deja
+                                // el rojo para lo importante
                                 colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = Accent, selectedTextColor = Accent, indicatorColor = Surface1
+                                    selectedIconColor = Color.White,
+                                    selectedTextColor = Color.White,
+                                    unselectedIconColor = Color(0xFF808080),
+                                    unselectedTextColor = Color(0xFF808080),
+                                    indicatorColor = Color.Transparent
                                 )
                             )
                         }
@@ -440,10 +447,7 @@ private fun TvNavRail(
             .padding(start = Tv.overscan, end = 10.dp, top = 18.dp, bottom = 18.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Text(
-            "CaViPlay", color = Accent, fontWeight = FontWeight.Bold,
-            style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 18.dp)
-        )
+        Box(Modifier.padding(bottom = 18.dp)) { Wordmark(MaterialTheme.typography.headlineSmall) }
         tabs.forEach { t ->
             val selected = t == current
             Row(
@@ -455,11 +459,11 @@ private fun TvNavRail(
                     .padding(horizontal = 12.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(t.icon, contentDescription = null, tint = if (selected) Accent else Muted)
+                Icon(t.icon, contentDescription = null, tint = if (selected) Color.White else Color(0xFF808080))
                 Spacer(Modifier.width(12.dp))
                 Text(
                     t.label,
-                    color = if (selected) Accent else Color.White,
+                    color = if (selected) Color.White else Color(0xFF808080),
                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                     style = MaterialTheme.typography.bodyLarge
                 )
@@ -497,7 +501,7 @@ private fun TvNavRail(
 private fun ProfileChip(onClick: () -> Unit) {
     val p = Sync.activeProfile ?: return
     Row(
-        Modifier.tvClickable(RoundedCornerShape(20.dp)) { onClick() }
+        Modifier.tvClickable(NfShape) { onClick() }
             .padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -576,6 +580,23 @@ private fun ProfilePicker(onClose: () -> Unit, onManage: () -> Unit) {
         dismissButton = {
             TextButton(onClick = onManage, modifier = Modifier.tvFocusRing()) { Text("Gestionar") }
         }
+    )
+}
+
+/**
+ * El logotipo: VIZ en blanco y PLAY en granate, en la tipografía de titulares y
+ * con la letra apretada. Va en un solo sitio para que la barra superior y la
+ * barra lateral de la tele no puedan quedar distintas.
+ */
+@Composable
+fun Wordmark(style: TextStyle) {
+    Text(
+        buildAnnotatedString {
+            withStyle(SpanStyle(color = Color.White)) { append("VIZ") }
+            withStyle(SpanStyle(color = AccentDeep)) { append("PLAY") }
+        },
+        style = style.copy(fontFamily = WordmarkFont, fontWeight = FontWeight.Black),
+        maxLines = 1
     )
 }
 
@@ -672,13 +693,13 @@ fun CastScreen(onClose: () -> Unit) {
         Text(
             "📺 ${CastManager.deviceName ?: "TV"}" +
                 if (CastManager.playingConverted) "  ·  audio convertido a AAC" else "",
-            style = MaterialTheme.typography.labelMedium, color = Color(0xFF34D399)
+            style = MaterialTheme.typography.labelMedium, color = OkGreen
         )
         if (CastManager.status.isNotBlank()) {
             Text(CastManager.status, style = MaterialTheme.typography.bodySmall, color = Muted)
         }
         if (CastManager.warning.isNotBlank()) {
-            Text(CastManager.warning, style = MaterialTheme.typography.bodySmall, color = Color(0xFFFBBF24))
+            Text(CastManager.warning, style = MaterialTheme.typography.bodySmall, color = WarnAmber)
         }
 
         // Progreso
@@ -696,15 +717,15 @@ fun CastScreen(onClose: () -> Unit) {
         // Controles
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedButton(
-                modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp)),
+                shape = NfShape, modifier = Modifier.tvFocusRing(NfShape),
                 onClick = { cp?.let { p -> runCatching { p.seekTo((p.currentPosition - 10_000).coerceAtLeast(0)) } } }
             ) { Text("⏪ 10s") }
             Button(
-                modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp), focusRequester = playFocus),
+                shape = NfShape, modifier = Modifier.tvFocusRing(NfShape, focusRequester = playFocus),
                 onClick = { cp?.let { p -> runCatching { if (p.isPlaying) p.pause() else p.play() } } }
             ) { Text(if (playing) "⏸ Pausa" else "▶ Reproducir") }
             OutlinedButton(
-                modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp)),
+                shape = NfShape, modifier = Modifier.tvFocusRing(NfShape),
                 onClick = { cp?.let { p -> runCatching { p.seekTo(p.currentPosition + 10_000) } } }
             ) { Text("10s ⏩") }
         }
@@ -718,11 +739,11 @@ fun CastScreen(onClose: () -> Unit) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(
                 onClick = { CastManager.stop(); onClose() },
-                modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
             ) { Text("⏹ Parar") }
             OutlinedButton(
                 onClick = { CastManager.disconnect(); onClose() },
-                modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
             ) { Text("Desconectar TV") }
         }
     }
@@ -731,14 +752,13 @@ fun CastScreen(onClose: () -> Unit) {
 @Composable
 fun PosterCard(t: Tmdb.Title, width: Int = if (Tv.isTv) 165 else 120, onClick: () -> Unit) {
     val watched = WatchStore.isWatchedTitle(t.type, t.tmdbId)
-    Column(Modifier.width(width.dp).tvClickable(RoundedCornerShape(12.dp), onClick = onClick)) {
+    Column(Modifier.width(width.dp).tvClickable(NfShape, onClick = onClick)) {
         Box {
             AsyncImage(
                 model = t.poster,
                 contentDescription = t.title,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f)
-                    .clip(RoundedCornerShape(10.dp))
+                modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(NfShape)
             )
             if (watched) Text(
                 "✓ Visto",
@@ -761,13 +781,13 @@ fun ContinueCard(p: WatchStore.Prog, onClick: () -> Unit) {
     val pct = if (p.duration > 0) (p.position / p.duration).coerceIn(0.0, 1.0).toFloat() else 0f
     Column(
         Modifier.width(if (Tv.isTv) 165.dp else 120.dp)
-            .tvClickable(RoundedCornerShape(12.dp), onClick = onClick)
+            .tvClickable(NfShape, onClick = onClick)
     ) {
         AsyncImage(
             model = p.poster, contentDescription = p.name, contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(10.dp))
+            modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(NfShape)
         )
-        LinearProgressIndicator(progress = { pct }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
+        LinearProgressIndicator(progress = { pct }, color = Accent, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
         Text(p.name, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
         val ep = if (p.season != null && p.episode != null) "T${p.season} · E${p.episode}" else ""
         if (ep.isNotBlank()) Text(ep, style = MaterialTheme.typography.labelSmall, color = Muted)
@@ -843,10 +863,10 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, kids: Boolean = false
                     if (Sync.email == null) {
                         OutlinedButton(
                             onClick = { Sync.signInIntent()?.let { launcher.launch(it) } },
-                            modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                            shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
                         ) { Text("Entrar con Google") }
                     } else {
-                        TextButton(onClick = { Sync.signOut() }, modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))) { Text("👤 Salir") }
+                        TextButton(onClick = { Sync.signOut() }, shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)) { Text("👤 Salir") }
                     }
                 }
             }
@@ -1046,7 +1066,7 @@ fun SearchScreen(onOpen: (Tmdb.Title) -> Unit) {
                         modifier = Modifier.tvFocusRing(RoundedCornerShape(8.dp))
                     ) { Text("Series") }
                 }
-                Button(onClick = { go() }, modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))) { Text("Buscar") }
+                Button(onClick = { go() }, shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)) { Text("Buscar") }
             }
             if (status.isNotBlank()) { Spacer(Modifier.height(10.dp)); Text(status, color = Muted, style = MaterialTheme.typography.bodySmall) }
             Spacer(Modifier.height(10.dp))
@@ -1132,12 +1152,12 @@ fun SettingsScreen() {
                         Button(
                             onClick = { authBusy = true; authMsg = "Entrando…"; Sync.signInEmail(mail, pass, done) },
                             enabled = !authBusy,
-                            modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                            shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
                         ) { Text("Entrar") }
                         OutlinedButton(
                             onClick = { authBusy = true; authMsg = "Creando la cuenta…"; Sync.signUpEmail(mail, pass, done) },
                             enabled = !authBusy,
-                            modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                            shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
                         ) { Text("Crear cuenta") }
                         TextButton(
                             onClick = {
@@ -1147,17 +1167,17 @@ fun SettingsScreen() {
                                 }
                             },
                             enabled = !authBusy,
-                            modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                            shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
                         ) { Text("Olvidé la contraseña") }
                     }
                     if (authMsg.isNotBlank()) Text(
-                        authMsg, color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
+                        authMsg, color = WarnAmber, style = MaterialTheme.typography.labelSmall
                     )
                     if (Sync.googleEnabled) {
                         HorizontalDivider(color = Color(0x22FFFFFF), modifier = Modifier.padding(vertical = 4.dp))
                         Button(
                             onClick = { Sync.signInIntent()?.let { launcher.launch(it) } },
-                            modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                            shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
                         ) { Text("Entrar con Google") }
                         Text(
                             "Las dos formas valen; si ya entrabas con Google, sigue usando ese botón " +
@@ -1270,7 +1290,7 @@ fun SettingsScreen() {
                     LaunchedEffect(RealDebrid.token) {
                         if (RealDebrid.info == null) RealDebrid.refreshInfo()
                     }
-                    Text("⚡ Conectado${RealDebrid.account?.let { " · $it" } ?: ""}", color = Color(0xFF34D399), style = MaterialTheme.typography.bodyMedium)
+                    Text("⚡ Conectado${RealDebrid.account?.let { " · $it" } ?: ""}", color = OkGreen, style = MaterialTheme.typography.bodyMedium)
                     RdAccountInfo()
                     Text(
                         if (Sync.email != null)
@@ -1289,10 +1309,10 @@ fun SettingsScreen() {
                             // bajar y parecería que no se ha desconectado.
                             if (Sync.email != null) Sync.clearAccountRdToken()
                         },
-                        modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
                     ) { Text("Desconectar") }
                 } else {
-                    Text("⚠️ Real-Debrid es imprescindible: la app no descarga por BitTorrent, todo el vídeo llega por streaming directo desde los servidores de RD. Pega tu token para empezar. Se comparte con tu cuenta si has entrado con Google.", color = Color(0xFFFBBF24), style = MaterialTheme.typography.bodySmall)
+                    Text("⚠️ Real-Debrid es imprescindible: la app no descarga por BitTorrent, todo el vídeo llega por streaming directo desde los servidores de RD. Pega tu token para empezar. Se comparte con tu cuenta si has entrado con Google.", color = WarnAmber, style = MaterialTheme.typography.bodySmall)
                     OutlinedTextField(value = rdInput, onValueChange = { rdInput = it }, label = { Text("Token de Real-Debrid") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Button(onClick = {
                         rdStatus = "Validando…"
@@ -1309,7 +1329,7 @@ fun SettingsScreen() {
                                 } else (msg ?: "Error")
                             }
                         }
-                    }, enabled = rdInput.isNotBlank(), modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))) { Text("Conectar") }
+                    }, enabled = rdInput.isNotBlank(), shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)) { Text("Conectar") }
                     Text("Consíguelo en real-debrid.com/apitoken", color = Muted, style = MaterialTheme.typography.labelSmall)
                 }
                 if (rdStatus.isNotBlank()) Text(rdStatus, color = Muted, style = MaterialTheme.typography.bodySmall)
@@ -1340,11 +1360,11 @@ fun SettingsScreen() {
                 if (Prefs.playerMode == Prefs.PLAYER_VLC && !hasVlc) {
                     Text(
                         "⚠️ VLC no está instalado en este dispositivo, así que no se puede usar.",
-                        color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
+                        color = WarnAmber, style = MaterialTheme.typography.labelSmall
                     )
                     OutlinedButton(
                         onClick = { ExternalPlayer.installVlc(ctx) },
-                        modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
                     ) { Text("Instalar VLC") }
                 }
                 Text(
@@ -1368,7 +1388,7 @@ fun SettingsScreen() {
                     Switch(
                         checked = Prefs.castWithVlc,
                         onCheckedChange = { Prefs.saveCastWithVlc(it) },
-                        modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                        modifier = Modifier.tvFocusRing(NfShape)
                     )
                 }
                 Text(
@@ -1405,8 +1425,8 @@ fun SettingsScreen() {
                     Text(
                         "⚠️ El «Ahorro de datos» de Android está activo y bloquea las descargas " +
                             "con datos móviles aunque la app las permita. Desactívalo, o excluye " +
-                            "CaViPlay en Ajustes de Android → Red → Ahorro de datos → Datos sin restricción.",
-                        color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
+                            "VizPlay en Ajustes de Android → Red → Ahorro de datos → Datos sin restricción.",
+                        color = WarnAmber, style = MaterialTheme.typography.labelSmall
                     )
                 }
                 Text(
@@ -1435,7 +1455,7 @@ fun SettingsScreen() {
                     else folderMsg = "Android no dio permiso permanente sobre esa carpeta. Prueba con otra."
                 }
                 Text("Carpeta de descargas", style = MaterialTheme.typography.bodyMedium)
-                Text(Downloads.folderLabel(), color = Color(0xFF34D399), style = MaterialTheme.typography.labelSmall)
+                Text(Downloads.folderLabel(), color = OkGreen, style = MaterialTheme.typography.labelSmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = {
@@ -1446,15 +1466,15 @@ fun SettingsScreen() {
                                     "(pasa en algunas teles). Se seguirá usando la carpeta de la app."
                             }
                         },
-                        modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
                     ) { Text("Elegir carpeta…") }
                     if (Prefs.downloadTree.isNotBlank()) OutlinedButton(
                         onClick = { Prefs.saveDownloadTree(""); folderMsg = "" },
-                        modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
                     ) { Text("Usar la de la app") }
                 }
                 if (folderMsg.isNotBlank()) Text(
-                    folderMsg, color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
+                    folderMsg, color = WarnAmber, style = MaterialTheme.typography.labelSmall
                 )
                 Text(
                     if (Downloads.usingAppFolder)
@@ -1510,7 +1530,7 @@ fun SettingsScreen() {
                     style = MaterialTheme.typography.bodySmall, color = Muted)
                 val up = Update.available
                 if (up != null) {
-                    Text("⬆️ Hay una versión nueva: build ${up.build}", color = Color(0xFF34D399), fontWeight = FontWeight.Bold)
+                    Text("⬆️ Hay una versión nueva: build ${up.build}", color = OkGreen, fontWeight = FontWeight.Bold)
                     Button(onClick = { Update.downloadAndInstall(ctx) }) { Text("Descargar e instalar") }
                 } else {
                     // Solo se puede afirmar que está al día si la consulta salió bien
@@ -1525,7 +1545,7 @@ fun SettingsScreen() {
                     OutlinedButton(onClick = { Update.check() }) { Text("Buscar actualización") }
                 }
                 if (Update.status.isNotBlank()) Text(
-                    Update.status, color = Color(0xFFFBBF24), style = MaterialTheme.typography.bodySmall
+                    Update.status, color = WarnAmber, style = MaterialTheme.typography.bodySmall
                 )
 
                 // Token de GitHub: el repositorio es privado y sin él la API de
@@ -1607,9 +1627,9 @@ fun DownloadsScreen(onPlayUrl: (String) -> Unit) {
             if (active.isNotEmpty() && RdDownloads.dataSaverBlocks(ctx)) {
                 Text(
                     "⚠️ El «Ahorro de datos» de Android puede tener parada la descarga con " +
-                        "datos móviles. Excluye CaViPlay en Ajustes de Android → Red → " +
+                        "datos móviles. Excluye VizPlay en Ajustes de Android → Red → " +
                         "Ahorro de datos, o conéctate a WiFi.",
-                    color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
+                    color = WarnAmber, style = MaterialTheme.typography.labelSmall
                 )
             }
             if (all.isEmpty()) {
@@ -1650,7 +1670,7 @@ fun DownloadsScreen(onPlayUrl: (String) -> Unit) {
             item {
                 Text(
                     "▶ Listas para ver", style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold, color = Color(0xFF34D399),
+                    fontWeight = FontWeight.Bold, color = OkGreen,
                     modifier = Modifier.padding(top = 14.dp, bottom = 4.dp)
                 )
             }
@@ -1689,9 +1709,9 @@ private fun DownloadCard(
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(d.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
 
-            if (d.done) LinearProgressIndicator(progress = { 1f }, modifier = Modifier.fillMaxWidth())
-            else if (d.known) LinearProgressIndicator(progress = { d.pct }, modifier = Modifier.fillMaxWidth())
-            else if (d.running) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            if (d.done) LinearProgressIndicator(progress = { 1f }, color = Accent, modifier = Modifier.fillMaxWidth())
+            else if (d.known) LinearProgressIndicator(progress = { d.pct }, color = Accent, modifier = Modifier.fillMaxWidth())
+            else if (d.running) LinearProgressIndicator(color = Accent, modifier = Modifier.fillMaxWidth())
 
             Text(
                 when {
@@ -1706,37 +1726,37 @@ private fun DownloadCard(
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = when {
-                    d.done -> Color(0xFF34D399)
-                    d.failed -> Color(0xFFFBBF24)
+                    d.done -> OkGreen
+                    d.failed -> WarnAmber
                     else -> Muted
                 }
             )
             // Un mensaje informativo mientras corre (p. ej. renovando el enlace)
             if (!d.failed && !d.done && d.error.isNotBlank()) Text(
-                d.error, style = MaterialTheme.typography.labelSmall, color = Color(0xFFFBBF24)
+                d.error, style = MaterialTheme.typography.labelSmall, color = WarnAmber
             )
 
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (d.done) Button(
                     onClick = onPlay,
-                    modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                    shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
                 ) { Text("▶ Ver") }
                 if (d.running || d.state == Downloads.QUEUED) OutlinedButton(
                     onClick = onPause,
-                    modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                    shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
                 ) { Text("⏸ Pausar") }
                 if (d.paused || d.failed) Button(
                     onClick = onResume,
-                    modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                    shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
                 ) { Text("▶ Continuar") }
                 // Un fichero a medias se puede ir viendo: el reproductor aguanta
                 if (!d.done && d.bytes > 0) OutlinedButton(
                     onClick = onPlay,
-                    modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                    shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
                 ) { Text("Ver lo bajado") }
                 OutlinedButton(
                     onClick = onRemove,
-                    modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                    shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
                 ) { Text("Borrar") }
             }
         }
@@ -1760,7 +1780,7 @@ private fun RdAccountInfo() {
             Text(
                 if (RealDebrid.infoLoading) "Leyendo la cuenta…"
                 else RealDebrid.infoError.ifBlank { "" },
-                color = if (RealDebrid.infoError.isNotBlank()) Color(0xFFFBBF24) else Muted,
+                color = if (RealDebrid.infoError.isNotBlank()) WarnAmber else Muted,
                 style = MaterialTheme.typography.labelSmall
             )
         } else {
@@ -1768,41 +1788,41 @@ private fun RdAccountInfo() {
                 Text(
                     "⏳ Premium: quedan ${a.days} días" +
                         (if (a.expiration.isNotBlank()) "  ·  hasta el ${a.expiresPretty}" else ""),
-                    color = if (a.days <= 7) Color(0xFFFBBF24) else Muted,
+                    color = if (a.days <= 7) WarnAmber else Muted,
                     style = MaterialTheme.typography.labelSmall
                 )
             } else {
                 Text(
                     "⚠️ Esta cuenta NO es premium: Real-Debrid no dará enlaces.",
-                    color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
+                    color = WarnAmber, style = MaterialTheme.typography.labelSmall
                 )
             }
             Text("🎟 Puntos de fidelidad: ${a.points}", color = Muted, style = MaterialTheme.typography.labelSmall)
             if (a.slotsKnown) {
                 Text(
                     "📥 Torrents activos: ${a.slotsUsed} / ${a.slotsLimit}",
-                    color = if (a.slotsFull) Color(0xFFFBBF24) else Muted,
+                    color = if (a.slotsFull) WarnAmber else Muted,
                     style = MaterialTheme.typography.labelSmall
                 )
                 LinearProgressIndicator(
-                    progress = { (a.slotsUsed.toFloat() / a.slotsLimit).coerceIn(0f, 1f) },
+                    progress = { (a.slotsUsed.toFloat() / a.slotsLimit).coerceIn(0f, 1f) }, color = Accent,
                     modifier = Modifier.fillMaxWidth().height(3.dp)
                 )
                 if (a.slotsFull) Text(
                     "Sin huecos libres: hasta que acaben o borres alguno, Real-Debrid " +
                         "rechazará los magnets nuevos. Se quitan en Descargas → En tu Real-Debrid.",
-                    color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
+                    color = WarnAmber, style = MaterialTheme.typography.labelSmall
                 )
             }
             if (RealDebrid.infoError.isNotBlank()) Text(
-                RealDebrid.infoError, color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
+                RealDebrid.infoError, color = WarnAmber, style = MaterialTheme.typography.labelSmall
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(
                 onClick = { RealDebrid.refreshInfo() },
                 enabled = !RealDebrid.infoLoading,
-                modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
             ) { Text("Actualizar datos") }
             if (RealDebrid.infoLoading) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
         }
@@ -1938,7 +1958,7 @@ private fun RdCloudSection(onPlayUrl: (String) -> Unit) {
             if (!RealDebrid.configured) {
                 Text(
                     "Conecta Real-Debrid en Ajustes para poder añadir magnets.",
-                    color = Color(0xFFFBBF24), style = MaterialTheme.typography.bodySmall
+                    color = WarnAmber, style = MaterialTheme.typography.bodySmall
                 )
             } else {
                 Text(
@@ -1957,11 +1977,11 @@ private fun RdCloudSection(onPlayUrl: (String) -> Unit) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Button(
                         onClick = { add() }, enabled = input.isNotBlank() && !busy,
-                        modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
                     ) {
                         Text("Añadir a Real-Debrid")
                     }
-                    OutlinedButton(modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp)), onClick = {
+                    OutlinedButton(shape = NfShape, modifier = Modifier.tvFocusRing(NfShape), onClick = {
                         val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
                             as? android.content.ClipboardManager
                         val t = cm?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString()
@@ -1994,11 +2014,11 @@ private fun RdCloudSection(onPlayUrl: (String) -> Unit) {
                     if (a.slotsKnown) Text(
                         "Huecos de torrent: ${a.slotsUsed} / ${a.slotsLimit}" +
                             if (a.slotsFull) " — sin huecos: borra alguno para poder añadir" else "",
-                        color = if (a.slotsFull) Color(0xFFFBBF24) else Muted,
+                        color = if (a.slotsFull) WarnAmber else Muted,
                         style = MaterialTheme.typography.labelSmall
                     )
                 }
-                if (listErr.isNotBlank()) Text(listErr, color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall)
+                if (listErr.isNotBlank()) Text(listErr, color = WarnAmber, style = MaterialTheme.typography.labelSmall)
                 if (expanded) {
                     if (list.isEmpty() && listErr.isBlank()) {
                         Text("No hay nada en la cuenta.", color = Muted, style = MaterialTheme.typography.labelSmall)
@@ -2064,7 +2084,7 @@ private fun RdCloudRow(
         Text(
             detail,
             style = MaterialTheme.typography.labelSmall,
-            color = if (t.ready) Color(0xFF34D399) else if (t.working) Muted else Color(0xFFFBBF24)
+            color = if (t.ready) OkGreen else if (t.working) Muted else WarnAmber
         )
         if (t.working && t.progress in 1..99) {
             LinearProgressIndicator(
@@ -2074,11 +2094,11 @@ private fun RdCloudRow(
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             if (t.ready) {
-                TextButton(onClick = onPlay, modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))) { Text("▶ Ver") }
-                TextButton(onClick = onDownload, modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))) { Text("⬇ Descargar") }
+                TextButton(onClick = onPlay, shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)) { Text("▶ Ver") }
+                TextButton(onClick = onDownload, shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)) { Text("⬇ Descargar") }
             }
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = onDelete, modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))) {
+            IconButton(onClick = onDelete, modifier = Modifier.tvFocusRing(NfShape)) {
                 Icon(Icons.Filled.Delete, "Quitar de Real-Debrid", tint = Muted)
             }
         }
@@ -2232,7 +2252,7 @@ fun SourcesSection(
         if (sources.isNotEmpty() && shown.isEmpty()) Text(
             if (byEngine.isEmpty()) "Sin enlaces de este motor para este título; prueba \"Todos\"."
             else "Ningún enlace con esa calidad; prueba \"Todas\".",
-            color = Color(0xFFFBBF24), style = MaterialTheme.typography.bodySmall
+            color = WarnAmber, style = MaterialTheme.typography.bodySmall
         )
         if (sources.isNotEmpty()) {
             Row(
@@ -2257,7 +2277,7 @@ fun SourcesSection(
                     // Ya está en la cuenta: no hay que esperar a que RD lo baje
                     if (r.infoHash in cached) Text(
                         "⚡ Ya en tu Real-Debrid · se reproduce al instante",
-                        color = Color(0xFF34D399), style = MaterialTheme.typography.labelSmall,
+                        color = OkGreen, style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold
                     )
                     Text(r.name, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -2297,7 +2317,7 @@ fun SourcesSection(
                                         prepare(r, download = false)
                                     }
                                 },
-                                modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                                shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
                             ) {
                                 Text(
                                     when {
@@ -2309,13 +2329,13 @@ fun SourcesSection(
                             }
                             OutlinedButton(
                                 onClick = { prepare(r, download = true) },
-                                modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+                                shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
                             ) { Text("⬇ Descargar") }
                         }
                     } else {
                         Text(
                             "Conecta Real-Debrid en Ajustes para ver o descargar.",
-                            color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
+                            color = WarnAmber, style = MaterialTheme.typography.labelSmall
                         )
                     }
                 }
@@ -2337,7 +2357,7 @@ fun SourcesSection(
                     }
                     Text(
                         p.error ?: p.msg,
-                        color = if (p.error != null) Color(0xFFFBBF24) else MaterialTheme.colorScheme.onSurface
+                        color = if (p.error != null) WarnAmber else MaterialTheme.colorScheme.onSurface
                     )
                 }
             },
@@ -2545,7 +2565,7 @@ fun DetailScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF87171)),
                     onClick = { openTrailer(k) },
                     modifier = (if (stacked) Modifier.fillMaxWidth() else Modifier)
-                        .tvFocusRing(RoundedCornerShape(20.dp))
+                        .tvFocusRing(NfShape)
                 ) { Text("🎬 Tráiler") }
             }
         }
@@ -2555,7 +2575,7 @@ fun DetailScreen(
                 OutlinedButton(
                     onClick = { Sync.toggleFavorite(title) },
                     modifier = (if (stacked) Modifier.fillMaxWidth() else Modifier)
-                        .tvFocusRing(RoundedCornerShape(20.dp))
+                        .tvFocusRing(NfShape)
                 ) {
                     Text(if (Sync.isFav(fid)) "❤ En Mi lista" else "🤍 Añadir a Mi lista")
                 }
@@ -2609,7 +2629,7 @@ fun DetailScreen(
                             Text(
                                 (if (seen) "✓ " else "") + "${ep.episode}. ${ep.name}" + (if (open) "  ▾" else "  ▸"),
                                 style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                color = if (seen) Color(0xFF34D399) else MaterialTheme.colorScheme.onSurface
+                                color = if (seen) OkGreen else MaterialTheme.colorScheme.onSurface
                             )
                             if (ep.overview.isNotBlank()) Text(ep.overview, style = MaterialTheme.typography.labelSmall, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }

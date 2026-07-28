@@ -47,7 +47,7 @@ jobs:
       # acepta cualquier .apk, asi que en cuanto todo este en 75+ se puede quitar.
       - name: Rename APK
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk CaViPlay.apk
+          cp app/build/outputs/apk/debug/app-debug.apk VizPlay.apk
           cp app/build/outputs/apk/debug/app-debug.apk TorrentBox.apk
 
       # El artefacto es solo una comodidad: si la cuenta se queda sin cuota de
@@ -57,8 +57,8 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: CaViPlay-apk
-          path: android-standalone/CaViPlay.apk
+          name: VizPlay-apk
+          path: android-standalone/VizPlay.apk
           retention-days: 7
 
       # Borra el release/tag anterior para que la FECHA en GitHub se refresque
@@ -75,14 +75,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: android-latest
-          name: CaViPlay (Android APK)
+          name: VizPlay (Android APK)
           make_latest: true
           body: |
-            APK de CaViPlay: streaming y descargas vía Real-Debrid, en el móvil y en la Android TV.
+            APK de VizPlay: streaming y descargas vía Real-Debrid, en el móvil y en la Android TV.
             Requiere una cuenta de Real-Debrid (se configura en Ajustes).
-            Descarga `CaViPlay.apk`, actívalo en Ajustes → "Instalar apps desconocidas" e instálalo.
+            Descarga `VizPlay.apk`, actívalo en Ajustes → "Instalar apps desconocidas" e instálalo.
             (`TorrentBox.apk` es el mismo fichero, para que se actualicen las versiones antiguas.)
             Build ${{ github.run_number }} — commit ${{ github.sha }}
           files: |
-            android-standalone/CaViPlay.apk
+            android-standalone/VizPlay.apk
             android-standalone/TorrentBox.apk

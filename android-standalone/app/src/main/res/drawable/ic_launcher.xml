@@ -12,13 +12,13 @@
             <gradient android:type="linear"
                 android:startX="0" android:startY="0"
                 android:endX="108" android:endY="108"
-                android:startColor="#D93650" android:endColor="#5A0A18" />
+                android:startColor="#2B1116" android:endColor="#0A0507" />
         </aapt:attr>
     </path>
     <path
         android:fillColor="#FFFFFF"
         android:pathData="M30,34 L54,76 L54,53.25 L43,34 Z" />
     <path
-        android:fillColor="#F2A7B3"
+        android:fillColor="#E50914"
         android:pathData="M78,34 L54,76 L54,53.25 L65,34 Z" />
 </vector>

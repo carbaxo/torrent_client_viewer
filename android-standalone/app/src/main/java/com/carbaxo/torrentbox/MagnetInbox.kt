@@ -7,7 +7,7 @@ import androidx.compose.runtime.setValue
 /**
  * Buzón de magnets y enlaces que llegan de FUERA de la app: al pulsar un magnet
  * en el navegador (intent VIEW con esquema `magnet`) o al compartir un texto con
- * CaViPlay (ACTION_SEND). También lo usa la propia app para pasar el magnet de
+ * VizPlay (ACTION_SEND). También lo usa la propia app para pasar el magnet de
  * un enlace que falló a la pantalla de Descargas.
  *
  * La pestaña Descargas lo recoge, rellena el campo de "Añadir a Real-Debrid" y

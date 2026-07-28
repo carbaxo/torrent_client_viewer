@@ -150,7 +150,7 @@ object Update {
         io.submit {
             try {
                 val dir = File(app.filesDir, "apk").apply { mkdirs() }
-                val f = File(dir, "CaViPlay.apk")
+                val f = File(dir, "VizPlay.apk")
                 openAsset(info).use { resp ->
                     if (!resp.isSuccessful) throw RuntimeException("HTTP ${resp.code}")
                     val body = resp.body ?: throw RuntimeException("Respuesta vacía")

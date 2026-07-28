@@ -12,10 +12,12 @@ RES = str(pathlib.Path(__file__).resolve().parent.parent / "app" / "src" / "main
 
 # Granate, a juego con el acento de la app (#C62B45). El degradado va de un
 # granate vivo a uno muy oscuro: da profundidad sin ensuciar el blanco de la V.
-GRANATE_CLARO = "#D93650"
-GRANATE_OSCURO = "#5A0A18"
+# Paleta al estilo Netflix: fondo casi negro y el rojo reservado para la marca.
+FONDO_CLARO = "#2B1116"     # casi negro con un punto de granate
+FONDO_OSCURO = "#0A0507"
 BLANCO = "#FFFFFF"
-ROSA = "#F2A7B3"            # segundo tono de la V, sacado del mismo granate
+ROJO = "#E50914"            # el rojo vivo: es lo que hace que la V se vea
+GRANATE = "#C41E3A"         # el "PLAY" del logotipo
 
 def poly(points):
     """Poligono cerrado -> pathData."""
@@ -110,7 +112,7 @@ def wordmark(text, x, y, cap, gap):
         cur += w + gap
     return out, cur - gap - x
 
-def gradient(x1, y1, x2, y2, c1=GRANATE_CLARO, c2=GRANATE_OSCURO):
+def gradient(x1, y1, x2, y2, c1=FONDO_CLARO, c2=FONDO_OSCURO):
     return f'''        <aapt:attr name="android:fillColor">
             <gradient android:type="linear"
                 android:startX="{fmt(x1)}" android:startY="{fmt(y1)}"
@@ -152,7 +154,7 @@ open(f"{RES}/drawable/ic_launcher_background.xml", "w").write(
 #     centrado en 54,54; todo lo dibujado queda dentro)
 # =====================================================================
 izq, der = v_mark(cx=54, top=34, height=42, width=48, thick=13)
-fg = path(izq, BLANCO) + "\n" + path(der, ROSA)
+fg = path(izq, BLANCO) + "\n" + path(der, ROJO)
 open(f"{RES}/drawable/ic_launcher_foreground.xml", "w").write(
     vector(108, 108, 108, 108, fg))
 
@@ -165,7 +167,7 @@ open(f"{RES}/drawable/ic_launcher_mono.xml", "w").write(
 #  3) Icono heredado (API 24-25, sin iconos adaptativos): fondo + V juntos
 # =====================================================================
 legacy = path(rect(0, 0, 108, 108), grad=gradient(0, 0, 108, 108)) + "\n" \
-    + path(izq, BLANCO) + "\n" + path(der, ROSA)
+    + path(izq, BLANCO) + "\n" + path(der, ROJO)
 open(f"{RES}/drawable/ic_launcher.xml", "w").write(
     vector(108, 108, 108, 108, legacy, aapt=True))
 
@@ -183,7 +185,8 @@ my = (BH - mh) / 2.0
 # El tamano de las letras se DESPEJA del hueco disponible, en vez de fijarlo a
 # ojo, y despues el conjunto (marca + logotipo) se CENTRA: si no, al cambiar el
 # numero de letras el bloque queda descolocado o se sale del banner.
-TEXTO = "CAVIPLAY"
+TEXTO = "VIZPLAY"
+CORTE = 3          # VIZ | PLAY: las tres primeras en blanco
 def ancho_texto(cap):
     return cap * (len(TEXTO) * 0.65 + (len(TEXTO) - 1) * 0.22)
 
@@ -201,9 +204,16 @@ letras, ancho = wordmark(TEXTO, x=wx, y=wy, cap=cap, gap=cap * 0.22)
 
 cuerpo = [path(rect(0, 0, BW, BH), grad=gradient(0, 0, BW, BH))]
 cuerpo.append(path(bizq, BLANCO))
-cuerpo.append(path(bder, ROSA))
-for d in letras:
-    cuerpo.append(path(d, BLANCO))
+cuerpo.append(path(bder, ROJO))
+# Cada letra se pinta segun a que mitad del logotipo pertenece. Hay que saber
+# cuantos trazos ocupa cada glifo, porque una A son tres y una I uno solo.
+i = 0
+for k, ch in enumerate(TEXTO):
+    trazos = len(glyph(ch, 0, 0, 10, 10, 2))
+    color = BLANCO if k < CORTE else GRANATE
+    for d in letras[i:i + trazos]:
+        cuerpo.append(path(d, color))
+    i += trazos
 open(f"{RES}/drawable/tv_banner.xml", "w").write(
     vector(320, 180, BW, BH, "\n".join(cuerpo), aapt=True))
 

@@ -1,4 +1,4 @@
-# 📱 CaViPlay — app Android (modo Real-Debrid)
+# 📱 VizPlay — app Android (modo Real-Debrid)
 
 App Android **nativa e independiente** para buscar películas y series y verlas
 por **streaming directo desde Real-Debrid**, sin depender de ningún PC ni
@@ -9,6 +9,20 @@ servidor propio. Funciona en **móvil y en Android TV**.
 > magnet es entregárselo a Real-Debrid, que lo resuelve en sus servidores y
 > devuelve una URL HTTPS normal. Sin token de RD configurado no se puede ver ni
 > descargar nada.
+
+## Aspecto
+
+Interfaz al estilo de la app de **Netflix**: fondo casi negro (`#141414`), texto
+blanco con gris claro (`#B3B3B3`) para lo secundario, **rojo `#E50914` reservado**
+para lo que debe llamar la atención, **botones rectos** (4 dp) con el principal
+**blanco y texto negro**, títulos **gruesos y con la letra apretada**, carátulas
+casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo es
+**VIZ** en blanco + **PLAY** en granate (`#C41E3A`).
+
+> La tipografía de Netflix ("Netflix Sans") es **privativa** y no se puede
+> licenciar, así que va **Inter** empaquetada en el APK (+2,4 MB): mismo carácter
+> geométrico y mejor legibilidad a tamaño pequeño. En la tele toda la escala
+> tipográfica crece un 15 %, porque lo que se lee a 30 cm no se lee a 3 m.
 
 ## Funciones
 
@@ -48,7 +62,7 @@ servidor propio. Funciona en **móvil y en Android TV**.
   con su %, listo, sin semillas…) y botones Ver / Descargar / quitar. Es la
   salida a los dos fallos que no dependen de la app: que RD **aún no tenga el
   torrent cacheado** o que **el archivo se haya borrado** de su caché. También
-  se puede pulsar un magnet **en el navegador** o **compartirlo** con CaViPlay,
+  se puede pulsar un magnet **en el navegador** o **compartirlo** con VizPlay,
   y cuando un enlace de la ficha falla, el propio aviso ofrece
   **«Añadirlo a Real-Debrid»**. Un enlace de hoster (1fichier, Mega…) se
   desbloquea y se descarga igual que en el "Descargador" de la web de RD.
@@ -240,7 +254,7 @@ No necesitas compilar nada: **GitHub Actions lo compila y lo publica**.
 1. En el repo, pestaña **Actions → "Build Android APK" → Run workflow** (o se
    lanza solo al hacer push a `android-standalone/`).
 2. Cuando termine (verde), descarga el APK desde:
-   - la **Release** `android-latest` (`CaViPlay.apk`), o
+   - la **Release** `android-latest` (`VizPlay.apk`), o
    - los **Artifacts** de la ejecución del workflow.
 3. En el móvil o la TV: abre el APK, permite **"Instalar apps desconocidas"** e
    instálalo.
