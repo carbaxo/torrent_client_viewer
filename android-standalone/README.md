@@ -24,6 +24,12 @@ servidor propio. Funciona en **móvil y en Android TV**.
   atados a tu IP y expiran—, **se pide otro con el magnet guardado** y sigue
   desde donde iba. Eso es lo que antes se veía como "se para a mitad": lo hacía
   el DownloadManager de Android, que no sabe pausar ni renovar un enlace muerto.
+- 📊 **Estado de tu cuenta de Real-Debrid** (Ajustes → Real-Debrid): días de
+  premium que quedan y fecha de caducidad, puntos de fidelidad y **huecos de
+  torrent usados/total**, leídos de la propia API (`/user` y
+  `/torrents/activeCount`). Los huecos salen también en Descargas, que es donde
+  se liberan: al llenarse, Real-Debrid rechaza los magnets nuevos, y ese es el
+  fallo más desconcertante de todos porque no parece tener motivo.
 - 📂 **Carpeta de descargas elegible** (Ajustes → Descargas): por defecto van a la
   carpeta privada de la app, que no ve la galería y **se borra al desinstalar**.
   Con «Elegir carpeta…» se puede apuntar a Descargas, Películas o la **tarjeta

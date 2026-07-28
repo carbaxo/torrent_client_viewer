@@ -28,6 +28,83 @@ object RealDebrid {
     var token by mutableStateOf("")          // observable para la UI
     var account by mutableStateOf<String?>(null)   // nombre de usuario RD si válido
 
+    /**
+     * Estado de la cuenta y sus límites, leídos de la propia API de RD. Los
+     * números exactos dependen del plan y de los puntos de fidelidad, así que no
+     * se estiman: se preguntan.
+     */
+    data class Account(
+        val username: String,
+        val email: String,
+        val premium: Boolean,
+        /** Segundos de premium que quedan (0 si no es premium). */
+        val premiumSeconds: Long,
+        /** Fecha ISO de caducidad tal y como la da RD. */
+        val expiration: String,
+        val points: Int,
+        /** Torrents ocupando hueco ahora mismo; -1 si no se pudo saber. */
+        val slotsUsed: Int = -1,
+        /** Huecos totales de torrent; -1 si no se pudo saber. */
+        val slotsLimit: Int = -1
+    ) {
+        val days: Long get() = premiumSeconds / 86_400
+        val slotsKnown: Boolean get() = slotsLimit > 0
+        val slotsFull: Boolean get() = slotsKnown && slotsUsed >= slotsLimit
+        /** dd/MM/aaaa a partir del ISO, sin pelearse con husos horarios. */
+        val expiresPretty: String
+            get() = runCatching {
+                val p = expiration.take(10).split("-")
+                "${p[2]}/${p[1]}/${p[0]}"
+            }.getOrDefault(expiration)
+    }
+
+    var info by mutableStateOf<Account?>(null)
+        private set
+    var infoError by mutableStateOf("")
+        private set
+    var infoLoading by mutableStateOf(false)
+        private set
+
+    /**
+     * Relee cuenta y límites. No puede llamarse "setInfo": la propiedad `info` ya
+     * genera ese setter en la JVM y chocarían.
+     */
+    fun refreshInfo() {
+        if (!configured) { info = null; infoError = ""; return }
+        infoLoading = true
+        io.submit {
+            try {
+                val u = rd("GET", "/user")
+                // Los huecos de torrent van en otra ruta y pueden fallar por su
+                // cuenta: si no se pueden leer, el resto de la información sigue
+                // siendo útil, así que no se tira todo por eso.
+                var used = -1
+                var limit = -1
+                runCatching {
+                    val a = rd("GET", "/torrents/activeCount")
+                    used = a.optInt("nb", -1)
+                    limit = a.optInt("limit", -1)
+                }
+                val acc = Account(
+                    username = u.optString("username", ""),
+                    email = u.optString("email", ""),
+                    premium = u.optString("type", "") == "premium",
+                    premiumSeconds = u.optLong("premium", 0L),
+                    expiration = u.optString("expiration", ""),
+                    points = u.optInt("points", 0),
+                    slotsUsed = used,
+                    slotsLimit = limit
+                )
+                onMainRd { info = acc; infoError = ""; infoLoading = false }
+            } catch (e: Throwable) {
+                onMainRd { infoError = e.message ?: "No se pudo leer la cuenta."; infoLoading = false }
+            }
+        }
+    }
+
+    private val mainH = android.os.Handler(android.os.Looper.getMainLooper())
+    private fun onMainRd(b: () -> Unit) { mainH.post(b) }
+
     // id de descarga RD por URL directa (para pedir transcodificación al emitir)
     private val idsByUrl = java.util.concurrent.ConcurrentHashMap<String, String>()
 
@@ -160,6 +237,7 @@ object RealDebrid {
                 val name = u.optString("username", "")
                 val premium = u.optString("type", "") == "premium"
                 token = cand; account = name; save()
+                refreshInfo()
                 onDone(true, if (premium) name else "$name (SIN premium)")
             } catch (e: Throwable) {
                 onDone(false, e.message ?: "Error") // no tocar el token actual si falla
@@ -167,7 +245,10 @@ object RealDebrid {
         }
     }
 
-    fun disconnect() { token = ""; account = null; save() }
+    fun disconnect() {
+        token = ""; account = null; save()
+        info = null; infoError = ""
+    }
 
     /**
      * Convierte un magnet en una URL directa (para ver o descargar).

@@ -1126,7 +1126,13 @@ fun SettingsScreen() {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Real-Debrid", fontWeight = FontWeight.Bold)
                 if (RealDebrid.configured) {
+                    // Se lee al entrar, no al arrancar la app: son dos peticiones
+                    // y aquí es donde se miran.
+                    LaunchedEffect(RealDebrid.token) {
+                        if (RealDebrid.info == null) RealDebrid.refreshInfo()
+                    }
                     Text("⚡ Conectado${RealDebrid.account?.let { " · $it" } ?: ""}", color = Color(0xFF34D399), style = MaterialTheme.typography.bodyMedium)
+                    RdAccountInfo()
                     Text(
                         if (Sync.email != null)
                             "Vinculado a la cuenta ${Sync.email}: el mismo Real-Debrid en todos tus " +
@@ -1600,6 +1606,71 @@ private fun DownloadCard(
 
 
 /**
+ * Cuenta y límites de Real-Debrid, leídos de su propia API (`/user` y
+ * `/torrents/activeCount`).
+ *
+ * Los números no se estiman: dependen del plan y de los puntos de fidelidad, y
+ * el de los huecos de torrent es el que explica el fallo más desconcertante —al
+ * llenarse, añadir un magnet deja de funcionar sin motivo aparente—.
+ */
+@Composable
+private fun RdAccountInfo() {
+    val a = RealDebrid.info
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        if (a == null) {
+            Text(
+                if (RealDebrid.infoLoading) "Leyendo la cuenta…"
+                else RealDebrid.infoError.ifBlank { "" },
+                color = if (RealDebrid.infoError.isNotBlank()) Color(0xFFFBBF24) else Muted,
+                style = MaterialTheme.typography.labelSmall
+            )
+        } else {
+            if (a.premium) {
+                Text(
+                    "⏳ Premium: quedan ${a.days} días" +
+                        (if (a.expiration.isNotBlank()) "  ·  hasta el ${a.expiresPretty}" else ""),
+                    color = if (a.days <= 7) Color(0xFFFBBF24) else Muted,
+                    style = MaterialTheme.typography.labelSmall
+                )
+            } else {
+                Text(
+                    "⚠️ Esta cuenta NO es premium: Real-Debrid no dará enlaces.",
+                    color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
+                )
+            }
+            Text("🎟 Puntos de fidelidad: ${a.points}", color = Muted, style = MaterialTheme.typography.labelSmall)
+            if (a.slotsKnown) {
+                Text(
+                    "📥 Torrents activos: ${a.slotsUsed} / ${a.slotsLimit}",
+                    color = if (a.slotsFull) Color(0xFFFBBF24) else Muted,
+                    style = MaterialTheme.typography.labelSmall
+                )
+                LinearProgressIndicator(
+                    progress = { (a.slotsUsed.toFloat() / a.slotsLimit).coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth().height(3.dp)
+                )
+                if (a.slotsFull) Text(
+                    "Sin huecos libres: hasta que acaben o borres alguno, Real-Debrid " +
+                        "rechazará los magnets nuevos. Se quitan en Descargas → En tu Real-Debrid.",
+                    color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
+                )
+            }
+            if (RealDebrid.infoError.isNotBlank()) Text(
+                RealDebrid.infoError, color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(
+                onClick = { RealDebrid.refreshInfo() },
+                enabled = !RealDebrid.infoLoading,
+                modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))
+            ) { Text("Actualizar datos") }
+            if (RealDebrid.infoLoading) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+        }
+    }
+}
+
+/**
  * Añadir un magnet o un enlace a Real-Debrid A MANO, y ver qué está haciendo RD
  * con los torrents de la cuenta.
  *
@@ -1712,6 +1783,10 @@ private fun RdCloudSection(onPlayUrl: (String) -> Unit) {
             kotlinx.coroutines.delay(if (list.any { it.working }) 4000L else 20000L)
         }
     }
+    // Los huecos de torrent se miran aquí: es donde se liberan
+    LaunchedEffect(RealDebrid.token, list.size) {
+        if (RealDebrid.configured) RealDebrid.refreshInfo()
+    }
 
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1774,6 +1849,14 @@ private fun RdCloudSection(onPlayUrl: (String) -> Unit) {
                     Icon(
                         if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
                         if (expanded) "Ocultar" else "Mostrar"
+                    )
+                }
+                RealDebrid.info?.let { a ->
+                    if (a.slotsKnown) Text(
+                        "Huecos de torrent: ${a.slotsUsed} / ${a.slotsLimit}" +
+                            if (a.slotsFull) " — sin huecos: borra alguno para poder añadir" else "",
+                        color = if (a.slotsFull) Color(0xFFFBBF24) else Muted,
+                        style = MaterialTheme.typography.labelSmall
                     )
                 }
                 if (listErr.isNotBlank()) Text(listErr, color = Color(0xFFFBBF24), style = MaterialTheme.typography.labelSmall)
