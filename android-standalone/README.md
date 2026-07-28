@@ -15,6 +15,10 @@ servidor propio. Funciona en **móvil y en Android TV**.
 - **Interfaz al estilo de la web**: pestañas Descubrir / Buscar / Descargas /
   Ajustes, catálogos con carátulas (Netflix, Prime, HBO Max, Disney+ vía TMDB) y
   ficha de detalle con sinopsis, tráiler y fuentes.
+- El selector **Películas / Series** de Descubrir manda en TODA la pantalla:
+  «Continuar viendo», «Mi lista» y «Recomendado para ti» muestran solo lo del
+  tipo elegido. Las recomendaciones se recalculan al cambiar, sembrando solo con
+  títulos de ese tipo.
 - ▶️ **Ver**: streaming directo desde los servidores de Real-Debrid. El vídeo va
   del CDN de RD al reproductor; no se descarga nada en el móvil.
 - ⬇️ **Descargar** con **pausa y continuación**: gestor propio (WorkManager en

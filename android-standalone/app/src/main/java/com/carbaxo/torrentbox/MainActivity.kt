@@ -654,11 +654,20 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, kids: Boolean = false
     var browse by remember { mutableStateOf<Pair<String, String>?>(null) }
     // Recomendados según lo visto + favoritos
     val recs = remember { mutableStateListOf<Tmdb.Title>() }
-    LaunchedEffect(WatchStore.list.size, Sync.favorites.size) {
+    // Las recomendaciones son del TIPO elegido arriba: con el filtro en Series no
+    // se recomiendan películas. Depende de `type`, así que se recalculan al
+    // cambiar de pestaña.
+    LaunchedEffect(type, WatchStore.list.size, Sync.favorites.size) {
+        recs.clear()
         if (!Tmdb.hasKey) return@LaunchedEffect
-        val seeds = (WatchStore.seeds() + Sync.favorites.map { it.tmdbId to it.type }).distinctBy { it.first }.take(6)
-        if (seeds.isEmpty()) { recs.clear(); return@LaunchedEffect }
-        Tmdb.recommendations(seeds) { list -> onMain { recs.clear(); recs.addAll(list) } }
+        val seeds = (
+            WatchStore.seeds(type) + Sync.favorites.filter { it.type == type }.map { it.tmdbId to it.type }
+            ).distinctBy { it.first }.take(6)
+        if (seeds.isEmpty()) return@LaunchedEffect
+        Tmdb.recommendations(seeds) { list ->
+            // Red de seguridad: que no se cuele nada del otro tipo
+            onMain { recs.clear(); recs.addAll(list.filter { it.type == type }) }
+        }
     }
 
     LaunchedEffect(type, kids) {
@@ -760,7 +769,7 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, kids: Boolean = false
             Spacer(Modifier.height(8.dp))
         }
         // Continuar viendo (series/películas a medias)
-        val cont = WatchStore.continueWatching()
+        val cont = WatchStore.continueWatching(type)
         if (cont.isNotEmpty()) item {
             Column(Modifier.padding(vertical = 8.dp)) {
                 Text("Continuar viendo", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -773,14 +782,15 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, kids: Boolean = false
                 }
             }
         }
-        // Mi lista (favoritos sincronizados con la cuenta)
-        if (Sync.favorites.isNotEmpty()) item {
+        // Mi lista (favoritos sincronizados con la cuenta), del tipo elegido
+        val favs = Sync.favorites.filter { it.type == type }
+        if (favs.isNotEmpty()) item {
             Column(Modifier.padding(vertical = 8.dp)) {
                 Text("Mi lista", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(Sync.favorites.size) { i ->
-                        val f = Sync.favorites[i]
+                    items(favs.size) { i ->
+                        val f = favs[i]
                         val t = Tmdb.Title(f.tmdbId, f.title, f.title, f.year, f.poster, f.rating, f.type)
                         PosterCard(t) { onOpen(t) }
                     }

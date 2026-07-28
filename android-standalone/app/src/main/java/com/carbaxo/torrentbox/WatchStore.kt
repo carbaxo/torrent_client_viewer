@@ -130,13 +130,23 @@ object WatchStore {
     fun progressFor(key: String): Prog? = list.firstOrNull { it.key == key }
 
     /** En curso (para "Continuar viendo"). */
-    fun continueWatching(): List<Prog> = list
+    /**
+     * Lo empezado y sin acabar. [type] ("movie"/"series") lo limita a ese tipo:
+     * en Descubrir, con el filtro en Series no tiene sentido ofrecer películas.
+     */
+    fun continueWatching(type: String? = null): List<Prog> = list
+        .filter { type == null || it.type == type }
         .filter { !it.watched && it.position > 20 && (it.duration <= 0 || it.position / it.duration < 0.95) }
         .sortedByDescending { it.updatedAt }
 
-    /** Semillas para recomendaciones: títulos vistos/en curso, recientes. */
-    fun seeds(): List<Pair<Int, String>> = list
+    /**
+     * Semillas para recomendaciones: títulos vistos/en curso, recientes. El
+     * recorte a 6 va DESPUÉS de filtrar por tipo; si no, con el filtro en Series
+     * las seis últimas podían ser todas películas y no quedaría ninguna semilla.
+     */
+    fun seeds(type: String? = null): List<Pair<Int, String>> = list
         .sortedByDescending { it.updatedAt }
+        .filter { type == null || it.type == type }
         .map { it.tmdbId to it.type }
         .distinct()
         .filter { it.first > 0 }
