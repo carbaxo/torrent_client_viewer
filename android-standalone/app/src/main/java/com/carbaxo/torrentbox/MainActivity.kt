@@ -1540,7 +1540,7 @@ fun SettingsScreen() {
                     placeholder = { Text("https://…/manifest.json") },
                     singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRowSimple {
                     Button(
                         onClick = { Prefs.saveExtraAddonUrl(ex); exTest = "" },
                         shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
@@ -1587,7 +1587,9 @@ fun SettingsScreen() {
                     placeholder = { Text(DonSite.DEFAULT_BASE) },
                     singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Fila que ENVUELVE: cuatro botones no caben en el ancho de un
+                // móvil y el último salía con las letras en vertical, una a una.
+                FlowRowSimple {
                     Button(
                         onClick = { Prefs.saveDonSiteUrl(ds); dsTest = "" },
                         shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
