@@ -84,6 +84,17 @@ servidor propio. Funciona en **móvil y en Android TV**.
   **series** la temporada se ve entera y plegada, y los enlaces salen al tocar un
   episodio (volver a tocarlo lo cierra). Antes se desplegaba solo el primer
   episodio sin ver y sus enlaces empujaban el resto de la temporada hacia abajo.
+- ⚡ **Los enlaces que ya están en tu Real-Debrid salen arriba**, marcados con
+  «Ya en tu Real-Debrid · se reproduce al instante», y la cabecera dice cuántos
+  hay. Se cruza el `infoHash` de cada enlace con los torrents listos de tu cuenta:
+  fiable al 100% y una sola llamada.
+
+  > Saber si algo está en la **caché global** de RD (la de otras cuentas) **ya no
+  > es posible**: era `/torrents/instantAvailability` y Real-Debrid lo desactivó
+  > (`disabled_endpoint`, error 37). El único truco que queda —añadir el magnet y
+  > ver si sale como `downloaded`— cuesta tres llamadas y un hueco de torrent por
+  > enlace, así que no vale para marcar una lista entera. Para el resto, la mejor
+  > pista sigue siendo las semillas.
 - **Filtros de calidad** (4K/1080p/720p/480p/SD) con el número de enlaces de cada
   una, y un chip **"Otras"** para los que no se puede identificar: así ninguno
   queda escondido. La detección entiende también las formas de las webs españolas

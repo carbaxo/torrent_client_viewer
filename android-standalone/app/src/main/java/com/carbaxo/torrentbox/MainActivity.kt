@@ -1983,11 +1983,23 @@ fun SourcesSection(
     // chip "Otras": así se pueden ver siempre (antes desaparecían sin más).
     var qualityFilter by remember { mutableStateOf("all") }
     val byEngine = sources.filter { it.fromEngine(engineFilter) }
-    val shown = when (qualityFilter) {
+    val filtered = when (qualityFilter) {
         "all" -> byEngine
         Search.QUALITY_OTHER -> byEngine.filter { it.quality == Search.QUALITY_OTHER }
         else -> byEngine.filter { it.quality == qualityFilter }
     }
+    // Los que ya están en la cuenta de RD suben al principio. sortedByDescending
+    // es estable, así que dentro de cada grupo se mantiene el orden por motor,
+    // idioma y semillas.
+    val shown = filtered.sortedByDescending { it.infoHash in RealDebrid.cachedHashes }
+
+    // Qué enlaces están YA en la cuenta de Real-Debrid: esos se reproducen al
+    // instante, así que van arriba. Solo se puede saber de la propia cuenta: RD
+    // desactivó instantAvailability, que era lo que decía si algo estaba en su
+    // caché global.
+    LaunchedEffect(RealDebrid.token) { RealDebrid.refreshCached() }
+    val cached = RealDebrid.cachedHashes
+    val instant = shown.count { it.infoHash in cached }
 
     // Estado de la ventana flotante "Cargando…" / "Preparando la descarga"
     var prep by remember { mutableStateOf<Prep?>(null) }
@@ -2103,7 +2115,9 @@ fun SourcesSection(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "Enlaces (${shown.size})" + if (label.isNotBlank()) " · $label" else "",
+                    "Enlaces (${shown.size})" +
+                        (if (instant > 0) " · ⚡$instant al instante" else "") +
+                        (if (label.isNotBlank()) " · $label" else ""),
                     style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)
                 )
                 Icon(if (linksExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
@@ -2113,6 +2127,12 @@ fun SourcesSection(
         if (linksExpanded) shown.forEach { r ->
             Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // Ya está en la cuenta: no hay que esperar a que RD lo baje
+                    if (r.infoHash in cached) Text(
+                        "⚡ Ya en tu Real-Debrid · se reproduce al instante",
+                        color = Color(0xFF34D399), style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
                     Text(r.name, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(
                         buildList {

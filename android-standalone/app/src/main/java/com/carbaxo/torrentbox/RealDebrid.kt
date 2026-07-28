@@ -248,6 +248,7 @@ object RealDebrid {
     fun disconnect() {
         token = ""; account = null; save()
         info = null; infoError = ""
+        cachedHashes = emptySet()
     }
 
     /**
@@ -321,6 +322,8 @@ object RealDebrid {
     data class Torrent(
         val id: String,
         val name: String,
+        /** infoHash en minúsculas: es lo que permite cruzarlo con los enlaces. */
+        val hash: String,
         val status: String,
         val progress: Int,
         val bytes: Long,
@@ -409,6 +412,7 @@ object RealDebrid {
                         Torrent(
                             id = t.optString("id"),
                             name = t.optString("filename").ifBlank { t.optString("original_filename", "torrent") },
+                            hash = t.optString("hash", "").lowercase(),
                             status = t.optString("status"),
                             progress = t.optInt("progress", 0),
                             bytes = t.optLong("bytes", 0L),
@@ -418,11 +422,32 @@ object RealDebrid {
                         )
                     )
                 }
+                // De paso se apuntan los que ya están listos: es lo que permite
+                // marcar en la ficha qué enlaces son instantáneos.
+                val ready = out.filter { it.ready && it.hash.isNotBlank() }.map { it.hash }.toSet()
+                onMainRd { cachedHashes = ready }
                 onDone(out, null)
             } catch (e: Throwable) {
                 onDone(null, e.message ?: "Error de Real-Debrid.")
             }
         }
+    }
+
+    /**
+     * infoHash de los torrents que YA están listos en tu cuenta. Cruzarlos con los
+     * enlaces de un título dice cuáles se reproducen al instante.
+     *
+     * Solo cubre TU cuenta. Saber si algo está en la caché global de RD requería
+     * `/torrents/instantAvailability`, que Real-Debrid ha desactivado
+     * (`disabled_endpoint`, error 37): ya no hay forma de preguntarlo.
+     */
+    var cachedHashes by mutableStateOf<Set<String>>(emptySet())
+        private set
+
+    /** Relee qué hay listo en la cuenta (efecto secundario de [torrents]). */
+    fun refreshCached() {
+        if (!configured) { cachedHashes = emptySet(); return }
+        torrents { _, _ -> }
     }
 
     /**
