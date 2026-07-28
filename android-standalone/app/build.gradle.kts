@@ -92,6 +92,9 @@ dependencies {
 
     // Reproductor
     implementation("androidx.media3:media3-exoplayer:1.4.1")
+    // HLS va en su PROPIO artefacto: sin esto un .m3u8 no se reproduce, y los
+    // canales de TV en directo son todos HLS.
+    implementation("androidx.media3:media3-exoplayer-hls:1.4.1")
     implementation("androidx.media3:media3-ui:1.4.1")
 
     // Chromecast (CastPlayer + botón de ruta) — el diálogo de Cast necesita AppCompat

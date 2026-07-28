@@ -98,6 +98,21 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
   **series** la temporada se ve entera y plegada, y los enlaces salen al tocar un
   episodio (volver a tocarlo lo cierra). Antes se desplegaba solo el primer
   episodio sin ver y sus enlaces empujaban el resto de la temporada hacia abajo.
+- 📺 **TV en directo (listas M3U)** — pestaña «En directo». Nació del problema de
+  los dibujos: Peppa Pig y Bluey en castellano **no están** en los índices de
+  Peerflix ni de Torrentio (se probó también por packs y no aparecía nada), pero
+  **Clan de RTVE emite dibujos en castellano 24 h**, gratis y en abierto. Para los
+  niños esto funciona hoy y siempre, sin depender de semillas ni de la caché de RD.
+  - De serie va una lista **integrada solo con canales de RTVE** (Clan, La 1, La 2,
+    Teledeporte, 24h), que son de la televisión pública. Se ven **solo desde
+    España**: RTVE bloquea por país.
+  - Se puede poner **cualquier lista M3U propia** en Ajustes → Canales. Ahí se
+    avisa de que las listas públicas de Internet mezclan emisiones oficiales de
+    televisiones públicas con **retransmisiones no autorizadas de canales de
+    pago**; por eso la integrada no las trae.
+  - Con **perfil infantil** solo se muestran los canales de dibujos.
+  - Hace falta `media3-exoplayer-hls`: HLS va en su propio artefacto y sin él un
+    `.m3u8` no se reproduce.
 - 📦 **Packs de temporada** para lo que no existe por capítulos. Las series
   infantiles en castellano (Peppa Pig, Bluey…) casi nunca se publican episodio a
   episodio: van en packs cuyos ficheros internos se llaman `04x12.avi`, que el

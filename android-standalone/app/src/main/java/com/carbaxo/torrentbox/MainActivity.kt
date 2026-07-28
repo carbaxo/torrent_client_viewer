@@ -75,6 +75,7 @@ class MainActivity : AppCompatActivity() {
         Tv.init(this)          // ¿estamos en una tele? cambia foco y navegación
         Prefs.init(this)
         Downloads.init(this)   // descargas propias (pausar/continuar)
+        Iptv.load()            // canales de TV (lista integrada o la del usuario)
         WatchStore.init(this)
         RealDebrid.init(this)
         // Chromecast: sesión global, se elige la TV antes de abrir nada
@@ -148,6 +149,7 @@ data class PlayCtx(
 private enum class Tab(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     DISCOVER("Descubrir", Icons.Filled.Explore),
     SEARCH("Buscar", Icons.Filled.Search),
+    LIVE("En directo", Icons.Filled.LiveTv),
     DOWNLOADS("Descargas", Icons.Filled.Download),
     SETTINGS("Ajustes", Icons.Filled.Settings)
 }
@@ -224,7 +226,8 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
     // Modo infantil: el perfil activo marca kids. Oculta Buscar (búsqueda libre);
     // los catálogos se filtran a géneros familiares.
     val kids = Sync.activeProfile?.kids == true
-    val visibleTabs = if (kids) listOf(Tab.DISCOVER, Tab.DOWNLOADS, Tab.SETTINGS) else Tab.values().toList()
+    val visibleTabs = if (kids) listOf(Tab.DISCOVER, Tab.LIVE, Tab.DOWNLOADS, Tab.SETTINGS)
+    else Tab.values().toList()
     LaunchedEffect(kids) { if (kids && tab !in visibleTabs) tab = Tab.DISCOVER }
 
     // Avisos de episodios nuevos cuando llegan los favoritos de la nube
@@ -371,6 +374,7 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
         when (tab) {
             Tab.DISCOVER -> DiscoverScreen(catalogType, { catalogType = it }, kids = kids, onOpen = { detail = it })
             Tab.SEARCH -> if (kids) DiscoverScreen(catalogType, { catalogType = it }, kids = true, onOpen = { detail = it }) else SearchScreen(onOpen = { detail = it })
+            Tab.LIVE -> LiveScreen(kids = kids) { ch -> play(ch.url, PlayCtx(name = ch.clean)) }
             Tab.DOWNLOADS -> DownloadsScreen { u -> play(u, PlayCtx()) }
             Tab.SETTINGS -> SettingsScreen()
         }
@@ -1522,6 +1526,48 @@ fun SettingsScreen() {
             }
         }
 
+        // --- Canales de TV en directo ---
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Canales (TV en directo)", fontWeight = FontWeight.Bold)
+                Text(
+                    "De serie van los canales de RTVE, que son públicos y en abierto: Clan " +
+                        "emite dibujos en castellano 24 h y es la vía más fiable para los niños. " +
+                        "Se ven solo desde España.",
+                    color = Muted, style = MaterialTheme.typography.bodySmall
+                )
+                var m3u by remember { mutableStateOf(Prefs.iptvUrl) }
+                OutlinedTextField(
+                    value = m3u, onValueChange = { m3u = it },
+                    label = { Text("Tu lista M3U (opcional)") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { Prefs.saveIptvUrl(m3u) },
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
+                    ) { Text("Usar esta lista") }
+                    if (Prefs.iptvUrl.isNotBlank()) OutlinedButton(
+                        onClick = { Prefs.saveIptvUrl(""); m3u = "" },
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
+                    ) { Text("Volver a RTVE") }
+                    OutlinedButton(
+                        onClick = { Iptv.load() },
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
+                    ) { Text("Recargar") }
+                }
+                if (Iptv.status.isNotBlank()) Text(
+                    Iptv.status, color = Muted, style = MaterialTheme.typography.labelSmall
+                )
+                Text(
+                    "Si pones una lista pública de Internet, ten en cuenta que esas listas " +
+                        "mezclan emisiones oficiales de televisiones públicas con retransmisiones " +
+                        "NO autorizadas de canales de pago. Por eso la integrada solo trae RTVE.",
+                    color = WarnAmber, style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
+
         // --- Actualizaciones ---
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1591,6 +1637,78 @@ fun SettingsScreen() {
 @Composable
 private fun FlowRowSimple(content: @Composable () -> Unit) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { content() }
+}
+
+/**
+ * Canales de TV en directo.
+ *
+ * Nace del problema de los dibujos: Peppa Pig y Bluey en castellano no están en
+ * los índices de Peerflix ni de Torrentio, pero **Clan** (RTVE) los emite 24 h,
+ * gratis y en abierto. Para los niños esto funciona hoy y siempre, sin depender
+ * de semillas ni de la caché de Real-Debrid.
+ */
+@Composable
+fun LiveScreen(kids: Boolean, onPlay: (Iptv.Channel) -> Unit) {
+    // Con perfil infantil, solo los canales de dibujos
+    val all = Iptv.list
+    val shown = if (kids) all.filter { it.kids }.ifEmpty { all } else all
+    val groups = shown.groupBy { it.group?.ifBlank { null } ?: "Canales" }
+
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = if (Tv.isTv) 4.dp else 12.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)
+    ) {
+        item {
+            Text("En directo", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            if (Iptv.loading) Text("Cargando la lista…", color = Muted, style = MaterialTheme.typography.labelSmall)
+            if (Iptv.status.isNotBlank()) Text(
+                Iptv.status, color = Muted, style = MaterialTheme.typography.labelSmall
+            )
+            if (kids) Text(
+                "Perfil infantil: solo canales de dibujos.",
+                color = Muted, style = MaterialTheme.typography.labelSmall
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+        groups.forEach { (grupo, canales) ->
+            item {
+                Text(
+                    grupo, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
+                )
+            }
+            items(canales.size) { i ->
+                val ch = canales[i]
+                Row(
+                    Modifier.fillMaxWidth()
+                        .tvRow(NfShape) { onPlay(ch) }
+                        .padding(horizontal = 10.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (!ch.logo.isNullOrBlank()) {
+                        AsyncImage(
+                            model = ch.logo, contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.width(56.dp).height(34.dp)
+                        )
+                        Spacer(Modifier.width(12.dp))
+                    }
+                    Text(
+                        ch.clean, style = MaterialTheme.typography.bodyLarge,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text("▶", color = Accent, style = MaterialTheme.typography.titleMedium)
+                }
+            }
+        }
+        if (shown.isEmpty()) item {
+            Text(
+                "No hay canales. Puedes poner tu propia lista M3U en Ajustes → Canales.",
+                color = Muted, style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
 }
 
 @Composable

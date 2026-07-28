@@ -62,6 +62,18 @@ object Prefs {
     var downloadTree by mutableStateOf("")
         private set
 
+    /**
+     * Lista M3U propia de canales de TV. Vacío = los canales integrados de RTVE.
+     */
+    var iptvUrl by mutableStateOf("")
+        private set
+
+    fun saveIptvUrl(u: String) {
+        iptvUrl = u.trim()
+        sp().edit().putString("iptvUrl", iptvUrl).apply()
+        Iptv.load()
+    }
+
     fun saveDownloadTree(uri: String) {
         downloadTree = uri.trim()
         sp().edit().putString("dlTree", downloadTree).apply()
@@ -138,6 +150,7 @@ object Prefs {
         githubToken = runCatching { secureStore().getString("ghToken", "") ?: "" }.getOrDefault("")
         downloadOverMobile = sp.getBoolean("dlOverMobile", true)
         downloadTree = sp.getString("dlTree", "") ?: ""
+        iptvUrl = sp.getString("iptvUrl", "") ?: ""
         playerMode = sp.getString("playerMode", PLAYER_APP) ?: PLAYER_APP
         castWithVlc = sp.getBoolean("castWithVlc", false)
     }
