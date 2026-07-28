@@ -11,7 +11,7 @@ object Search {
         val magnet: String,
         val lang: String? = null,  // código de idioma detectado (Lang), o null
         val quality: String = "Unknown", // 4K/1080p/720p/480p/SD/Unknown
-        /** Motor(es) que lo devolvieron: DONTORRENT, PEERFLIX, TORRENTIO, unidos con "+". */
+        /** Motor(es) que lo devolvieron: EXTRA, PEERFLIX, TORRENTIO, unidos con "+". */
         val engine: String = "",
         /**
          * Texto extra que da el addon (fuente, códec, grupo…). Se muestra tal cual
@@ -28,7 +28,7 @@ object Search {
         /** ¿Lo devolvió este motor? (un enlace puede venir de los dos). */
         fun fromEngine(e: String) = e == Search.ENGINE_ALL || engine.contains(e)
 
-        /** Etiqueta para la tarjeta: "DonTorrent", "Peerflix+Torrentio"… */
+        /** Etiqueta para la tarjeta: "Extra", "Peerflix+Torrentio"… */
         val engineLabel: String
             get() = engine.split('+').filter { it.isNotBlank() }
                 .joinToString("+") { e -> Search.engineName(e) }
@@ -36,14 +36,14 @@ object Search {
 
     const val ENGINE_TORRENTIO = "torrentio"
     const val ENGINE_PEERFLIX = "peerflix"   // addon de Stremio (webs españolas)
-    const val ENGINE_DONTORRENT = "dontorrent" // addon de Stremio, DonTorrent (castellano)
+    const val ENGINE_EXTRA = "extra"         // addon de Stremio a elección del usuario
     const val ENGINE_ALL = "all"
 
     /** Nombre bonito de un motor para los chips y las insignias. */
     fun engineName(e: String): String = when (e) {
         ENGINE_TORRENTIO -> "Torrentio"
         ENGINE_PEERFLIX -> "Peerflix"
-        ENGINE_DONTORRENT -> "DonTorrent"
+        ENGINE_EXTRA -> "Extra"
         ENGINE_ALL -> "Todos"
         else -> e.replaceFirstChar { it.uppercase() }
     }
@@ -146,11 +146,12 @@ object Search {
         (a.split('+') + b.split('+')).filter { it.isNotBlank() }.distinct().sorted().joinToString("+")
 
     /**
-     * Orden de preferencia de los motores al listar los enlaces. DonTorrent va
-     * primero a propósito: publica en castellano, que es lo que se busca aquí y
-     * lo que menos aparece en los otros dos.
+     * Orden de preferencia de los motores al listar los enlaces. El addon extra va
+     * primero: si alguien se ha molestado en configurarlo es porque busca algo que
+     * los otros no le dan, así que sus enlaces son los que quiere ver arriba.
+     * Peerflix antes de Torrentio porque indexa las webs españolas.
      */
-    private val ENGINE_ORDER = listOf(ENGINE_DONTORRENT, ENGINE_PEERFLIX, ENGINE_TORRENTIO)
+    private val ENGINE_ORDER = listOf(ENGINE_EXTRA, ENGINE_PEERFLIX, ENGINE_TORRENTIO)
 
     /**
      * Posición del motor en ese orden. Si un torrent lo devuelven varios, cuenta
@@ -162,7 +163,7 @@ object Search {
             ?: ENGINE_ORDER.size
 
     /**
-     * Orden de la lista de enlaces: primero por MOTOR (DonTorrent → Peerflix →
+     * Orden de la lista de enlaces: primero por MOTOR (Extra → Peerflix →
      * Torrentio), luego por el idioma preferido y, a igualdad, por seeders.
      */
     fun sortByEngineAndLang(list: List<Result>, order: List<String>): List<Result> =

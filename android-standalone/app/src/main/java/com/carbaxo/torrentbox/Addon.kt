@@ -6,7 +6,7 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 /**
- * Trozo común de los addons de **Stremio** (Peerflix, DonTorrent y cualquiera que
+ * Trozo común de los addons de **Stremio** (Peerflix, el addon extra y cualquiera que
  * se añada después). Todos hablan el mismo protocolo:
  *
  *   película:  BASE/stream/movie/tt1234567.json

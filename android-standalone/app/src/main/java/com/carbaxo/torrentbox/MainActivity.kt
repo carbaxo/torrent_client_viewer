@@ -223,12 +223,13 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
         onCastMagnet(magnet, c); showCastScreen = true; detail = null
     }
 
-    // Modo infantil: el perfil activo marca kids. Oculta Buscar (búsqueda libre);
-    // los catálogos se filtran a géneros familiares.
+    // Modo infantil: el perfil activo marca kids. Los catálogos se filtran a
+    // géneros familiares, pero **Buscar sí está**: sin buscador no se puede pedir
+    // una serie por su nombre, que es justo lo que se quiere hacer con los niños.
     val kids = Sync.activeProfile?.kids == true
     // "En directo" es SOLO del perfil infantil: nace para los dibujos y ahí se
     // queda. En los demás perfiles se busca por título, que es lo que se espera.
-    val visibleTabs = if (kids) listOf(Tab.DISCOVER, Tab.LIVE, Tab.DOWNLOADS, Tab.SETTINGS)
+    val visibleTabs = if (kids) Tab.values().toList()
     else Tab.values().filter { it != Tab.LIVE }
     LaunchedEffect(kids) { if (tab !in visibleTabs) tab = Tab.DISCOVER }
 
@@ -375,7 +376,9 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
     val content: @Composable () -> Unit = {
         when (tab) {
             Tab.DISCOVER -> DiscoverScreen(catalogType, { catalogType = it }, kids = kids, onOpen = { detail = it })
-            Tab.SEARCH -> if (kids) DiscoverScreen(catalogType, { catalogType = it }, kids = true, onOpen = { detail = it }) else SearchScreen(onOpen = { detail = it })
+            // Buscar también con perfil infantil: antes llevaba al catálogo
+            // filtrado, y así no había forma de pedir una serie por su nombre.
+            Tab.SEARCH -> SearchScreen(onOpen = { detail = it })
             Tab.LIVE -> LiveScreen(kids = kids) { ch -> play(ch.url, PlayCtx(name = ch.clean)) }
             Tab.DOWNLOADS -> DownloadsScreen { u -> play(u, PlayCtx()) }
             Tab.SETTINGS -> SettingsScreen()
@@ -1503,51 +1506,10 @@ fun SettingsScreen() {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Buscadores", fontWeight = FontWeight.Bold)
                 Text(
-                    "Se consultan tres addons a la vez: DonTorrent (castellano), Peerflix " +
-                        "(MejorTorrent, Wolfmax4k, Popcorntime…) y Torrentio.",
+                    "Peerflix (DonTorrent, MejorTorrent, Wolfmax4k, Popcorntime, Bitsearch: " +
+                        "las webs españolas) y Torrentio. Se puede añadir un tercero.",
                     color = Muted, style = MaterialTheme.typography.bodySmall
                 )
-
-                // --- DonTorrent: el que trae los doblajes al castellano ---
-                var dt by remember { mutableStateOf(Prefs.donTorrentUrl) }
-                var dtTest by remember { mutableStateOf("") }
-                OutlinedTextField(
-                    value = dt, onValueChange = { dt = it },
-                    label = { Text("URL propia de DonTorrent (opcional)") },
-                    placeholder = { Text(DonTorrent.DEFAULT_BASE) },
-                    singleLine = true, modifier = Modifier.fillMaxWidth()
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = { Prefs.saveDonTorrentUrl(dt); dtTest = "" },
-                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
-                    ) { Text("Guardar") }
-                    OutlinedButton(
-                        onClick = { dtTest = "Probando…"; DonTorrent.test { r -> onMain { dtTest = r } } },
-                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
-                    ) { Text("Probar") }
-                    if (Prefs.donTorrentUrl.isNotBlank()) OutlinedButton(
-                        onClick = { Prefs.saveDonTorrentUrl(""); dt = ""; dtTest = "" },
-                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
-                    ) { Text("Usar el público") }
-                }
-                if (dtTest.isNotBlank()) Text(
-                    dtTest,
-                    color = if (dtTest.startsWith("✅")) OkGreen else WarnAmber,
-                    style = MaterialTheme.typography.labelSmall
-                )
-                Text(
-                    "DonTorrent es el que trae los doblajes al castellano (series de " +
-                        "Netflix, anime como Oliver y Benji, dibujos…), que es justo lo que " +
-                        "no indexan bien los otros dos. No hay que configurarlo con " +
-                        "Real-Debrid: la app ya manda el magnet a tu cuenta ella sola. Eso sí, " +
-                        "la web de DonTorrent se cae o se bloquea cada cierto tiempo; usa " +
-                        "«Probar» para saber si el problema es del addon o es que no hay enlaces.",
-                    color = Muted, style = MaterialTheme.typography.labelSmall
-                )
-
-                HorizontalDivider(color = Surface2)
-
                 var pf by remember { mutableStateOf(Prefs.peerflixUrl) }
                 OutlinedTextField(
                     value = pf, onValueChange = { pf = it },
@@ -1564,6 +1526,45 @@ fun SettingsScreen() {
                 Text(
                     "Si configuras tu Peerflix en config.peerflix.mov (por ejemplo con tu " +
                         "Real-Debrid), pega aquí la URL que te dé. Vacío = la pública.",
+                    color = Muted, style = MaterialTheme.typography.labelSmall
+                )
+
+                HorizontalDivider(color = Surface2)
+
+                // --- Un tercer addon, el que quiera el usuario ---
+                var ex by remember { mutableStateOf(Prefs.extraAddonUrl) }
+                var exTest by remember { mutableStateOf("") }
+                OutlinedTextField(
+                    value = ex, onValueChange = { ex = it },
+                    label = { Text("Addon extra de Stremio (opcional)") },
+                    placeholder = { Text("https://…/manifest.json") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { Prefs.saveExtraAddonUrl(ex); exTest = "" },
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
+                    ) { Text("Guardar") }
+                    OutlinedButton(
+                        onClick = { exTest = "Probando…"; ExtraAddon.test { r -> onMain { exTest = r } } },
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
+                    ) { Text("Probar") }
+                    if (Prefs.extraAddonUrl.isNotBlank()) OutlinedButton(
+                        onClick = { Prefs.saveExtraAddonUrl(""); ex = ""; exTest = "" },
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
+                    ) { Text("Quitar") }
+                }
+                if (exTest.isNotBlank()) Text(
+                    exTest,
+                    color = if (exTest.startsWith("✅")) OkGreen else WarnAmber,
+                    style = MaterialTheme.typography.labelSmall
+                )
+                Text(
+                    "Vacío = no hay tercer buscador. Vale cualquier addon de Stremio que dé " +
+                        "torrents: pega su URL (con /manifest.json o sin él) y dale a «Probar». " +
+                        "Útil para MediaFusion, Comet o Jackettio, que se pueden configurar con " +
+                        "indexadores españoles. No hace falta configurarlo con Real-Debrid: la " +
+                        "app manda el magnet a tu cuenta ella sola.",
                     color = Muted, style = MaterialTheme.typography.labelSmall
                 )
             }
@@ -2440,10 +2441,14 @@ fun SourcesSection(
     Column(Modifier.padding(top = 4.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         // Un chip por motor, como las pestañas de addons de Stremio
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            val engines = listOf(Search.ENGINE_DONTORRENT, Search.ENGINE_PEERFLIX, Search.ENGINE_TORRENTIO)
-            // Se muestran SIEMPRE los tres, incluso con (0). Antes se escondía el
-            // motor sin resultados y eso hacía imposible distinguir "este addon no
-            // ha traído nada" de "este motor no existe en la app".
+            // El addon extra solo sale si está configurado; los fijos, siempre.
+            // Se muestran incluso con (0): antes se escondía el motor sin
+            // resultados y eso hacía imposible distinguir "este addon no ha traído
+            // nada" de "este motor no existe en la app".
+            val engines = listOfNotNull(
+                Search.ENGINE_EXTRA.takeIf { ExtraAddon.configured },
+                Search.ENGINE_PEERFLIX, Search.ENGINE_TORRENTIO
+            )
             (listOf(Search.ENGINE_ALL) + engines).forEach { key ->
                 val n = if (key == Search.ENGINE_ALL) sources.size else sources.count { it.fromEngine(key) }
                 FilterChip(
@@ -2725,7 +2730,7 @@ fun DetailScreen(
         Tmdb.episodes(title.tmdbId, s) { list, _ -> onMain { episodes = list ?: emptyList() } }
     }
 
-    // Busca en DonTorrent, Peerflix y Torrentio a la vez, por IMDb id;
+    // Busca en Peerflix, Torrentio y el addon extra a la vez, por IMDb id;
     // combina, deduplica por infoHash (gana el de más seeders) y ordena por
     // motor e idioma. La combinación se hace en el hilo principal (onMain).
     fun runSearch(label: String, season: Int? = null, episode: Int? = null) {
@@ -2742,10 +2747,15 @@ fun DetailScreen(
             return
         }
         val acc = mutableListOf<Search.Result>()
-        // Los TRES motores por episodio, y en series los tres otra vez a por PACKS
-        // de temporada. En castellano lo normal es que una serie se publique entera
-        // y no capitulo a capitulo: van en packs que el addon no sabe asociar a un
+        // Todos los motores por episodio, y en series otra vez a por PACKS de
+        // temporada. En castellano lo normal es que una serie se publique entera y
+        // no capitulo a capitulo: van en packs que el addon no sabe asociar a un
         // episodio, asi que preguntando solo por el episodio no sale nada.
+        //
+        // El addon extra responde igual aunque no este configurado (con una lista
+        // vacia), asi que la cuenta no depende de si esta puesto o no: si dependiera
+        // y se descontara mal, el contador nunca llegaria a cero y la busqueda se
+        // quedaria "Buscando fuentes..." para siempre.
         val engineCount = 3
         val wantPacks = title.type == "series"
         var remaining = if (wantPacks) engineCount * 2 else engineCount
@@ -2779,13 +2789,13 @@ fun DetailScreen(
                 if (sources.isEmpty()) status = lastErr ?: "Sin fuentes"
             }
         }
-        DonTorrent.streams(title.type, id!!, season, episode) { l, e -> part(l, e) }
+        ExtraAddon.streams(title.type, id!!, season, episode) { l, e -> part(l, e) }
         Peerflix.streams(title.type, id, season, episode) { l, e -> part(l, e) }
         Torrentio.streams(title.type, id, season, episode) { l, e -> part(l, e) }
         if (wantPacks) {
             // Lo que falle aqui no importa: si los addons no contestan a un id de
             // serie, simplemente no habra packs y nada empeora.
-            DonTorrent.packs(id, season) { l -> part(l, null) }
+            ExtraAddon.packs(id, season) { l -> part(l, null) }
             Peerflix.packs(id, season) { l -> part(l, null) }
             Torrentio.packs(id, season) { l -> part(l, null) }
         }

@@ -85,29 +85,34 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
 - 📺 **Chromecast**: se elige la TV en la barra superior (antes de abrir nada) y
   luego cada título va a esa TV; envía la versión con **audio AAC** convertida
   por Real-Debrid para que suene (el Chromecast no decodifica Dolby/DTS).
-- Buscador con **tres motores**, los mismos addons que usa Stremio, con un chip
-  por motor en cada ficha y los enlaces **ordenados DonTorrent → Peerflix →
-  Torrentio** (primero el que publica en castellano):
-  - **DonTorrent**: el que trae los **doblajes al castellano** — series de
-    Netflix, anime tipo Oliver y Benji, dibujos. Existe porque los otros dos
-    indexan sobre todo releases en inglés, y ese es el motivo de fondo de que no
-    aparecieran enlaces en español. **No hay que configurarlo con Real-Debrid**:
-    la app manda el magnet a RD ella sola, así que basta con el `infoHash` que
-    devuelve el addon. En **Ajustes → Buscadores** hay un botón **«Probar»**,
-    porque la web de DonTorrent se cae y se bloquea cada cierto tiempo y sin eso
-    no se distingue «no hay enlaces» de «el addon no responde».
-  - **Peerflix** (MejorTorrent, Wolfmax4k, Popcorntime, Bitsearch): más versiones
-    en español. Se puede apuntar a tu propia URL de `config.peerflix.mov` desde
-    **Ajustes → Buscadores**.
+- Buscador con **dos motores fijos y uno opcional**, los mismos addons que usa
+  Stremio, con un chip por motor en cada ficha y los enlaces **ordenados Extra →
+  Peerflix → Torrentio**:
+  - **Peerflix**: es donde están las versiones en español. Sus proveedores son
+    **DonTorrent, MejorTorrent, Wolfmax4K, Popcorntime y Bitsearch** — o sea que
+    las webs españolas ya están cubiertas aquí; un motor aparte dedicado a
+    DonTorrent no añadiría ni un enlace (se intentó y se descartó por eso, y
+    porque el addon público de DonTorrent, `streamingaddons.xyz`, tiene el dominio
+    muerto). Se puede apuntar a tu propia URL de `config.peerflix.mov`.
   - **Torrentio** con todos los proveedores (incluidos MejorTorrent, Wolfmax4k y
     Cinecalidad), no solo los de por defecto.
+  - **Addon extra** (`ExtraAddon.kt`), vacío por defecto: se pega la URL de
+    **cualquier** addon de Stremio que dé torrents y pasa a ser un tercer motor.
+    Está pensado para MediaFusion, Comet o Jackettio, que se configuran con
+    indexadores españoles y dan una URL con esa configuración dentro. Se puso una
+    ranura genérica en vez de un addon concreto porque estos addons **cambian de
+    dominio y mueren**; así no hace falta una versión nueva de la app cada vez.
+    Lleva botón **«Probar»** para distinguir «no hay enlaces» de «la URL no vale».
+  Los chips de motor se muestran **siempre, incluso con (0)**. Antes se escondía
+  el motor sin resultados, y eso hacía imposible saber si un addon no había
+  traído nada o si el motor no existía en la app.
   El trozo común del protocolo de addon está en `Addon.kt` (una sola copia de la
   lectura de `title`/`description`, del `behaviorHints` y del cálculo de tamaño):
-  así un arreglo vale para los tres motores a la vez.
-  Al pasar de episodio automáticamente se **repregunta al mismo motor**: si lo que
-  se está viendo vino de DonTorrent está en castellano, y seguir con Torrentio lo
-  dejaría en inglés a mitad de serie.
-  Los tres buscan **por IMDb id**, así que en series hay que elegir episodio (no
+  así un arreglo vale para todos los motores a la vez.
+  Al pasar de episodio automáticamente se **repregunta al mismo motor**, por el
+  idioma: si el episodio que se está viendo vino de Peerflix o del addon extra
+  está en castellano, y seguir con Torrentio lo dejaría en inglés a mitad de serie.
+  Todos buscan **por IMDb id**, así que en series hay que elegir episodio (no
   hay búsqueda de "temporada completa": los packs salen entre los resultados del
   episodio). En **películas** los enlaces se cargan solos al abrir la ficha; en
   **series** la temporada se ve entera y plegada, y los enlaces salen al tocar un
@@ -187,8 +192,11 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
   **"0 seeders" ya no se muestra**: significaba "el addon no da el dato", pero
   se leía como "enlace muerto". Al unir un torrent que devuelven los dos
   motores, de cada campo se queda el que informa.
-- 👤 **Perfiles** (crear/editar/borrar) con **modo infantil** (solo catálogos
-  familiares), sincronizados con tu cuenta. **Cambiar de perfil está a un toque**:
+- 👤 **Perfiles** (crear/editar/borrar) con **modo infantil** (catálogos filtrados
+  a géneros familiares, y la pestaña «En directo» solo aquí), sincronizados con tu
+  cuenta. El modo infantil **sí tiene buscador**: antes «Buscar» llevaba al
+  catálogo filtrado y así no había forma de pedir una serie por su nombre, que es
+  justo lo que se hace con los niños. **Cambiar de perfil está a un toque**:
   el avatar del perfil activo va en la barra superior de todas las pestañas y abre
   un «¿Quién está viendo?»; en la **tele** aparece además al fondo de la barra de
   secciones, con el foco puesto ya en el perfil activo. Antes había que entrar en

@@ -362,13 +362,13 @@ class PlayerActivity : AppCompatActivity() {
             }
         }
         // Mismo motor que el episodio que se estaba viendo (como Stremio). Importa
-        // para el idioma: si lo que se está viendo vino de DonTorrent es que está
+        // para el idioma: si lo que se está viendo vino del addon extra o de Peerflix es que está
         // en castellano, y continuar con un enlace de Torrentio lo dejaría en
         // inglés a mitad de serie.
         val noTorrentio = !srcEngine.contains(Search.ENGINE_TORRENTIO)
         when {
-            srcEngine.contains(Search.ENGINE_DONTORRENT) && noTorrentio ->
-                DonTorrent.streams("series", imdbId, s, e) { l, _ -> handle(l) }
+            srcEngine.contains(Search.ENGINE_EXTRA) && noTorrentio ->
+                ExtraAddon.streams("series", imdbId, s, e) { l, _ -> handle(l) }
             srcEngine.contains(Search.ENGINE_PEERFLIX) && noTorrentio ->
                 Peerflix.streams("series", imdbId, s, e) { l, _ -> handle(l) }
             else -> Torrentio.streams("series", imdbId, s, e) { l, _ -> handle(l) }

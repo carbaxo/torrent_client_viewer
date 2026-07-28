@@ -37,11 +37,12 @@ object Prefs {
         private set
 
     /**
-     * URL propia del addon DonTorrent. Vacío = la pública
-     * ([DonTorrent.DEFAULT_BASE]). No hace falta configurarlo con Real-Debrid: la
-     * app manda el magnet a RD por su cuenta.
+     * URL de un addon de Stremio **extra**, a elección del usuario. Vacío = no hay
+     * addon extra y ese motor no existe. Ver [ExtraAddon] para el por qué no es un
+     * addon fijo. No hace falta configurarlo con Real-Debrid: la app manda el
+     * magnet a RD por su cuenta.
      */
-    var donTorrentUrl by mutableStateOf("")
+    var extraAddonUrl by mutableStateOf("")
         private set
 
     /**
@@ -155,7 +156,7 @@ object Prefs {
         languageOrder.clear(); languageOrder.addAll(order)
         engine = sp.getString("engine", Search.ENGINE_ALL) ?: Search.ENGINE_ALL
         peerflixUrl = sp.getString("peerflixUrl", "") ?: ""
-        donTorrentUrl = sp.getString("donTorrentUrl", "") ?: ""
+        extraAddonUrl = sp.getString("extraAddonUrl", "") ?: ""
         githubToken = runCatching { secureStore().getString("ghToken", "") ?: "" }.getOrDefault("")
         downloadOverMobile = sp.getBoolean("dlOverMobile", true)
         downloadTree = sp.getString("dlTree", "") ?: ""
@@ -169,9 +170,9 @@ object Prefs {
         sp().edit().putString("peerflixUrl", peerflixUrl).apply()
     }
 
-    fun saveDonTorrentUrl(u: String) {
-        donTorrentUrl = u.trim()
-        sp().edit().putString("donTorrentUrl", donTorrentUrl).apply()
+    fun saveExtraAddonUrl(u: String) {
+        extraAddonUrl = u.trim()
+        sp().edit().putString("extraAddonUrl", extraAddonUrl).apply()
     }
 
     /**
