@@ -454,30 +454,83 @@ object RealDebrid {
      * Los archivos listos de un torrent, con su enlace de RD (aún restringido).
      * Los packs de temporada traen varios: así se puede elegir el episodio.
      */
+    /**
+     * Los ficheros listos de un torrent, ordenados como los vería una persona
+     * (04x02 antes de 04x10). Los enlaces vienen en el MISMO orden que los
+     * archivos marcados, así que hay que emparejarlos por posición antes de
+     * ordenar.
+     */
+    private fun filesFrom(info: JSONObject): List<RdFile> {
+        val links = info.optJSONArray("links")
+        val chosen = ArrayList<Pair<String, Long>>()
+        info.optJSONArray("files")?.let { fs ->
+            for (i in 0 until fs.length()) {
+                val f = fs.getJSONObject(i)
+                if (f.optInt("selected", 0) == 1)
+                    chosen.add(f.optString("path").trimStart('/') to f.optLong("bytes", 0L))
+            }
+        }
+        val out = ArrayList<RdFile>()
+        for (i in 0 until (links?.length() ?: 0)) {
+            val meta = chosen.getOrNull(i)
+            out.add(RdFile(meta?.first ?: "Archivo ${i + 1}", meta?.second ?: 0L, links!!.getString(i)))
+        }
+        return out.sortedWith { a, b -> Search.naturalCompare(a.name, b.name) }
+    }
+
     fun torrentFiles(id: String, onDone: (List<RdFile>?, String?) -> Unit) {
         io.submit {
             try {
                 val info = rd("GET", "/torrents/info/$id")
-                val st = info.optString("status")
-                val links = info.optJSONArray("links")
-                // Los enlaces van en el mismo orden que los archivos marcados
-                val chosen = ArrayList<Pair<String, Long>>()
-                info.optJSONArray("files")?.let { fs ->
-                    for (i in 0 until fs.length()) {
-                        val f = fs.getJSONObject(i)
-                        if (f.optInt("selected", 0) == 1)
-                            chosen.add(f.optString("path").trimStart('/') to f.optLong("bytes", 0L))
-                    }
-                }
-                val out = ArrayList<RdFile>()
-                for (i in 0 until (links?.length() ?: 0)) {
-                    val meta = chosen.getOrNull(i)
-                    out.add(RdFile(meta?.first ?: "Archivo ${i + 1}", meta?.second ?: 0L, links!!.getString(i)))
-                }
-                if (out.isEmpty()) onDone(null, "Todavía no hay nada listo: ${statusEs(st)}.")
+                val out = filesFrom(info)
+                if (out.isEmpty()) onDone(null, "Todavía no hay nada listo: ${statusEs(info.optString("status"))}.")
                 else onDone(out, null)
             } catch (e: Throwable) {
                 onDone(null, e.message ?: "Error de Real-Debrid.")
+            }
+        }
+    }
+
+    /**
+     * Abre un PACK: lo añade a la cuenta si hace falta, espera a que RD lo tenga y
+     * devuelve la lista de capítulos para poder elegir.
+     *
+     * Es lo que hace utilizables las series infantiles: el pack de temporada entra
+     * una vez y a partir de ahí cualquier capítulo se ve al instante. `streamMagnet`
+     * no sirve para esto porque coge el PRIMER vídeo, o sea siempre el capítulo 1.
+     *
+     * onDone(ficheros, error, progreso): si progreso != null, RD sigue bajándolo.
+     */
+    fun packFiles(magnet: String, onDone: (List<RdFile>?, String?, Int?) -> Unit) {
+        io.submit {
+            try {
+                val id = torrentIdByMagnet[magnet] ?: run {
+                    val added = rd("POST", "/torrents/addMagnet", mapOf("magnet" to magnet))
+                    val nid = added.optString("id", "")
+                    if (nid.isNotBlank()) torrentIdByMagnet[magnet] = nid
+                    nid
+                }
+                if (id.isBlank()) return@submit onDone(null, "Real-Debrid no aceptó el magnet.", null)
+
+                var info = rd("GET", "/torrents/info/$id")
+                if (info.optString("status") == "waiting_files_selection") selectVideoFiles(id, info)
+                var tries = 0
+                while (tries++ < 12) {
+                    info = rd("GET", "/torrents/info/$id")
+                    val st = info.optString("status")
+                    if (st == "downloaded") break
+                    if (st in BAD) return@submit onDone(null, "Real-Debrid no pudo con el pack: ${statusEs(st)}.", null)
+                    Thread.sleep(1500)
+                }
+                if (info.optString("status") != "downloaded")
+                    return@submit onDone(null, null, info.optInt("progress", 0))
+
+                val out = filesFrom(info)
+                if (out.isEmpty()) onDone(null, "El pack no trae ningún vídeo reconocible.", null)
+                else onDone(out, null, null)
+            } catch (e: Throwable) {
+                torrentIdByMagnet.remove(magnet)
+                onDone(null, e.message ?: "Error de Real-Debrid.", null)
             }
         }
     }

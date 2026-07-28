@@ -18,7 +18,12 @@ object Search {
          * bajo el nombre: es lo único que distingue dos enlaces cuando el addon no
          * manda el nombre del fichero.
          */
-        val info: String = ""
+        val info: String = "",
+        /**
+         * Es un PACK (temporada o serie completa), no un episodio suelto. Al
+         * pulsarlo hay que elegir capítulo dentro, no reproducir el primero.
+         */
+        val pack: Boolean = false
     ) {
         /** ¿Lo devolvió este motor? (un enlace puede venir de los dos). */
         fun fromEngine(e: String) = e == Search.ENGINE_ALL || engine.contains(e)
@@ -104,6 +109,23 @@ object Search {
             .filter { it.isNotBlank() }
             .joinToString("  ·  ")
             .take(200)
+    }
+
+    /**
+     * Compara "04x2" y "04x10" como los vería una persona: por el VALOR de los
+     * números, no letra a letra. Sin esto, la lista de capítulos de un pack sale
+     * 1, 10, 11, 2, 20… que es inservible con 300 ficheros.
+     */
+    fun naturalCompare(a: String, b: String): Int {
+        val ra = Regex("\\d+|\\D+").findAll(a.lowercase()).map { it.value }.toList()
+        val rb = Regex("\\d+|\\D+").findAll(b.lowercase()).map { it.value }.toList()
+        for (i in 0 until minOf(ra.size, rb.size)) {
+            val x = ra[i]; val y = rb[i]
+            val nx = x.toLongOrNull(); val ny = y.toLongOrNull()
+            val c = if (nx != null && ny != null) nx.compareTo(ny) else x.compareTo(y)
+            if (c != 0) return c
+        }
+        return ra.size - rb.size
     }
 
     /** De dos nombres del mismo torrent, el que informa más (un fichero real). */

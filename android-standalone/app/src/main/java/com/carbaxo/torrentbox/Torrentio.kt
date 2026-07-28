@@ -66,6 +66,37 @@ object Torrentio {
      * Busca fuentes. type: "movie"|"series". Para series pasa season/episode.
      * Devuelve resultados con idioma detectado por bandera. onResult(list, error).
      */
+    /**
+     * PACKS de temporada o de serie completa.
+     *
+     * Hace falta porque los dos motores solo se consultan a nivel de episodio, y
+     * las series infantiles en castellano (Peppa Pig, Bluey…) casi nunca se
+     * publican por capítulos: van en packs cuyos ficheros internos se llaman
+     * "04x12.avi", que el addon no sabe asociar a un episodio. Resultado: el
+     * torrent existe pero la búsqueda por episodio no devuelve nada.
+     *
+     * Se prueban varias formas del id porque el protocolo de Stremio define los
+     * streams de serie como `id:temporada:episodio` y NO está garantizado que un
+     * addon conteste a las otras. Lo que falle se ignora en silencio: en el peor
+     * caso no salen packs y nada empeora.
+     */
+    fun packs(imdbId: String, season: Int?, onResult: (List<Search.Result>) -> Unit) {
+        io.submit {
+            val ids = listOfNotNull(imdbId, season?.let { "$imdbId:$it" })
+            val out = LinkedHashMap<String, Search.Result>()
+            for (id in ids) {
+                for (base in listOf("$HOST/$CONFIG/stream/series/$id.json", "$HOST/stream/series/$id.json")) {
+                    val r = runCatching { fetch(base) }.getOrNull()
+                    if (!r.isNullOrEmpty()) {
+                        r.forEach { out.putIfAbsent(it.infoHash, it.copy(pack = true)) }
+                        break
+                    }
+                }
+            }
+            onResult(out.values.toList())
+        }
+    }
+
     fun streams(type: String, imdbId: String, season: Int?, episode: Int?, onResult: (List<Search.Result>?, String?) -> Unit) {
         io.submit {
             val kind = if (type == "series") "series" else "movie"

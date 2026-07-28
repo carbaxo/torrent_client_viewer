@@ -2138,7 +2138,10 @@ fun SourcesSection(
     // Los que ya están en la cuenta de RD suben al principio. sortedByDescending
     // es estable, así que dentro de cada grupo se mantiene el orden por motor,
     // idioma y semillas.
-    val shown = filtered.sortedByDescending { it.infoHash in RealDebrid.cachedHashes }
+    // Los packs van al final (son el plan B) y los que ya estan en RD, arriba.
+    val shown = filtered
+        .sortedBy { if (it.pack) 1 else 0 }
+        .sortedByDescending { it.infoHash in RealDebrid.cachedHashes }
 
     // Qué enlaces están YA en la cuenta de Real-Debrid: esos se reproducen al
     // instante, así que van arriba. Solo se puede saber de la propia cuenta: RD
@@ -2150,6 +2153,8 @@ fun SourcesSection(
 
     // Estado de la ventana flotante "Cargando…" / "Preparando la descarga"
     var prep by remember { mutableStateOf<Prep?>(null) }
+    // Capítulos de un pack, cuando hay que elegir uno
+    var packList by remember { mutableStateOf<List<RealDebrid.RdFile>?>(null) }
 
     /**
      * Pide el enlace a Real-Debrid mostrando un diálogo con el progreso. Si RD
@@ -2195,6 +2200,52 @@ fun SourcesSection(
                             "No se pierde: sigue en tu cuenta y el progreso se ve en Descargas."
                     )
                     else -> prep = cur.copy(error = err ?: "Error de Real-Debrid")
+                }
+            }
+        }
+    }
+
+    /** Reproduce (o emite) el capítulo elegido dentro de un pack. */
+    fun playPackFile(f: RealDebrid.RdFile) {
+        packList = null
+        prep = Prep(false, "Preparando ${f.name.substringAfterLast('/').take(40)}…")
+        RealDebrid.unrestrict(f.link) { url, _, err ->
+            onMain {
+                if (url == null) prep = prep?.copy(error = err ?: "No se pudo preparar el capítulo.")
+                else {
+                    prep = null
+                    if (CastManager.connected && !Prefs.castWithVlc) CastManager.castUrl(url, buildCtx())
+                    else onPlayUrl(url, buildCtx())
+                }
+            }
+        }
+    }
+
+    /**
+     * Abre un pack de temporada: lo mete en Real-Debrid y saca la lista de
+     * capítulos. La primera vez RD tiene que bajarlo a sus servidores, y eso puede
+     * tardar; a partir de ahí todos los capítulos van al instante.
+     */
+    fun openPack(r: Search.Result, attempt: Int = 0) {
+        if (attempt == 0) prep = Prep(false, "Abriendo el pack en Real-Debrid…", magnet = r.magnet)
+        RealDebrid.packFiles(r.magnet) { files, err, progress ->
+            onMain {
+                val cur = prep ?: return@onMain      // cancelado por el usuario
+                when {
+                    files != null -> { prep = null; packList = files }
+                    progress != null && attempt < 25 -> {
+                        prep = cur.copy(
+                            atRd = true,
+                            msg = "Real-Debrid está bajando el pack a sus servidores: ${progress}%.\n" +
+                                "Esto solo pasa la primera vez; luego los capítulos salen al instante."
+                        )
+                        onMainDelayed(4000) { openPack(r, attempt + 1) }
+                    }
+                    progress != null -> prep = cur.copy(
+                        error = "Real-Debrid sigue con el pack (${progress}%). No se pierde: " +
+                            "sigue en tu cuenta y puedes ver el progreso en Descargas."
+                    )
+                    else -> prep = cur.copy(error = err ?: "No se pudo abrir el pack.")
                 }
             }
         }
@@ -2274,6 +2325,11 @@ fun SourcesSection(
         if (linksExpanded) shown.forEach { r ->
             Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Surface1)) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (r.pack) Text(
+                        "📦 Pack de temporada · al abrirlo eliges el capítulo",
+                        color = WarnAmber, style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
                     // Ya está en la cuenta: no hay que esperar a que RD lo baje
                     if (r.infoHash in cached) Text(
                         "⚡ Ya en tu Real-Debrid · se reproduce al instante",
@@ -2305,7 +2361,10 @@ fun SourcesSection(
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(
                                 onClick = {
-                                    if (CastManager.connected && !Prefs.castWithVlc) {
+                                    // Un pack no se puede reproducir "a secas": hay
+                                    // que elegir capitulo, o saldria siempre el 1.
+                                    if (r.pack) openPack(r)
+                                    else if (CastManager.connected && !Prefs.castWithVlc) {
                                         // Con TV conectada va directo a la TV; el
                                         // CastManager muestra el progreso y elige la
                                         // versión con audio compatible.
@@ -2321,6 +2380,7 @@ fun SourcesSection(
                             ) {
                                 Text(
                                     when {
+                                        r.pack -> "📦 Elegir capítulo"
                                         CastManager.connected && Prefs.castWithVlc -> "📺 Ver en la TV (VLC)"
                                         CastManager.connected -> "📺 Ver en la TV"
                                         else -> "▶ Ver"
@@ -2341,6 +2401,48 @@ fun SourcesSection(
                 }
             }
         }
+    }
+
+    // --- Elegir capítulo dentro de un pack de temporada ---
+    packList?.let { files ->
+        AlertDialog(
+            onDismissRequest = { packList = null },
+            title = { Text("Elige el capítulo") },
+            text = {
+                Column(
+                    Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        "${files.size} capítulos en el pack. Ya están todos en tu Real-Debrid: " +
+                            "cualquiera se ve al instante.",
+                        color = Muted, style = MaterialTheme.typography.labelSmall
+                    )
+                    files.forEach { f ->
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .tvRow(NfShape) { playPackFile(f) }
+                                .padding(horizontal = 8.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                f.name.substringAfterLast('/'),
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (f.bytes > 0) Text(
+                                Search.humanSize(f.bytes), color = Muted,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { packList = null }, modifier = Modifier.tvFocusRing()) { Text("Cerrar") }
+            }
+        )
     }
 
     // --- Ventana flotante mientras Real-Debrid prepara el enlace ---
@@ -2454,7 +2556,12 @@ fun DetailScreen(
             return
         }
         val acc = mutableListOf<Search.Result>()
-        var remaining = 2   // Peerflix + Torrentio
+        // Peerflix + Torrentio por episodio, y en series los dos otra vez a por
+        // PACKS de temporada. Las series infantiles en castellano casi nunca se
+        // publican por capitulos: van en packs que el addon no sabe asociar a un
+        // episodio, asi que por episodio no sale nada.
+        val wantPacks = title.type == "series"
+        var remaining = if (wantPacks) 4 else 2
         var lastErr: String? = null
         fun part(list: List<Search.Result>?, err: String?) = onMain {
             if (list != null) acc.addAll(list) else lastErr = err
@@ -2475,7 +2582,9 @@ fun DetailScreen(
                         seeders = maxOf(prev.seeders, r.seeders),
                         quality = if (prev.quality != Search.QUALITY_OTHER) prev.quality else r.quality,
                         lang = prev.lang ?: r.lang,
-                        info = prev.info.ifBlank { r.info }
+                        info = prev.info.ifBlank { r.info },
+                        // Si alguno de los dos lo dio como pack, lo es
+                        pack = prev.pack || r.pack
                     )
                 }
                 loadingSources = false
@@ -2485,6 +2594,12 @@ fun DetailScreen(
         }
         Peerflix.streams(title.type, id!!, season, episode) { l, e -> part(l, e) }
         Torrentio.streams(title.type, id, season, episode) { l, e -> part(l, e) }
+        if (wantPacks) {
+            // Lo que falle aqui no importa: si los addons no contestan a un id de
+            // serie, simplemente no habra packs y nada empeora.
+            Peerflix.packs(id, season) { l -> part(l, null) }
+            Torrentio.packs(id, season) { l -> part(l, null) }
+        }
     }
     fun loadSources(dt: Tmdb.Detail) = runSearch(dt.title)
 

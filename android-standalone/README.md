@@ -98,6 +98,20 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
   **series** la temporada se ve entera y plegada, y los enlaces salen al tocar un
   episodio (volver a tocarlo lo cierra). Antes se desplegaba solo el primer
   episodio sin ver y sus enlaces empujaban el resto de la temporada hacia abajo.
+- 📦 **Packs de temporada** para lo que no existe por capítulos. Las series
+  infantiles en castellano (Peppa Pig, Bluey…) casi nunca se publican episodio a
+  episodio: van en packs cuyos ficheros internos se llaman `04x12.avi`, que el
+  addon no sabe asociar a un episodio — así que buscando por episodio **no sale
+  nada aunque el torrent exista**. Ahora, en series, además del episodio se
+  consulta por la **serie y la temporada**, y esos resultados salen marcados con
+  📦 y un botón **«Elegir capítulo»**: el pack entra una vez en Real-Debrid y a
+  partir de ahí cualquier capítulo se ve al instante. La lista va ordenada como la
+  vería una persona (`04x02` antes de `04x10`, no 1‑10‑11‑2).
+
+  > El protocolo de Stremio define los streams de serie como `id:temporada:episodio`,
+  > así que **no está garantizado** que un addon conteste al preguntar por la serie
+  > entera. Se prueban varias formas del id y lo que falle se ignora: en el peor
+  > caso no hay packs y nada empeora.
 - ⚡ **Los enlaces que ya están en tu Real-Debrid salen arriba**, marcados con
   «Ya en tu Real-Debrid · se reproduce al instante», y la cabecera dice cuántos
   hay. Se cruza el `infoHash` de cada enlace con los torrents listos de tu cuenta:
