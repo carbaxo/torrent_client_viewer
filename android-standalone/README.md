@@ -206,7 +206,12 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
     avisa de que las listas públicas de Internet mezclan emisiones oficiales de
     televisiones públicas con **retransmisiones no autorizadas de canales de
     pago**; por eso la integrada no las trae.
-  - Con **perfil infantil** solo se muestran los canales de dibujos. El filtro
+  - Con **perfil infantil** solo se muestran los canales de dibujos, **salvo los que
+    hayas importado tú**: esos se muestran siempre. Esconderle a alguien sus propios
+    canales porque el nombre no cuadra con un patrón es decidir por él — y como esta
+    pestaña solo existe en el perfil infantil, esconderlos era hacerlos desaparecer
+    del todo, que es lo que pasaba. Además se dice **cuántos se ocultan**: si
+    desaparecen en silencio parece que la lista no cargó, no que hay un filtro. El filtro
     lleva los nombres de las series concretas (Dragon Ball, Saint Seiya, los
     clásicos de Pluto TV) y no un «anime» a secas, que arrastraría canales de
     anime para adultos. Si el filtro se queda corto, un canal válido desaparece

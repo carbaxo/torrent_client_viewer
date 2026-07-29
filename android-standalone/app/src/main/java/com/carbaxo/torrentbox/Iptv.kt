@@ -29,7 +29,17 @@ object Iptv {
         val name: String,
         val url: String,
         val logo: String? = null,
-        val group: String? = null
+        val group: String? = null,
+        /**
+         * ¿Viene de una lista que el usuario ha IMPORTADO a mano?
+         *
+         * Importa porque el filtro infantil **no se le aplica**: si alguien se ha
+         * tomado la molestia de importar una lista, esconderle la mitad de sus
+         * canales porque el nombre no cuadra con un patrón es decidir por él. La
+         * heurística tiene sentido para los canales integrados o para una lista
+         * pública enorme, no para lo que ha elegido a mano.
+         */
+        val imported: Boolean = false
     ) {
         /** Nombre limpio: las listas M3U arrastran anotaciones entre corchetes. */
         val clean: String
@@ -200,7 +210,8 @@ object Iptv {
     }
 
     private fun imported(): List<Channel> = runCatching {
-        importedFile()?.takeIf { it.exists() }?.readText()?.let { parse(it) }.orEmpty()
+        importedFile()?.takeIf { it.exists() }?.readText()
+            ?.let { parse(it).map { c -> c.copy(imported = true) } }.orEmpty()
     }.getOrDefault(emptyList())
 
     /** Carga la lista: los canales integrados más la propia del usuario si la hay. */

@@ -1768,9 +1768,13 @@ private fun FlowRowSimple(content: @Composable () -> Unit) {
  */
 @Composable
 fun LiveScreen(kids: Boolean, onPlay: (Iptv.Channel) -> Unit) {
-    // Con perfil infantil, solo los canales de dibujos
+    // Con perfil infantil se filtra a los canales de dibujos, PERO lo que el
+    // usuario ha importado a mano se respeta siempre: esconderle sus propios
+    // canales porque el nombre no cuadra con un patrón es decidir por él. Y como
+    // esta pestaña solo existe en el perfil infantil, esconderlos era hacerlos
+    // desaparecer del todo — que es exactamente lo que pasaba.
     val all = Iptv.list
-    val shown = if (kids) all.filter { it.kids }.ifEmpty { all } else all
+    val shown = if (kids) all.filter { it.kids || it.imported }.ifEmpty { all } else all
     val groups = shown.groupBy { it.group?.ifBlank { null } ?: "Canales" }
 
     LazyColumn(
@@ -1783,8 +1787,12 @@ fun LiveScreen(kids: Boolean, onPlay: (Iptv.Channel) -> Unit) {
             if (Iptv.status.isNotBlank()) Text(
                 Iptv.status, color = Muted, style = MaterialTheme.typography.labelSmall
             )
+            // Se dice CUANTOS se esconden: si desaparecen en silencio, parece que
+            // la lista no se ha cargado en vez de que hay un filtro puesto.
             if (kids) Text(
-                "Perfil infantil: solo canales de dibujos.",
+                "Perfil infantil: solo canales de dibujos" +
+                    (all.size - shown.size).let { if (it > 0) " ($it ocultos)" else "" } +
+                    ". Lo que importas se muestra siempre.",
                 color = Muted, style = MaterialTheme.typography.labelSmall
             )
             Spacer(Modifier.height(8.dp))
