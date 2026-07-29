@@ -177,23 +177,94 @@ object Downloads {
         onMain { list.clear(); list.addAll(snap) }
     }
 
-    /** Ficheros que están en la carpeta pero no en la lista (versiones previas). */
+    /** Extensiones que se adoptan. Una carpeta compartida tiene de todo. */
+    private val VIDEO_EXT = Regex("\\.(mkv|mp4|avi|m4v|webm|mov|wmv|mpg|mpeg|ts)$", RegexOption.IGNORE_CASE)
+
+    /**
+     * Vídeos que están en la carpeta pero no en la lista, para que aparezcan en
+     * Descargas listos para ver.
+     *
+     * Se miran DOS sitios:
+     *
+     *  1. La carpeta privada de la app, que es la de por defecto.
+     *  2. La carpeta que haya elegido el usuario en Ajustes → Descargas, que es un
+     *     documento del sistema (`content://`) y hay que recorrer con
+     *     DocumentsContract. Antes no se miraba, y eso tenía dos consecuencias
+     *     molestas: al reinstalar la app, los vídeos seguían en el disco pero
+     *     desaparecían de la lista; y un vídeo bajado por OTRA app en esa misma
+     *     carpeta (una app de torrents, para lo que Real-Debrid rechaza) no había
+     *     forma de verlo desde aquí.
+     */
     private fun adoptLooseFiles() {
         val ctx = appCtx ?: return
-        val dir = ctx.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: return
-        val known = synchronized(jobs) { jobs.map { File(it.file).name }.toSet() }
-        dir.listFiles()?.forEach { f ->
-            if (f.isFile && f.length() > 0 && f.name !in known) {
-                synchronized(jobs) {
-                    jobs.add(
-                        Job(
-                            id = "file:${f.name.hashCode()}", name = f.name, file = f.absolutePath,
-                            url = "", bytes = f.length(), total = f.length(), state = DONE
-                        )
+        // Se compara por ruta Y por nombre: la carpeta propia guarda rutas y la
+        // elegida guarda content://, y el mismo vídeo no debe entrar dos veces.
+        // Mutables: al adoptar hay que apuntarlo, o el mismo nombre en las dos
+        // carpetas entraria dos veces en la misma pasada.
+        val knownFiles = synchronized(jobs) { jobs.mapTo(HashSet()) { it.file } }
+        val knownNames = synchronized(jobs) { jobs.mapTo(HashSet()) { it.name } }
+
+        fun adopt(name: String, target: String, size: Long) {
+            if (size <= 0 || !VIDEO_EXT.containsMatchIn(name)) return
+            if (target in knownFiles || name in knownNames) return
+            knownFiles.add(target); knownNames.add(name)
+            synchronized(jobs) {
+                jobs.add(
+                    Job(
+                        id = "file:${target.hashCode()}", name = name, file = target,
+                        url = "", bytes = size, total = size, state = DONE
                     )
+                )
+            }
+        }
+
+        ctx.getExternalFilesDir(Environment.DIRECTORY_MOVIES)?.listFiles()?.forEach { f ->
+            if (f.isFile) adopt(f.name, f.absolutePath, f.length())
+        }
+
+        val tree = Prefs.downloadTree
+        if (tree.isBlank()) return
+        runCatching {
+            val treeUri = android.net.Uri.parse(tree)
+            val children = android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(
+                treeUri, android.provider.DocumentsContract.getTreeDocumentId(treeUri)
+            )
+            val cols = arrayOf(
+                android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                android.provider.DocumentsContract.Document.COLUMN_SIZE,
+                android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE,
+                android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED
+            )
+            ctx.contentResolver.query(children, cols, null, null, null)?.use { c ->
+                val ahora = System.currentTimeMillis()
+                while (c.moveToNext()) {
+                    val mime = c.getString(3) ?: ""
+                    if (mime == android.provider.DocumentsContract.Document.MIME_TYPE_DIR) continue
+                    val name = c.getString(1) ?: continue
+                    val size = if (c.isNull(2)) 0L else c.getLong(2)
+                    // Un fichero tocado hace un momento puede estar BAJANDO ahora
+                    // mismo (otra app escribiendo en la carpeta): adoptarlo lo
+                    // daría por completo y se vería a medias.
+                    val mod = if (c.isNull(4)) 0L else c.getLong(4)
+                    if (mod > 0 && ahora - mod < 60_000L) continue
+                    val docUri = android.provider.DocumentsContract
+                        .buildDocumentUriUsingTree(treeUri, c.getString(0))
+                    adopt(name, docUri.toString(), size)
                 }
             }
         }
+    }
+
+    /**
+     * Vuelve a mirar las carpetas. Hace falta porque [adoptLooseFiles] solo corría
+     * al arrancar: si otra app deja un vídeo en la carpeta mientras VizPlay está
+     * abierta, sin esto no aparecería hasta reiniciarla.
+     */
+    fun rescan() {
+        adoptLooseFiles()
+        save(force = true)
+        publish()
     }
 
     fun get(id: String): Job? = synchronized(jobs) { jobs.firstOrNull { it.id == id } }

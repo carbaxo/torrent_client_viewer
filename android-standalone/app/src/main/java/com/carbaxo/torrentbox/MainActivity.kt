@@ -2100,6 +2100,9 @@ private fun RdCloudSection(onPlayUrl: (String) -> Unit) {
     var picker by remember { mutableStateOf<Pair<List<RealDebrid.RdFile>, Boolean>?>(null) }
 
     fun refresh() {
+        // Refrescar mira TAMBIÉN la carpeta: si otra app (una de torrents, por
+        // ejemplo) ha dejado ahí un vídeo, aparece sin reiniciar VizPlay.
+        Downloads.rescan()
         if (!RealDebrid.configured) return
         RealDebrid.torrents { l, err ->
             onMain { if (l != null) { list = l; listErr = "" } else listErr = err ?: "" }
@@ -2808,8 +2811,15 @@ fun SourcesSection(
             },
             // Si RD no pudo con el enlace (no lo tiene cacheado, o el archivo se
             // borró), se puede meter el magnet en la cuenta y esperar a que lo baje.
+            // Y si lo ha RECHAZADO por copyright, ahí no hay nada que esperar: eso
+            // solo lo saca un cliente BitTorrent, así que se ofrece pasárselo a uno.
             dismissButton = {
+                val rechazado = p.error?.contains("bloqueados por copyright") == true
                 when {
+                    rechazado && p.magnet.isNotBlank() -> TextButton(onClick = {
+                        val err = TorrentApp.open(ctx, p.magnet)
+                        prep = if (err == null) null else p.copy(error = err)
+                    }, modifier = Modifier.tvFocusRing()) { Text("Abrir en app de torrents") }
                     p.error != null && p.magnet.isNotBlank() -> TextButton(onClick = {
                         MagnetInbox.offer(p.magnet)
                         prep = null

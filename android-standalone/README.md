@@ -91,6 +91,29 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
     y daba más problemas que soluciones — Real-Debrid rechaza muchos torrents con
     `infringing_file`, y de las páginas no siempre se puede sacar el enlace. Queda
     el magnet, que es lo que sí funciona.
+- 🧲 **«Abrir en app de torrents»** (`TorrentApp.kt`): cuando Real-Debrid rechaza un
+  torrent con `infringing_file`, ahí no hay nada que esperar —es su lista de
+  copyright, no un problema del torrent—, así que el aviso ofrece pasarle el magnet
+  a **LibreTorrent, Flud o la que tengas**. Se hace FUERA de la app a propósito:
+  meter el motor BitTorrent dentro se descartó porque las librerías nativas de
+  `libtorrent4j` van en el APK aunque no se usen (eran el grueso de su tamaño),
+  porque mientras baja tu IP es visible para todo el swarm, y porque es la pieza más
+  compleja de mantener — y la activación «solo cuando haga falta» no arregla ninguna
+  de las tres. Delegando, VizPlay sigue sin conectarse a ningún peer.
+  - No se comprueba antes si hay alguna app instalada: para eso habría que declarar
+    el esquema en `<queries>`, que en Android 11+ es una lista que mantener. Se
+    intenta y, si falla, se explica — que es el único caso en que hace falta saberlo.
+- 📁 **Descargas lee también TU carpeta**: `adoptLooseFiles` recorre la carpeta
+  privada **y** la elegida en Ajustes → Descargas (un `content://`, con
+  `DocumentsContract`). Antes solo miraba la privada, y eso tenía dos consecuencias
+  molestas: al reinstalar, los vídeos seguían en el disco pero **desaparecían de la
+  lista**; y un vídeo dejado ahí por otra app no había forma de verlo desde VizPlay.
+  Ahora, si apuntas la app de torrents a esa misma carpeta, el vídeo **aparece solo**
+  en «Listas para ver».
+  - Solo se adoptan **vídeos** (por extensión): una carpeta compartida tiene de todo.
+  - Se **salta lo modificado en el último minuto**: un fichero que otra app está
+    escribiendo ahora se daría por completo y se vería a medias.
+  - El botón de refrescar de Descargas reescanea, así que no hay que reiniciar.
 - Reproductor **ExoPlayer (Media3)**: subtítulos, pistas de audio, velocidad,
   gestos de volumen/brillo, siguiente episodio y continuar viendo.
 - 🎬 **Reproductor externo opcional** (Ajustes → Reproducción): el de la app,
