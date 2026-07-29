@@ -265,7 +265,15 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
   un «¿Quién está viendo?»; en la **tele** aparece además al fondo de la barra de
   secciones, con el foco puesto ya en el perfil activo. Antes había que entrar en
   Ajustes → Cuenta y buscarlo entre los chips.
-- 🔔 Avisos de episodios nuevos de tus series favoritas y auto-actualización.
+- 🔔 Avisos de episodios nuevos de tus series favoritas y **auto-actualización**:
+  compara el número de build de la Release (`Build N` en su cuerpo) con el de la app
+  (`BuildConfig.CI_BUILD`). Antes comparaba **además** la fecha del APK subido con
+  la hora de compilación, y eso estaba mal de raíz: la hora se graba cuando
+  ARRANCA el build y el APK se sube cuando TERMINA, ~7 min después, con un margen
+  de solo 2 min. Así que el propio APK recién instalado siempre parecía más nuevo
+  que sí mismo y el aviso de «nueva versión» **no desaparecía nunca**. El número de
+  build no depende de relojes ni de márgenes. Un fallo al comprobar nunca se
+  traduce en «estás al día»: eso sería afirmar lo que no se ha podido comprobar.
 
 ## Nada en segundo plano (salvo una descarga en curso)
 

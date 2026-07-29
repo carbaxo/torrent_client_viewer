@@ -41,10 +41,19 @@ object Update {
     private fun onMain(b: () -> Unit) { main.post(b) }
 
     /**
-     * Comprueba si hay una versión más nueva. Fiable aunque GitHub reutilice el
-     * tag `android-latest` (fecha congelada): compara la fecha REAL del APK
-     * subido (`updated_at` del asset, que cambia en cada publicación) con la
-     * hora de compilación de esta app (BuildConfig.BUILD_EPOCH).
+     * Comprueba si hay una versión más nueva **comparando el número de build**:
+     * el de la Release (la CI escribe "Build N — commit …" en el cuerpo) contra el
+     * de esta app (`BuildConfig.CI_BUILD`).
+     *
+     * Antes se comparaba además la FECHA del APK subido con la hora de compilación
+     * de la app, y eso estaba mal de raíz: la hora de compilación se graba cuando
+     * ARRANCA el build y el APK se sube cuando TERMINA, unos siete minutos después,
+     * con un margen de tolerancia de solo dos minutos. Resultado: el propio APK
+     * recién instalado siempre parecía más nuevo que sí mismo y el aviso de
+     * «nueva versión» no desaparecía nunca.
+     *
+     * El número de build no tiene ese problema: es exacto, crece en cada
+     * publicación y no depende de relojes ni de márgenes.
      */
     fun check() {
         io.submit {
@@ -56,14 +65,17 @@ object Update {
                 if (tok.isNotBlank()) b.header("Authorization", "Bearer $tok")
                 client.newCall(b.build()).execute().use { resp ->
                     if (!resp.isSuccessful) {
-                        // Antes cualquier fallo se traducía en "estás en la última
-                        // versión", que era mentira: el repo es privado y sin token
-                        // la API responde 404.
-                        val msg = when (resp.code) {
-                            401, 403, 404 ->
-                                if (tok.isBlank()) "No se puede consultar la Release: el repositorio es privado. " +
-                                    "Pega abajo un token de GitHub con permiso de lectura."
-                                else "El token de GitHub no vale o no tiene permiso de lectura del repositorio (HTTP ${resp.code})."
+                        // Un fallo NUNCA se traduce en "estás en la última versión":
+                        // eso sería afirmar algo que no se ha podido comprobar.
+                        val msg = when {
+                            // El repositorio es publico, asi que un 404 ya no significa
+                            // "falta el token": significa que no hay Release publicada.
+                            resp.code == 404 && tok.isBlank() ->
+                                "No hay ninguna Release publicada todavía (HTTP 404)."
+                            resp.code == 404 || resp.code == 401 || resp.code == 403 ->
+                                if (tok.isBlank()) "No se pudo consultar la Release (HTTP ${resp.code})."
+                                else "El token de GitHub no vale o ha caducado (HTTP ${resp.code}). " +
+                                    "El repositorio es público, así que puedes borrarlo: ya no hace falta."
                             else -> "No se pudo comprobar (HTTP ${resp.code})."
                         }
                         return@submit onMain { checked = true; available = null; status = msg }
@@ -72,7 +84,6 @@ object Update {
                     val remoteBuild = Regex("Build (\\d+)").find(d.optString("body"))?.groupValues?.get(1)?.toIntOrNull() ?: 0
                     var url: String? = null
                     var apiUrl = ""
-                    var apkEpoch = 0L
                     d.optJSONArray("assets")?.let { arr ->
                         for (i in 0 until arr.length()) {
                             val a = arr.getJSONObject(i)
@@ -82,22 +93,21 @@ object Update {
                             if (a.optString("name").endsWith(".apk", ignoreCase = true)) {
                                 url = a.optString("browser_download_url")
                                 apiUrl = a.optString("url")
-                                apkEpoch = parseIso(a.optString("updated_at"))
                             }
                         }
                     }
-                    // Nuevo si el APK de la Release se subió claramente DESPUÉS de
-                    // compilar esta app (margen de 2 min), o si el nº de build es mayor.
-                    val newerByDate = apkEpoch > 0 && apkEpoch > BuildConfig.BUILD_EPOCH + 120_000L
-                    val newerByBuild = remoteBuild > 0 && remoteBuild > BuildConfig.CI_BUILD
+                    val newer = remoteBuild > BuildConfig.CI_BUILD
                     onMain {
                         checked = true
-                        status = ""
-                        available = if ((newerByDate || newerByBuild) && url != null)
-                            Info(
-                                if (remoteBuild > 0) remoteBuild else BuildConfig.CI_BUILD + 1,
-                                url!!, apiUrl
-                            ) else null
+                        available = if (newer && url != null) Info(remoteBuild, url!!, apiUrl) else null
+                        status = when {
+                            available != null -> ""
+                            // Sin número de build en el cuerpo no se puede comparar, y
+                            // callarse sería decir "estás al día" sin saberlo.
+                            remoteBuild == 0 ->
+                                "La Release no dice qué build es, así que no se puede comparar."
+                            else -> ""
+                        }
                     }
                 }
             } catch (e: Throwable) {
@@ -130,16 +140,6 @@ object Update {
         return client.newCall(
             Request.Builder().url(loc).header("User-Agent", "TorrentBox").build()
         ).execute()
-    }
-
-    /** ISO-8601 de GitHub ("2026-07-04T19:16:25Z") a epoch ms; 0 si falla. */
-    private fun parseIso(s: String?): Long {
-        if (s.isNullOrBlank()) return 0L
-        return runCatching {
-            val fmt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US)
-            fmt.timeZone = java.util.TimeZone.getTimeZone("UTC")
-            fmt.parse(s)?.time ?: 0L
-        }.getOrDefault(0L)
     }
 
     /** Descarga el APK de la Release y abre el instalador del sistema. */
