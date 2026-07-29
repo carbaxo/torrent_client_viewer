@@ -47,9 +47,10 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
   pasa ni qué hacer. El que más sale es ese: Real-Debrid tiene una lista de
   torrents bloqueados por avisos de copyright, y el bloqueo va **por torrent
   concreto y no por título**, así que la salida es probar otra versión del mismo
-  capítulo — y el mensaje ahora lo dice. Se traduce en **las dos** rutas de subida
-  capítulo. Se traducen también los demás códigos que salen de verdad (tráfico
-  agotado, demasiadas descargas, IP no permitida, torrent demasiado grande…).
+  capítulo — y el mensaje ahora lo dice. Se traducen también los demás códigos que
+  salen de verdad (tráfico agotado, demasiadas descargas, IP no permitida, torrent
+  demasiado grande…), y los que no estén en la lista siguen saliendo tal cual en
+  vez de perderse.
 - 📊 **Estado de tu cuenta de Real-Debrid** (Ajustes → Real-Debrid): días de
   premium que quedan y fecha de caducidad, puntos de fidelidad y **huecos de
   torrent usados/total**, leídos de la propia API (`/user` y
