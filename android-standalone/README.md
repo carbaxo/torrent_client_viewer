@@ -127,8 +127,11 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
     ranura genérica en vez de un addon concreto porque estos addons **cambian de
     dominio y mueren**; así no hace falta una versión nueva de la app cada vez.
     Lleva botón **«Probar»** para distinguir «no hay enlaces» de «la URL no vale».
-  - **Mi Real-Debrid** (`RdEngine.kt`): se busca **por nombre** en tu propia cuenta
-    y sus torrents salen como enlaces más, los primeros de la lista. Esto es lo que
+  - **Lo que ya está en tu Real-Debrid** (`RdEngine.kt`): se busca **por nombre** en
+    tu propia cuenta y sus torrents salen como enlaces más, los primeros de la lista
+    y marcados con «✅ en tu Real-Debrid». **No tiene chip propio a propósito**: no es
+    una fuente distinta, es el mismo torrent que ya tienes, así que aparece con
+    cualquier motor seleccionado en vez de esconderse en una pestaña aparte. Esto es lo que
     cierra el círculo con lo de los dibujos en castellano: cuando un título no
     aparece en ningún addon, se añade el torrent **a mano una vez** en Descargas y a
     partir de ahí sale solo en la ficha, con reproducción, descarga y selector de

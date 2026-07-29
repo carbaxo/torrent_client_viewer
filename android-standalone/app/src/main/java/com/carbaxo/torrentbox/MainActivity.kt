@@ -2412,7 +2412,20 @@ fun SourcesSection(
      * se cometió una vez con el filtro de calidad.
      */
     var langFilter by remember { mutableStateOf("mine") }
-    val byEngine = sources.filter { it.fromEngine(engineFilter) }
+    /**
+     * Filtro por motor. Lo que sale de **tu propia cuenta de Real-Debrid** se cuela
+     * siempre, en cualquier motor elegido, y por eso no tiene chip propio: no es
+     * una FUENTE distinta, es el mismo torrent que ya está en tu cuenta. Tener un
+     * apartado «Mi Real-Debrid» sugería que había que ir a buscarlo allí, cuando lo
+     * natural es que aparezca donde estés mirando.
+     *
+     * Sigue existiendo el motor por debajo porque es lo que hace visibles los
+     * torrents que **ningún addon indexa** (los añadidos a mano): sin él, un pack
+     * en castellano metido en la cuenta no volvería a aparecer en la ficha.
+     */
+    val byEngine = sources.filter {
+        it.fromEngine(engineFilter) || it.engine == Search.ENGINE_RD
+    }
     val byLang = when (langFilter) {
         "all" -> byEngine
         "mine" -> byEngine.filter { it.lang == null || it.lang in Prefs.languageOrder }
@@ -2546,13 +2559,20 @@ fun SourcesSection(
             // Se muestran incluso con (0): antes se escondía el motor sin
             // resultados y eso hacía imposible distinguir "este addon no ha traído
             // nada" de "este motor no existe en la app".
+            //
+            // Lo de tu Real-Debrid NO lleva chip: no es una fuente aparte, así que
+            // aparece en todos (ver el filtro de arriba) marcado con "✅ en tu
+            // Real-Debrid" y colocado al principio de la lista.
             val engines = listOfNotNull(
-                Search.ENGINE_RD.takeIf { RealDebrid.configured },
                 Search.ENGINE_EXTRA.takeIf { ExtraAddon.configured },
                 Search.ENGINE_PEERFLIX, Search.ENGINE_TORRENTIO
             )
             (listOf(Search.ENGINE_ALL) + engines).forEach { key ->
-                val n = if (key == Search.ENGINE_ALL) sources.size else sources.count { it.fromEngine(key) }
+                // El numero tiene que ser EXACTAMENTE lo que se ve al pulsar el
+                // chip, asi que cuenta igual que filtra: incluyendo lo que ya esta
+                // en tu Real-Debrid, que aparece en todos los motores.
+                val n = if (key == Search.ENGINE_ALL) sources.size
+                else sources.count { it.fromEngine(key) || it.engine == Search.ENGINE_RD }
                 FilterChip(
                     selected = engineFilter == key,
                     onClick = { Prefs.selectEngine(key) },

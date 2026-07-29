@@ -45,7 +45,7 @@ object Search {
         ENGINE_TORRENTIO -> "Torrentio"
         ENGINE_PEERFLIX -> "Peerflix"
         ENGINE_EXTRA -> "Extra"
-        ENGINE_RD -> "Mi Real-Debrid"
+        ENGINE_RD -> "En tu cuenta"   // no es una fuente: ya lo tienes en RD
         ENGINE_ALL -> "Todos"
         else -> e.replaceFirstChar { it.uppercase() }
     }
