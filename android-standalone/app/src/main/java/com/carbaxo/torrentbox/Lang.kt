@@ -14,15 +14,22 @@ object Lang {
         val keywords: List<String>
     )
 
+    /**
+     * Palabras clave **ya normalizadas**: en minúsculas y rodeadas de espacios,
+     * porque [normalize] convierte puntos, guiones y corchetes en espacios. Así
+     * `[CAST]`, `.Cast.` y `-CAST-` casan todos con `" cast "`, y en cambio
+     * «podcast» o «Castle» no, que era el riesgo de buscar «cast» a pelo.
+     */
     val ALL: List<Info> = listOf(
         Info("es-ES", "Español (España)", "🇪🇸", "es-ES",
-            listOf("castellano", "espanol", "español", "spanish", "cast.", "[cast]", " esp ", " es ")),
+            listOf(" castellano ", " espanol ", " español ", " spanish ", " cast ", " esp ",
+                " spa ", " es es ", " espana ", " españa ", " castellano dual ")),
         Info("es-LA", "Español (Latino)", "🇲🇽", "es-MX",
-            listOf("latino", "latin", " lat ", "[lat]", "espanol latino")),
+            listOf(" latino ", " latin ", " lat ", " espanol latino ", " mx ", " latam ")),
         Info("en", "Inglés", "🇬🇧", "en-US",
-            listOf("english", " eng ", "[eng]", ".eng.", "vose", "v.o.s", "subs")),
+            listOf(" english ", " eng ", " vose ", " v o s ", " vo ")),
         Info("multi", "Multi-idioma", "🌍", "es-ES",
-            listOf("multi", "dual"))
+            listOf(" multi ", " dual "))
     )
 
     fun byCode(code: String): Info? = ALL.firstOrNull { it.code == code }
@@ -36,13 +43,18 @@ object Lang {
     )
 
     /**
-     * Detecta idioma priorizando las BANDERAS del título (Torrentio) y, si no
-     * hay, cae a la detección por palabras clave. Si hay varias banderas
-     * distintas, es "multi".
+     * Detecta idioma priorizando las BANDERAS del título (Torrentio) y, si no hay,
+     * cae a la detección por palabras clave.
+     *
+     * Si entre las banderas está la de España **gana el castellano**, aunque haya
+     * más: un enlace con 🇪🇸🇬🇧 se puede ver en castellano, y marcarlo como «multi»
+     * lo hundía en la lista de quien tiene el español como idioma preferido. Solo
+     * es «multi» cuando hay varias y ninguna es la española.
      */
     fun detectFromTitle(title: String): String? {
         val found = FLAGS.entries.filter { title.contains(it.key) }.map { it.value }.distinct()
         return when {
+            found.contains("es-ES") -> "es-ES"
             found.size >= 2 -> "multi"
             found.size == 1 -> found[0]
             else -> detect(title)
@@ -61,15 +73,34 @@ object Lang {
     val DEFAULT_ORDER = listOf("es-ES", "en")
 
     /**
-     * Detecta el idioma de un nombre de torrent. Devuelve el código o null si
-     * no hay pistas claras. "multi"/"dual" tiene prioridad; luego castellano,
-     * latino, inglés.
+     * Deja el nombre de un torrent listo para buscar palabras: todo a minúsculas y
+     * con **cualquier separador convertido en espacio**.
+     *
+     * Sin esto había que escribir cada palabra en sus mil formas (`cast.`,
+     * `[cast]`, `-CAST-`) y aun así se escapaban la mitad; normalizando primero,
+     * basta con la palabra rodeada de espacios y no hay falsos positivos con
+     * «podcast» o «Castle».
+     */
+    private fun normalize(name: String): String =
+        " " + name.lowercase()
+            .replace(Regex("[._\\-\\[\\]()/+,;:!¡?¿|]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim() + " "
+
+    /**
+     * Detecta el idioma de un nombre de torrent. Devuelve el código o null si no
+     * hay pistas claras.
+     *
+     * **El castellano se comprueba ANTES que multi/dual**, y es a propósito: antes
+     * iba al revés y un «Oliver y Benji Dual Castellano Japonés» se marcaba como
+     * «multi» en vez de español, así que con el idioma puesto en castellano el
+     * enlace se hundía en la lista. Un dual con castellano dentro **se puede ver en
+     * castellano**, que es lo único que importa aquí. «multi» queda para cuando
+     * dice dual y no dice de qué idiomas.
      */
     fun detect(name: String): String? {
-        val n = " " + name.lowercase().replace('.', ' ').replace('_', ' ') + " "
-        // multi/dual primero (suele incluir varios)
-        if (byCode("multi")!!.keywords.any { n.contains(it) }) return "multi"
-        for (code in listOf("es-ES", "es-LA", "en")) {
+        val n = normalize(name)
+        for (code in listOf("es-ES", "es-LA", "multi", "en")) {
             val info = byCode(code)!!
             if (info.keywords.any { n.contains(it) }) return code
         }

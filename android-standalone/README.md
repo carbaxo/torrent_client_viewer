@@ -73,16 +73,11 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
   españolas no dan magnet: DonTorrent da `.torrent`. Y lo que se añade aquí
   **aparece luego en la ficha del título** como un enlace más (ver «Mi
   Real-Debrid» más abajo), que es la vía para lo que no está en ningún buscador.
-  **La vía que nunca falla: subir el `.torrent` desde el dispositivo.** El
-  navegador ya sabe bajar el fichero, así que la app **no tiene que leer ninguna
-  página**. Dos formas: el botón **«Subir un .torrent»** (selector de archivos), o
-  pulsar el `.torrent` recién bajado y **abrirlo con VizPlay** — se sube solo. Hay
-  filtros de intent para el tipo MIME `application/x-bittorrent` y **también por
-  extensión**, porque muchos servidores mandan los `.torrent` como
-  `octet-stream` y con el MIME no basta. Antes de subirlo se comprueba que es un
-  torrent de verdad (que `Bencode` le saque el infohash), y los bytes se leen en el
-  momento: un `content://` de otra app solo se puede leer mientras vive el permiso
-  del intent.
+  **Se quitó** el poder subir un `.torrent` (desde el selector o abriéndolo con
+  VizPlay) y el leer la página de una ficha para sacarlo. Funcionaba a medias y
+  daba más problemas que soluciones: Real-Debrid rechaza muchos torrents con
+  `infringing_file`, y de las páginas no siempre se puede extraer el enlace. Queda
+  el magnet, que es lo que sí funciona.
   Lo más fiable de las vías por enlace no es copiar y pegar sino **Compartir → VizPlay** desde el
   navegador: en el móvil es facilísimo que el copiar y pegar se lleve el enlace **a
   medias**, y entonces no hay forma de reconstruirlo. `Links.kt` limpia lo que
@@ -155,6 +150,22 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
       abrir desde el entorno de compilación era un pozo sin fondo. Resolver **un**
       enlace que el usuario ya encontró es un problema pequeño y cerrado, y hace lo
       mismo con muchísimo menos que romperse.
+  **Filtro por IDIOMA** en la ficha, que no existía: el orden de idiomas de Ajustes
+  solo *ordenaba*, así que con «español» configurado los ingleses seguían saliendo
+  detrás y parecía que el ajuste se ignoraba. Arranca en «Mis idiomas» (los de
+  Ajustes) y los de idioma **desconocido no se ocultan nunca**, porque la detección
+  se hace por el nombre del torrent y falla a menudo — ocultarlos se llevaría por
+  delante enlaces buenos, que es el error que ya se cometió con el filtro de
+  calidad.
+  La **detección de idioma** se arregló en dos puntos: el castellano se comprueba
+  **antes** que multi/dual (un «Oliver y Benji Dual Castellano Japonés» se marcaba
+  como «multi» y se hundía en la lista), y si entre las banderas está la de España
+  gana el castellano. Además el nombre se **normaliza** antes de buscar palabras
+  —puntos, guiones y corchetes pasan a espacios—, así `[CAST]`, `.Cast.` y `-CAST-`
+  casan todos sin que «podcast» o «Castle» den falsos positivos.
+  Los enlaces se **pintan conforme llega cada motor** en vez de esperar a todos: con
+  seis peticiones se esperaba a la más lenta, así que un addon atascado dejaba la
+  ficha en blanco veinte segundos aunque los demás hubieran contestado ya.
   Los chips de motor se muestran **siempre, incluso con (0)**. Antes se escondía
   el motor sin resultados, y eso hacía imposible saber si un addon no había
   traído nada o si el motor no existía en la app.

@@ -124,25 +124,9 @@ class MainActivity : AppCompatActivity() {
      * app no tiene que interpretar el HTML de ninguna web.
      */
     private fun handleIncoming(i: Intent?) {
-        if (i == null) return
-        // Un fichero puede venir como dato del VIEW o como adjunto del SEND. El tipo
-        // se pone a mano en getParcelableExtra: sin él, Kotlin no puede inferirlo.
-        @Suppress("DEPRECATION")
-        val adjunto: android.net.Uri? = i.getParcelableExtra<android.net.Uri>(Intent.EXTRA_STREAM)
-        val stream: android.net.Uri? =
-            i.data?.takeIf { it.scheme == "content" || it.scheme == "file" } ?: adjunto
-        when (i.action) {
-            Intent.ACTION_VIEW -> {
-                val d = i.dataString.orEmpty()
-                // El magnet es un esquema, no un fichero: va por el otro camino
-                if (d.startsWith("magnet:", true)) MagnetInbox.offer(d)
-                else if (stream != null) MagnetInbox.offerFile(stream)
-                else MagnetInbox.offer(d)
-            }
-            Intent.ACTION_SEND -> {
-                val t = i.getStringExtra(Intent.EXTRA_TEXT)
-                if (!t.isNullOrBlank()) MagnetInbox.offer(t) else MagnetInbox.offerFile(stream)
-            }
+        when (i?.action) {
+            Intent.ACTION_VIEW -> MagnetInbox.offer(i.dataString)
+            Intent.ACTION_SEND -> MagnetInbox.offer(i.getStringExtra(Intent.EXTRA_TEXT))
         }
     }
 
@@ -2177,53 +2161,31 @@ private fun RdCloudSection(onPlayUrl: (String) -> Unit) {
         refresh()
     }
 
-    /** Torrent (magnet o .torrent, directo o dentro de una página) → a la cuenta. */
-    fun addTorrentish(v: String) {
-        msg = if (v.startsWith("magnet:", true)) "Añadiendo el magnet a Real-Debrid…"
-        else "Buscando el torrent en ese enlace…"
-        LinkAdd.addToRd(v) { id, err, what ->
-            onMain {
-                busy = false
-                if (id == null) msg = err ?: "No se pudo añadir."
-                else addedToRd(what)
-            }
-        }
-    }
-
     fun add() {
-        // Se limpia aquí también, para que la decisión de qué camino tomar se haga
-        // sobre el enlace de verdad y no sobre lo que trae pegado el portapapeles.
+        // Se limpia antes de decidir el camino: el portapapeles trae morralla (el
+        // «#:~:text=…» de Chrome, el «https://» que falta) y la decisión debe
+        // tomarse sobre el enlace de verdad.
         val v = Links.tidy(input)
         busy = true
-        when {
-            // Seguro que es un torrent
-            v.startsWith("magnet:", true) || v.substringBefore('?').endsWith(".torrent", true) ->
-                addTorrentish(v)
-            // Cualquier otro enlace: primero se prueba como HOSTER (1fichier, Mega…),
-            // que es el "Descargador" de la web de RD. Si RD no lo reconoce, se
-            // prueba como PÁGINA de una web de torrents y se busca dentro el magnet
-            // o el .torrent. Se hace en este orden y con reserva en vez de adivinar
-            // por la pinta de la URL: adivinando, una web nueva no funcionaria.
-            else -> {
-                msg = "Preparando el enlace con Real-Debrid…"
-                RealDebrid.unrestrict(v) { url, name, err ->
-                    onMain {
-                        if (url != null) {
-                            busy = false
-                            RdDownloads.enqueue(ctx, url, name ?: "video")
-                            input = ""; msg = "⬇ Descarga encolada: ${name ?: ""}"
-                        } else {
-                            msg = "No es un enlace de hoster; miro si la página tiene un torrent…"
-                            LinkAdd.addToRd(v) { id, err2, what ->
-                                onMain {
-                                    busy = false
-                                    if (id != null) addedToRd(what)
-                                    // Se da el error de la PÁGINA, no el del hoster:
-                                    // es el del camino que el usuario buscaba.
-                                    else msg = err2 ?: err ?: "No se pudo añadir."
-                                }
-                            }
-                        }
+        if (v.startsWith("magnet:", true)) {
+            msg = "Añadiendo el magnet a Real-Debrid…"
+            RealDebrid.addMagnet(v) { id, err ->
+                onMain {
+                    busy = false
+                    if (id == null) msg = err ?: "No se pudo añadir."
+                    else addedToRd("magnet")
+                }
+            }
+        } else {
+            // Enlace de hoster (1fichier, Mega…): es el "Descargador" de la web de RD
+            msg = "Preparando el enlace con Real-Debrid…"
+            RealDebrid.unrestrict(v) { url, name, err ->
+                onMain {
+                    busy = false
+                    if (url == null) msg = err ?: "No se pudo preparar el enlace."
+                    else {
+                        RdDownloads.enqueue(ctx, url, name ?: "video")
+                        input = ""; msg = "⬇ Descarga encolada: ${name ?: ""}"
                     }
                 }
             }
@@ -2237,33 +2199,6 @@ private fun RdCloudSection(onPlayUrl: (String) -> Unit) {
             msg = "Pegado. Pulsa «Añadir a Real-Debrid»."
             MagnetInbox.clear()
         }
-    }
-
-    /** Sube un .torrent del dispositivo. Es la vía que no depende de ninguna web. */
-    fun subirTorrent(uri: android.net.Uri) {
-        busy = true; msg = "Subiendo el .torrent a Real-Debrid…"
-        LinkAdd.addFile(ctx, uri) { id, err ->
-            onMain {
-                busy = false
-                if (id == null) msg = err ?: "No se pudo subir el .torrent."
-                else addedToRd(".torrent del dispositivo")
-            }
-        }
-    }
-
-    // Un .torrent que llega de fuera: el que acaba de bajar el navegador y se abre
-    // con VizPlay, o uno compartido desde el gestor de archivos. Se sube solo: si
-    // el usuario ya ha elegido "abrir con VizPlay", preguntarle otra vez sobra.
-    LaunchedEffect(MagnetInbox.pendingFile) {
-        MagnetInbox.pendingFile?.let { uri ->
-            expanded = true
-            subirTorrent(uri)
-            MagnetInbox.clearFile()
-        }
-    }
-
-    val pickTorrent = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) subirTorrent(uri)
     }
 
     // Refresco: rápido mientras RD esté trabajando, lento si no hay nada en marcha
@@ -2293,26 +2228,20 @@ private fun RdCloudSection(onPlayUrl: (String) -> Unit) {
                 )
             } else {
                 Text(
-                    "Acepta un magnet, un .torrent y también la PÁGINA de la ficha de una " +
-                        "web de torrents: si le pegas la página, abre y busca dentro el " +
-                        "magnet o el .torrent. Real-Debrid lo baja a sus servidores y luego " +
-                        "se ve al instante. Y lo que añadas aquí aparecerá después en la " +
-                        "ficha del título, como un enlace más — es la vía para lo que no " +
-                        "está en ningún buscador, como los dibujos en castellano. Un enlace " +
+                    "Pega un magnet y Real-Debrid lo baja a sus servidores; luego se ve al " +
+                        "instante. Y lo que añadas aquí aparecerá después en la ficha del " +
+                        "título como un enlace más, en el motor «Mi Real-Debrid». Un enlace " +
                         "de hoster (1fichier, Mega…) se prepara y se descarga directamente.",
                     color = Muted, style = MaterialTheme.typography.bodySmall
                 )
                 Text(
-                    "💡 Lo más fácil y lo que nunca falla: baja el .torrent con el navegador " +
-                        "y pulsa «Subir un .torrent». O al acabar la descarga, pulsa el " +
-                        "fichero y elige VizPlay: se sube solo. Así no hay que leer ninguna " +
-                        "web. También vale Compartir → VizPlay desde el navegador, que llega " +
-                        "el enlace entero sin riesgo de dejarse un trozo al copiar.",
+                    "💡 Desde el navegador: Compartir → VizPlay. Llega el enlace entero, sin " +
+                        "riesgo de dejarse un trozo al copiar y pegar.",
                     color = OkGreen, style = MaterialTheme.typography.labelSmall
                 )
                 OutlinedTextField(
                     value = input, onValueChange = { input = it },
-                    label = { Text("magnet:, .torrent, la página de la ficha o un enlace") },
+                    label = { Text("magnet:?xt=… o un enlace de hoster") },
                     minLines = 2, maxLines = 4,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -2329,18 +2258,6 @@ private fun RdCloudSection(onPlayUrl: (String) -> Unit) {
                         val t = cm?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString()
                         if (t.isNullOrBlank()) msg = "No hay nada copiado." else { input = t; msg = "" }
                     }) { Text("Pegar") }
-                    // El camino que no depende de leer ninguna web: el navegador baja
-                    // el .torrent y aquí se elige. Se aceptan varios tipos MIME porque
-                    // muchos servidores mandan los .torrent como octet-stream.
-                    OutlinedButton(
-                        enabled = !busy,
-                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape),
-                        onClick = {
-                            pickTorrent.launch(
-                                arrayOf("application/x-bittorrent", "application/octet-stream", "*/*")
-                            )
-                        }
-                    ) { Text("Subir un .torrent") }
                     if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 }
                 if (msg.isNotBlank()) Text(msg, color = Muted, style = MaterialTheme.typography.labelSmall)
@@ -2483,11 +2400,28 @@ fun SourcesSection(
     // Filtro de calidad, local a esta pantalla. Las que no se identifican van al
     // chip "Otras": así se pueden ver siempre (antes desaparecían sin más).
     var qualityFilter by remember { mutableStateOf("all") }
+    /**
+     * Filtro de IDIOMA, que antes no existía: el orden de idiomas de Ajustes solo
+     * ORDENABA, así que con «español» configurado seguían saliendo los ingleses
+     * detrás y la lista parecía ignorar el ajuste.
+     *
+     * Arranca en «mis idiomas» (los de Ajustes) porque es lo que espera quien los
+     * ha configurado. Los de idioma **desconocido no se esconden nunca**: la
+     * detección se hace por el nombre del torrent y falla a menudo, así que
+     * ocultarlos se llevaría por delante enlaces buenos — es el mismo error que ya
+     * se cometió una vez con el filtro de calidad.
+     */
+    var langFilter by remember { mutableStateOf("mine") }
     val byEngine = sources.filter { it.fromEngine(engineFilter) }
-    val filtered = when (qualityFilter) {
+    val byLang = when (langFilter) {
         "all" -> byEngine
-        Search.QUALITY_OTHER -> byEngine.filter { it.quality == Search.QUALITY_OTHER }
-        else -> byEngine.filter { it.quality == qualityFilter }
+        "mine" -> byEngine.filter { it.lang == null || it.lang in Prefs.languageOrder }
+        else -> byEngine.filter { it.lang == langFilter }
+    }
+    val filtered = when (qualityFilter) {
+        "all" -> byLang
+        Search.QUALITY_OTHER -> byLang.filter { it.quality == Search.QUALITY_OTHER }
+        else -> byLang.filter { it.quality == qualityFilter }
     }
     // Los que ya están en la cuenta de RD suben al principio. sortedByDescending
     // es estable, así que dentro de cada grupo se mantiene el orden por motor,
@@ -2631,6 +2565,40 @@ fun SourcesSection(
                 )
             }
         }
+        // Chips de IDIOMA. "Mis idiomas" son los de Ajustes; siempre entran además
+        // los de idioma desconocido, porque la detección por el nombre falla mucho.
+        if (byEngine.isNotEmpty()) {
+            val idiomas = byEngine.mapNotNull { it.lang }.distinct()
+            val sinIdioma = byEngine.count { it.lang == null }
+            if (idiomas.size > 1 || (idiomas.isNotEmpty() && sinIdioma > 0)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = langFilter == "mine",
+                        onClick = { langFilter = "mine" },
+                        modifier = Modifier.tvFocusRing(RoundedCornerShape(8.dp)),
+                        label = {
+                            Text("Mis idiomas (${byEngine.count { it.lang == null || it.lang in Prefs.languageOrder }})")
+                        }
+                    )
+                    idiomas.forEach { code ->
+                        FilterChip(
+                            selected = langFilter == code,
+                            onClick = { langFilter = code },
+                            modifier = Modifier.tvFocusRing(RoundedCornerShape(8.dp)),
+                            label = {
+                                Text("${Lang.flag(code)} ${byEngine.count { it.lang == code }}")
+                            }
+                        )
+                    }
+                    FilterChip(
+                        selected = langFilter == "all",
+                        onClick = { langFilter = "all" },
+                        modifier = Modifier.tvFocusRing(RoundedCornerShape(8.dp)),
+                        label = { Text("Todos (${byEngine.size})") }
+                    )
+                }
+            }
+        }
         // Chips de calidad (solo las presentes en los enlaces de este motor)
         if (byEngine.isNotEmpty()) {
             val present = Search.QUALITIES.filter { q -> byEngine.any { it.quality == q } } +
@@ -2660,8 +2628,11 @@ fun SourcesSection(
         }
         if (loading) Text("Buscando fuentes…", color = Muted, style = MaterialTheme.typography.bodySmall)
         if (sources.isNotEmpty() && shown.isEmpty()) Text(
-            if (byEngine.isEmpty()) "Sin enlaces de este motor para este título; prueba \"Todos\"."
-            else "Ningún enlace con esa calidad; prueba \"Todas\".",
+            when {
+                byEngine.isEmpty() -> "Sin enlaces de este motor para este título; prueba \"Todos\"."
+                byLang.isEmpty() -> "Ningún enlace en tus idiomas; toca \"Todos\" para verlos igual."
+                else -> "Ningún enlace con esa calidad; prueba \"Todas\"."
+            },
             color = WarnAmber, style = MaterialTheme.typography.bodySmall
         )
         if (sources.isNotEmpty()) {
@@ -2945,32 +2916,43 @@ fun DetailScreen(
         val wantPacks = title.type == "series"
         var remaining = (if (wantPacks) engineCount * 2 else engineCount) + 1
         var lastErr: String? = null
+        /**
+         * Va PINTANDO los enlaces conforme contesta cada motor, en vez de esperar a
+         * que hayan contestado todos.
+         *
+         * Es lo que hacía que la busqueda pareciera lentisima: con seis peticiones
+         * (tres motores por episodio, tres por packs) se esperaba a la MAS LENTA
+         * para mostrar algo, asi que un addon atascado dejaba la ficha en blanco
+         * veinte segundos aunque los otros hubieran contestado al instante. Ahora
+         * la rueda solo indica que aun queda alguno por llegar.
+         */
         fun part(list: List<Search.Result>?, err: String?) = onMain {
             if (list != null) acc.addAll(list) else lastErr = err
-            if (--remaining <= 0) {
-                // Un mismo torrent puede venir de los dos motores: se queda el
-                // que trae mas seeders, pero recordando que lo dieron ambos (asi
-                // sigue apareciendo en las dos pestanas).
-                val byHash = LinkedHashMap<String, Search.Result>()
-                for (r in acc) {
-                    val prev = byHash[r.infoHash]
-                    byHash[r.infoHash] = if (prev == null) r
-                    else (if (r.seeders > prev.seeders) r else prev).copy(
-                        engine = Search.mergeEngines(prev.engine, r.engine),
-                        // De cada campo se queda el que informa: un motor puede dar
-                        // el nombre del fichero y el otro solo su etiqueta.
-                        name = Search.bestName(prev.name, r.name),
-                        sizeBytes = maxOf(prev.sizeBytes, r.sizeBytes),
-                        seeders = maxOf(prev.seeders, r.seeders),
-                        quality = if (prev.quality != Search.QUALITY_OTHER) prev.quality else r.quality,
-                        lang = prev.lang ?: r.lang,
-                        info = prev.info.ifBlank { r.info },
-                        // Si alguno de los dos lo dio como pack, lo es
-                        pack = prev.pack || r.pack
-                    )
-                }
+            remaining--
+            // Un mismo torrent puede venir de varios motores: se queda el que trae
+            // mas seeders, pero recordando que lo dieron todos (asi sigue
+            // apareciendo en las pestanas de cada uno).
+            val byHash = LinkedHashMap<String, Search.Result>()
+            for (r in acc) {
+                val prev = byHash[r.infoHash]
+                byHash[r.infoHash] = if (prev == null) r
+                else (if (r.seeders > prev.seeders) r else prev).copy(
+                    engine = Search.mergeEngines(prev.engine, r.engine),
+                    // De cada campo se queda el que informa: un motor puede dar
+                    // el nombre del fichero y el otro solo su etiqueta.
+                    name = Search.bestName(prev.name, r.name),
+                    sizeBytes = maxOf(prev.sizeBytes, r.sizeBytes),
+                    seeders = maxOf(prev.seeders, r.seeders),
+                    quality = if (prev.quality != Search.QUALITY_OTHER) prev.quality else r.quality,
+                    lang = prev.lang ?: r.lang,
+                    info = prev.info.ifBlank { r.info },
+                    // Si alguno de los dos lo dio como pack, lo es
+                    pack = prev.pack || r.pack
+                )
+            }
+            sources = Search.sortByEngineAndLang(byHash.values.toList(), Prefs.languageOrder)
+            if (remaining <= 0) {
                 loadingSources = false
-                sources = Search.sortByEngineAndLang(byHash.values.toList(), Prefs.languageOrder)
                 if (sources.isEmpty()) status = lastErr ?: "Sin fuentes"
             }
         }

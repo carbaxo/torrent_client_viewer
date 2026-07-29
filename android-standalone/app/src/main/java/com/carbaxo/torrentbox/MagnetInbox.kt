@@ -42,21 +42,4 @@ object MagnetInbox {
     }
 
     fun clear() { pending = null }
-
-    /**
-     * Un **fichero .torrent** que llega de fuera: al pulsar el que acaba de bajar
-     * el navegador, o al compartirlo desde el gestor de archivos.
-     *
-     * Va aparte de [pending] porque no es texto: es un `content://` del que hay que
-     * leer los bytes, y hay que hacerlo **mientras el permiso del intent sigue
-     * vivo**. Es el camino más sencillo de todos para las webs que no dan magnet:
-     * el navegador ya sabe bajar el fichero, así que la app no tiene que leer
-     * ninguna página.
-     */
-    var pendingFile by mutableStateOf<android.net.Uri?>(null)
-        private set
-
-    fun offerFile(uri: android.net.Uri?) { if (uri != null) pendingFile = uri }
-
-    fun clearFile() { pendingFile = null }
 }

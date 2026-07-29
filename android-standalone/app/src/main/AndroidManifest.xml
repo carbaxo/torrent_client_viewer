@@ -77,32 +77,6 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
-            <!-- Abrir un FICHERO .torrent con VizPlay: se sube a Real-Debrid tal
-                 cual. Es la via mas simple para las webs que no dan magnet (las
-                 espanolas): el navegador ya sabe bajar el fichero, asi que la app
-                 no tiene que interpretar el HTML de ninguna pagina. -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:mimeType="application/x-bittorrent" />
-            </intent-filter>
-            <!-- Muchos servidores mandan los .torrent como octet-stream, asi que
-                 con el tipo MIME no basta: se filtra tambien por la extension. El
-                 host "*" es obligatorio para que pathPattern se tenga en cuenta. -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.torrent" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.torrent" />
-            </intent-filter>
-            <!-- Y compartir el propio fichero desde el gestor de archivos -->
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="application/x-bittorrent" />
-            </intent-filter>
         </activity>
 
         <activity

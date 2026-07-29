@@ -18,8 +18,13 @@ import java.util.concurrent.TimeUnit
  */
 object Addon {
 
+    /**
+     * Tiempos de espera cortos a propósito. Un addon atascado no debe tener la
+     * búsqueda esperando: si en 12 segundos no ha contestado, no va a contestar, y
+     * los enlaces de los demás motores ya se están mostrando.
+     */
     val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).build()
+        .connectTimeout(8, TimeUnit.SECONDS).readTimeout(12, TimeUnit.SECONDS).build()
 
     /** Los addons marcan las semillas de varias formas; ninguna es obligatoria. */
     private val SEEDERS = Regex("(?:👤|seeders?\\s*:?)\\s*(\\d+)", RegexOption.IGNORE_CASE)

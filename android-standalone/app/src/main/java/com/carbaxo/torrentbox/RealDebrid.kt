@@ -5,7 +5,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import okhttp3.FormBody
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
@@ -415,47 +414,6 @@ object RealDebrid {
                     return@submit onDone(null, "Eso no es un magnet (tiene que empezar por «magnet:?xt=…»).")
                 val id = rd("POST", "/torrents/addMagnet", mapOf("magnet" to m)).optString("id", "")
                 if (id.isBlank()) return@submit onDone(null, "Real-Debrid no aceptó el magnet.")
-                val err = prepare(id)
-                if (err != null) return@submit onDone(null, err)
-                onDone(id, null)
-            } catch (e: Throwable) {
-                onDone(null, e.message ?: "Error de Real-Debrid.")
-            }
-        }
-    }
-
-    /**
-     * Sube un fichero **.torrent** a la cuenta.
-     *
-     * Hace falta porque webs como DonTorrent no dan magnet, dan el `.torrent`.
-     * Subir el fichero es más fiable que sacarle el infohash y mandar un magnet:
-     * el fichero ya trae los metadatos, así que RD no tiene que buscarlos por la
-     * red y no se queda en «leyendo el magnet» con los torrents con pocas semillas.
-     *
-     * Va por PUT con el cuerpo binario, que es como lo pide la API de RD; por eso
-     * no puede usar [rdRaw], que solo monta formularios.
-     */
-    fun addTorrentFile(data: ByteArray, onDone: (String?, String?) -> Unit) {
-        io.submit {
-            try {
-                if (!configured) return@submit onDone(null, "Conecta Real-Debrid primero.")
-                val body = okhttp3.RequestBody.create(
-                    "application/x-bittorrent".toMediaTypeOrNull(), data
-                )
-                val req = Request.Builder().url("$API/torrents/addTorrent")
-                    .header("Authorization", "Bearer $token").put(body).build()
-                val id = client.newCall(req).execute().use { r ->
-                    val b = r.body?.string() ?: ""
-                    if (!r.isSuccessful) {
-                        val why = runCatching { JSONObject(b).optString("error", "") }.getOrDefault("")
-                        throw RuntimeException(
-                            if (why.isNotBlank()) errorEs(why)
-                            else "Real-Debrid respondió ${r.code} al subir el .torrent."
-                        )
-                    }
-                    runCatching { JSONObject(b).optString("id", "") }.getOrDefault("")
-                }
-                if (id.isBlank()) return@submit onDone(null, "Real-Debrid no aceptó el .torrent.")
                 val err = prepare(id)
                 if (err != null) return@submit onDone(null, err)
                 onDone(id, null)
