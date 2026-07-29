@@ -19,8 +19,7 @@ import java.util.concurrent.TimeUnit
  * que el propio (BuildConfig.CI_BUILD) descarga el APK y lanza el instalador.
  */
 object Update {
-    /** url = enlace público; assetApiUrl = el de la API (necesario si el repo es privado). */
-    data class Info(val build: Int, val url: String, val assetApiUrl: String = "")
+    data class Info(val build: Int, val url: String)
 
     private const val RELEASE_API =
         "https://api.github.com/repos/carbaxo/torrent_client_viewer/releases/tags/android-latest"
@@ -31,11 +30,6 @@ object Update {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
-    // Para descargar el APK de un repo privado hay que seguir la redirección a
-    // mano: el enlace firmado al que apunta rechaza la cabecera Authorization.
-    private val noRedirect = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS)
-        .followRedirects(false).build()
     private val io = Executors.newSingleThreadExecutor()
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
     private fun onMain(b: () -> Unit) { main.post(b) }
@@ -58,24 +52,16 @@ object Update {
     fun check() {
         io.submit {
             try {
-                val tok = Prefs.githubToken
                 val b = Request.Builder().url(RELEASE_API)
-                    .header("User-Agent", "TorrentBox")
+                    .header("User-Agent", "VizPlay")
                     .header("Accept", "application/vnd.github+json")
-                if (tok.isNotBlank()) b.header("Authorization", "Bearer $tok")
                 client.newCall(b.build()).execute().use { resp ->
                     if (!resp.isSuccessful) {
                         // Un fallo NUNCA se traduce en "estás en la última versión":
                         // eso sería afirmar algo que no se ha podido comprobar.
-                        val msg = when {
-                            // El repositorio es publico, asi que un 404 ya no significa
-                            // "falta el token": significa que no hay Release publicada.
-                            resp.code == 404 && tok.isBlank() ->
-                                "No hay ninguna Release publicada todavía (HTTP 404)."
-                            resp.code == 404 || resp.code == 401 || resp.code == 403 ->
-                                if (tok.isBlank()) "No se pudo consultar la Release (HTTP ${resp.code})."
-                                else "El token de GitHub no vale o ha caducado (HTTP ${resp.code}). " +
-                                    "El repositorio es público, así que puedes borrarlo: ya no hace falta."
+                        val msg = when (resp.code) {
+                            404 -> "No hay ninguna Release publicada todavía."
+                            403 -> "GitHub está limitando las consultas; prueba en un rato."
                             else -> "No se pudo comprobar (HTTP ${resp.code})."
                         }
                         return@submit onMain { checked = true; available = null; status = msg }
@@ -83,7 +69,6 @@ object Update {
                     val d = JSONObject(resp.body?.string() ?: "{}")
                     val remoteBuild = Regex("Build (\\d+)").find(d.optString("body"))?.groupValues?.get(1)?.toIntOrNull() ?: 0
                     var url: String? = null
-                    var apiUrl = ""
                     d.optJSONArray("assets")?.let { arr ->
                         for (i in 0 until arr.length()) {
                             val a = arr.getJSONObject(i)
@@ -92,14 +77,13 @@ object Update {
                             // sin actualizar a las versiones ya instaladas.
                             if (a.optString("name").endsWith(".apk", ignoreCase = true)) {
                                 url = a.optString("browser_download_url")
-                                apiUrl = a.optString("url")
                             }
                         }
                     }
                     val newer = remoteBuild > BuildConfig.CI_BUILD
                     onMain {
                         checked = true
-                        available = if (newer && url != null) Info(remoteBuild, url!!, apiUrl) else null
+                        available = if (newer && url != null) Info(remoteBuild, url!!) else null
                         status = when {
                             available != null -> ""
                             // Sin número de build en el cuerpo no se puede comparar, y
@@ -117,30 +101,14 @@ object Update {
     }
 
     /**
-     * Abre el APK de la Release. Con repo privado hay que pedirlo a la API del
-     * asset con el token y seguir la redirección a mano, porque el enlace
-     * firmado de destino falla si se le manda la cabecera Authorization.
+     * Descarga el APK de la Release. Con el repositorio público basta el enlace
+     * normal: antes había que pedirlo a la API del asset con el token y seguir la
+     * redirección a mano, porque el enlace firmado de destino falla si se le manda
+     * la cabecera Authorization. Todo eso sobra.
      */
-    private fun openAsset(info: Info): okhttp3.Response {
-        val tok = Prefs.githubToken
-        if (tok.isBlank() || info.assetApiUrl.isBlank()) {
-            return client.newCall(
-                Request.Builder().url(info.url).header("User-Agent", "TorrentBox").build()
-            ).execute()
-        }
-        val first = noRedirect.newCall(
-            Request.Builder().url(info.assetApiUrl)
-                .header("User-Agent", "TorrentBox")
-                .header("Accept", "application/octet-stream")
-                .header("Authorization", "Bearer $tok").build()
-        ).execute()
-        val loc = first.header("Location")
-        if (loc == null) return first          // ya es el fichero (o un error)
-        first.close()
-        return client.newCall(
-            Request.Builder().url(loc).header("User-Agent", "TorrentBox").build()
-        ).execute()
-    }
+    private fun openAsset(info: Info): okhttp3.Response = client.newCall(
+        Request.Builder().url(info.url).header("User-Agent", "VizPlay").build()
+    ).execute()
 
     /** Descarga el APK de la Release y abre el instalador del sistema. */
     fun downloadAndInstall(ctx: Context) {
