@@ -71,7 +71,8 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
   sin semillas…) y botones Ver / Descargar / quitar. Es la salida a los dos fallos
   que no dependen de la app: que RD **aún no tenga el torrent cacheado** o que **el
   archivo se haya borrado** de su caché. Y lo que se añade aquí **aparece luego en
-  la ficha del título** como un enlace más (ver «Mi Real-Debrid»), que es la vía
+  la ficha del título** como un enlace más (ver «lo que ya está en tu Real-Debrid»),
+  que es la vía
   para lo que no está en ningún buscador.
   - También se puede pulsar un magnet **en el navegador**, **compartirlo** con
     VizPlay, y cuando un enlace de la ficha falla el propio aviso ofrece
@@ -109,9 +110,9 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
 - 📺 **Chromecast**: se elige la TV en la barra superior (antes de abrir nada) y
   luego cada título va a esa TV; envía la versión con **audio AAC** convertida
   por Real-Debrid para que suene (el Chromecast no decodifica Dolby/DTS).
-- Buscador con **cuatro motores** (dos fijos, dos que aparecen si aplican), con un
-  chip por motor en cada ficha y los enlaces **ordenados Mi Real-Debrid → Extra →
-  Peerflix → Torrentio**:
+- Buscador con **dos motores fijos y uno opcional**, con un chip por motor en cada
+  ficha, más lo que ya tengas en tu Real-Debrid (que **no lleva chip**, ver abajo).
+  Los enlaces salen **ordenados: tu Real-Debrid → Extra → Peerflix → Torrentio**:
   - **Peerflix**: es donde están las versiones en español. Sus proveedores son
     **DonTorrent, MejorTorrent, Wolfmax4K, Popcorntime y Bitsearch** — o sea que
     las webs españolas ya están cubiertas aquí; un motor aparte dedicado a
