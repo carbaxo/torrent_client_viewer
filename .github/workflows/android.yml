@@ -16,6 +16,16 @@ on:
 permissions:
   contents: write
 
+# Un solo build publicando a la vez. Hace falta porque el paso de publicar BORRA
+# y RECREA el tag android-latest: con dos runs a la vez (tres pushes seguidos en
+# un minuto, por ejemplo), uno crea la Release y el otro se la borra debajo, y el
+# primero acaba con "error listing assets: Not Found -> Too many retries".
+# Y de paso no se gastan minutos compilando commits que ya han quedado atrás:
+# cancel-in-progress deja solo el último, que es el que importa.
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -50,16 +60,19 @@ jobs:
           cp app/build/outputs/apk/debug/app-debug.apk VizPlay.apk
           cp app/build/outputs/apk/debug/app-debug.apk TorrentBox.apk
 
-      # El artefacto es solo una comodidad: si la cuenta se queda sin cuota de
-      # almacenamiento de artefactos, NO debe impedir publicar la Release (que
-      # es de donde se descarga el APK y no consume esa cuota).
+      # El artefacto se sube SOLO a mano (workflow_dispatch). La cuota de
+      # almacenamiento de artefactos de la cuenta se ha llenado ("Artifact storage
+      # quota has been hit") y no tiene sentido gastarla: el APK se descarga de la
+      # Release, que es el mismo fichero y NO consume esa cuota. Sigue con
+      # continue-on-error para que, aun lleno, nunca impida publicar.
       - name: Upload APK as workflow artifact
+        if: github.event_name == 'workflow_dispatch'
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: VizPlay-apk
           path: android-standalone/VizPlay.apk
-          retention-days: 7
+          retention-days: 3
 
       # Borra el release/tag anterior para que la FECHA en GitHub se refresque
       # (al reutilizar el mismo tag, GitHub congela la fecha de publicación).
