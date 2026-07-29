@@ -42,6 +42,13 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
   atados a tu IP y expiran—, **se pide otro con el magnet guardado** y sigue
   desde donde iba. Eso es lo que antes se veía como "se para a mitad": lo hacía
   el DownloadManager de Android, que no sabe pausar ni renovar un enlace muerto.
+- 🈯 **Los errores de Real-Debrid, en castellano y con la salida** (`errorEs`): la
+  API los manda con nombre de variable (`infringing_file`) y así no dicen ni qué
+  pasa ni qué hacer. El que más sale es ese: Real-Debrid tiene una lista de
+  torrents bloqueados por avisos de copyright, y el bloqueo va **por torrent
+  concreto y no por título**, así que la salida es probar otra versión del mismo
+  capítulo — y el mensaje ahora lo dice. Se traduce en **las dos** rutas de subida
+  (magnet y fichero `.torrent`); antes la del fichero soltaba el código en crudo.
 - 📊 **Estado de tu cuenta de Real-Debrid** (Ajustes → Real-Debrid): días de
   premium que quedan y fecha de caducidad, puntos de fidelidad y **huecos de
   torrent usados/total**, leídos de la propia API (`/user` y

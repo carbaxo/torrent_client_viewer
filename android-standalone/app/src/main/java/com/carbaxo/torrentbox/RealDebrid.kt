@@ -213,12 +213,43 @@ object RealDebrid {
             throw RuntimeException(
                 when {
                     resp.code == 401 -> "Token de Real-Debrid inválido o caducado."
-                    resp.code == 403 -> "Real-Debrid rechaza la cuenta (¿sin premium?)."
-                    why.isNotBlank() -> "Real-Debrid: $why"
+                    resp.code == 403 && why.isBlank() -> "Real-Debrid rechaza la cuenta (¿sin premium?)."
+                    why.isNotBlank() -> errorEs(why)
                     else -> "Real-Debrid respondió ${resp.code}."
                 }
             )
         }
+    }
+
+    /**
+     * Traduce los códigos de error de la API de Real-Debrid.
+     *
+     * La API los manda en inglés y con nombre de variable (`infringing_file`), y
+     * tal cual no dicen nada al usuario ni, sobre todo, **qué hacer**. El caso que
+     * más aparece es justo ese: Real-Debrid mantiene una lista de torrents
+     * bloqueados por avisos de copyright, y el bloqueo va **por torrent concreto**,
+     * no por título — así que la salida es probar otra versión del mismo capítulo,
+     * y eso hay que decirlo.
+     */
+    fun errorEs(code: String): String = when (code.trim().lowercase()) {
+        "infringing_file" ->
+            "Real-Debrid ha rechazado ese torrent: está en su lista de bloqueados por " +
+                "copyright. El bloqueo es de ese torrent concreto, no del título, así que " +
+                "prueba con otra versión del mismo capítulo."
+        "hoster_unavailable" -> "Ese servidor no está disponible ahora mismo en Real-Debrid."
+        "hoster_not_free", "hoster_unsupported" -> "Real-Debrid no admite ese servidor."
+        "too_many_active_downloads" -> "Demasiadas descargas activas en Real-Debrid; espera un momento."
+        "active_downloads_exceeded" -> "Has llegado al máximo de descargas a la vez de Real-Debrid."
+        "torrent_too_big" -> "El torrent es demasiado grande para tu cuenta de Real-Debrid."
+        "magnet_invalid", "torrent_file_invalid" -> "Real-Debrid no ha podido leer ese torrent (fichero o magnet no válido)."
+        "no_server" -> "Real-Debrid no tiene servidor libre para eso ahora."
+        "permission_denied" -> "Tu cuenta de Real-Debrid no tiene permiso para eso (¿sin premium?)."
+        "bad_token" -> "Token de Real-Debrid inválido o caducado."
+        "ip_not_allowed" -> "Real-Debrid no permite esta IP (¿VPN o red compartida?)."
+        "traffic_exhausted" -> "Se ha agotado el tráfico de tu cuenta de Real-Debrid."
+        "action_already_done" -> "Eso ya estaba hecho."
+        "unknown_ressource" -> "Real-Debrid no encuentra eso (¿borrado de la cuenta?)."
+        else -> "Real-Debrid: $code"
     }
 
     private fun rd(method: String, path: String, form: Map<String, String>? = null, tok: String = token): JSONObject =
@@ -418,7 +449,7 @@ object RealDebrid {
                     if (!r.isSuccessful) {
                         val why = runCatching { JSONObject(b).optString("error", "") }.getOrDefault("")
                         throw RuntimeException(
-                            if (why.isNotBlank()) "Real-Debrid: $why"
+                            if (why.isNotBlank()) errorEs(why)
                             else "Real-Debrid respondió ${r.code} al subir el .torrent."
                         )
                     }
