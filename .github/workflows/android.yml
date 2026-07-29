@@ -48,8 +48,29 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      # La clave de firma NO esta en el repositorio (es publico). Viene del
+      # secreto KEYSTORE_B64 (el .keystore en base64). Sin ese secreto se compila
+      # igual, pero con la clave de depuracion por defecto de Android: el APK
+      # servira para instalar de cero y NO para actualizar los ya instalados.
+      - name: Restaurar la clave de firma
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            printf '%s' "$KEYSTORE_B64" | base64 -d > torrentbox.keystore
+            echo "Clave de firma restaurada ($(stat -c%s torrentbox.keystore) bytes)."
+          else
+            echo "::warning::Sin KEYSTORE_B64: el APK se firmara con la clave de depuracion y NO actualizara las instalaciones existentes."
+          fi
+
       - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace --no-daemon
+        env:
+          VIZPLAY_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          VIZPLAY_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          VIZPLAY_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: >-
+          ./gradlew assembleDebug --stacktrace --no-daemon
+          -PTMDB_KEY="${{ secrets.TMDB_KEY }}"
 
       # El alias TorrentBox.apk sigue publicandose porque las versiones <=74
       # buscaban ese nombre EXACTO; sin el se quedarian sin auto-actualizacion y

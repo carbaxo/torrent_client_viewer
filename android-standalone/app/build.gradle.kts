@@ -29,24 +29,45 @@ android {
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"${project.findProperty("GOOGLE_WEB_CLIENT_ID") ?: ""}\"")
     }
 
-    // Firma estable (misma SHA-1 en cada build) para poder registrar la app
-    // en Firebase y que funcione el login con Google.
+    // Firma estable (misma SHA-1 en cada build): hace falta para registrar la app
+    // en Firebase, para que funcione el login con Google y, sobre todo, para que
+    // Android acepte un APK nuevo como ACTUALIZACIÓN del ya instalado.
+    //
+    // La clave NO vive en el repositorio, que es público. Quien tenga la clave y su
+    // contraseña puede firmar un APK que Android instalará encima de esta app, así
+    // que va como secreto de CI y, en local, como fichero que no se versiona. Si no
+    // hay clave, se compila igual: Android usa su clave de depuración por defecto,
+    // pero el APK resultante NO servirá para actualizar los ya instalados.
+    val keystoreFile = file(System.getenv("VIZPLAY_KEYSTORE") ?: "../torrentbox.keystore")
+    val keystorePass = System.getenv("VIZPLAY_KEYSTORE_PASSWORD")
+        ?: project.findProperty("KEYSTORE_PASSWORD") as String?
+    val aliasName = System.getenv("VIZPLAY_KEY_ALIAS")
+        ?: project.findProperty("KEY_ALIAS") as String? ?: "torrentbox"
+    val aliasPass = System.getenv("VIZPLAY_KEY_PASSWORD")
+        ?: project.findProperty("KEY_PASSWORD") as String? ?: keystorePass
+    val canSign = keystoreFile.exists() && !keystorePass.isNullOrBlank()
+
     signingConfigs {
-        create("app") {
-            storeFile = file("../torrentbox.keystore")
-            storePassword = "torrentbox"
-            keyAlias = "torrentbox"
-            keyPassword = "torrentbox"
+        if (canSign) {
+            create("app") {
+                storeFile = keystoreFile
+                storePassword = keystorePass
+                keyAlias = aliasName
+                keyPassword = aliasPass
+            }
         }
     }
 
     buildTypes {
+        // findByName y no getByName: sin clave la configuración no existe, y
+        // getByName reventaría la compilación en vez de recurrir a la de
+        // depuración, que es lo que se quiere para quien clone el repo.
         debug {
-            signingConfig = signingConfigs.getByName("app")
+            signingConfigs.findByName("app")?.let { signingConfig = it }
         }
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("app")
+            signingConfigs.findByName("app")?.let { signingConfig = it }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

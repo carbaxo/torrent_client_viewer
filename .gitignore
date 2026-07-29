@@ -15,3 +15,8 @@ android-standalone/app/build/
 android-standalone/local.properties
 android-standalone/.idea/
 *.iml
+
+# Clave de firma del APK: NUNCA al repositorio (es público). Quien la tenga puede
+# firmar un APK que Android instalará como actualización de la app.
+*.keystore
+*.jks
