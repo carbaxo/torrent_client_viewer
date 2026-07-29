@@ -48,7 +48,8 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
   torrents bloqueados por avisos de copyright, y el bloqueo va **por torrent
   concreto y no por título**, así que la salida es probar otra versión del mismo
   capítulo — y el mensaje ahora lo dice. Se traduce en **las dos** rutas de subida
-  (magnet y fichero `.torrent`); antes la del fichero soltaba el código en crudo.
+  capítulo. Se traducen también los demás códigos que salen de verdad (tráfico
+  agotado, demasiadas descargas, IP no permitida, torrent demasiado grande…).
 - 📊 **Estado de tu cuenta de Real-Debrid** (Ajustes → Real-Debrid): días de
   premium que quedan y fecha de caducidad, puntos de fidelidad y **huecos de
   torrent usados/total**, leídos de la propia API (`/user` y
@@ -63,39 +64,31 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
   una app no puede escribir por ruta fuera de lo suyo. Si la carpeta deja de
   estar disponible (tarjeta fuera, permiso revocado), la descarga **cae a la
   carpeta de la app en vez de fallar**.
-- ➕ **Añadir un magnet, un .torrent o la página de una ficha** (pestaña
-  Descargas): acepta las tres cosas. Si le pegas la **página** de la ficha de una
-  web de torrents, la abre y busca dentro el magnet o el `.torrent`
-  (`LinkAdd.kt`); si es un `.torrent`, lo **sube a la cuenta** con
-  `PUT /torrents/addTorrent`, que es más fiable que sacarle el infohash y mandar un
-  magnet — el fichero ya trae los metadatos, así que RD no se queda en «leyendo el
-  magnet» con los torrents de pocas semillas. Es lo que hacía falta porque las webs
-  españolas no dan magnet: DonTorrent da `.torrent`. Y lo que se añade aquí
-  **aparece luego en la ficha del título** como un enlace más (ver «Mi
-  Real-Debrid» más abajo), que es la vía para lo que no está en ningún buscador.
-  **Se quitó** el poder subir un `.torrent` (desde el selector o abriéndolo con
-  VizPlay) y el leer la página de una ficha para sacarlo. Funcionaba a medias y
-  daba más problemas que soluciones: Real-Debrid rechaza muchos torrents con
-  `infringing_file`, y de las páginas no siempre se puede extraer el enlace. Queda
-  el magnet, que es lo que sí funciona.
-  Lo más fiable de las vías por enlace no es copiar y pegar sino **Compartir → VizPlay** desde el
-  navegador: en el móvil es facilísimo que el copiar y pegar se lleve el enlace **a
-  medias**, y entonces no hay forma de reconstruirlo. `Links.kt` limpia lo que
-  llega —quita el `#:~:text=…` que añade Chrome al «copiar enlace al texto
-  resaltado» y pone el `https://` si falta— y detecta el caso del enlace truncado
-  para avisar de que **está a medias**, en vez de un «eso no es un enlace» que no
-  ayuda. Del texto compartido el enlace se **busca dentro** con expresión regular:
-  los navegadores comparten «Título \n enlace», así que exigir que el texto empiece
-  por `http` descartaba justo lo que se acababa de compartir.
-  Real-Debrid lo baja a sus servidores; debajo se ve **la lista de la
-  cuenta de RD con su estado real** (leyendo el magnet, en cola, descargando
-  con su %, listo, sin semillas…) y botones Ver / Descargar / quitar. Es la
-  salida a los dos fallos que no dependen de la app: que RD **aún no tenga el
-  torrent cacheado** o que **el archivo se haya borrado** de su caché. También
-  se puede pulsar un magnet **en el navegador** o **compartirlo** con VizPlay,
-  y cuando un enlace de la ficha falla, el propio aviso ofrece
-  **«Añadirlo a Real-Debrid»**. Un enlace de hoster (1fichier, Mega…) se
-  desbloquea y se descarga igual que en el "Descargador" de la web de RD.
+- ➕ **Añadir un magnet a mano** (pestaña Descargas): se pega el magnet y
+  Real-Debrid lo baja a sus servidores; debajo se ve **la lista de la cuenta de RD
+  con su estado real** (leyendo el magnet, en cola, descargando con su %, listo,
+  sin semillas…) y botones Ver / Descargar / quitar. Es la salida a los dos fallos
+  que no dependen de la app: que RD **aún no tenga el torrent cacheado** o que **el
+  archivo se haya borrado** de su caché. Y lo que se añade aquí **aparece luego en
+  la ficha del título** como un enlace más (ver «Mi Real-Debrid»), que es la vía
+  para lo que no está en ningún buscador.
+  - También se puede pulsar un magnet **en el navegador**, **compartirlo** con
+    VizPlay, y cuando un enlace de la ficha falla el propio aviso ofrece
+    **«Añadirlo a Real-Debrid»**. Un enlace de hoster (1fichier, Mega…) se
+    desbloquea y se descarga igual que en el «Descargador» de la web de RD.
+  - `Links.kt` limpia lo que llega: quita el `#:~:text=…` que añade Chrome al
+    «copiar enlace al texto resaltado», pone el `https://` si falta, y **detecta el
+    enlace truncado** para poder avisar de que está a medias en vez de un «eso no
+    es un enlace» que no ayuda. Del texto compartido el enlace se **busca dentro**
+    con expresión regular: los navegadores comparten «Título \n enlace», así que
+    exigir que el texto empiece por `http` descartaba justo lo que se acababa de
+    compartir. Compartir es más fiable que copiar y pegar, donde en el móvil es
+    facilísimo llevarse solo un trozo.
+  - **Se intentó y se quitó**: subir un `.torrent` (con el selector o abriéndolo
+    con VizPlay) y leer la página de una ficha para extraerlo. Funcionaba a medias
+    y daba más problemas que soluciones — Real-Debrid rechaza muchos torrents con
+    `infringing_file`, y de las páginas no siempre se puede sacar el enlace. Queda
+    el magnet, que es lo que sí funciona.
 - Reproductor **ExoPlayer (Media3)**: subtítulos, pistas de audio, velocidad,
   gestos de volumen/brillo, siguiente episodio y continuar viendo.
 - 🎬 **Reproductor externo opcional** (Ajustes → Reproducción): el de la app,
