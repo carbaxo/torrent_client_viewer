@@ -159,13 +159,61 @@ object Iptv {
         return out
     }
 
+    private var appCtx: android.content.Context? = null
+
+    fun init(ctx: android.content.Context) { appCtx = ctx.applicationContext }
+
+    /**
+     * Fichero de la lista **importada** (pegada o traída de un fichero).
+     *
+     * Va a un fichero y no a las preferencias porque una M3U puede pesar megas, y
+     * SharedPreferences se carga entero en memoria cada vez que se abre.
+     */
+    private fun importedFile(): java.io.File? =
+        appCtx?.let { java.io.File(it.filesDir, "canales_importados.m3u") }
+
+    /** ¿Hay una lista importada guardada? */
+    val hasImported: Boolean get() = importedFile()?.let { it.exists() && it.length() > 0 } == true
+
+    /**
+     * Guarda una lista M3U pegada o importada de un fichero, y la deja activa.
+     *
+     * Existe porque una lista no siempre está en una URL a la que suscribirse:
+     * puede venir en un documento, en un mensaje o en un fichero descargado. Antes
+     * solo se aceptaba una URL, y con un texto en la mano no había forma de usarlo.
+     *
+     * @return cuántos canales se han reconocido, o null si el texto no era una M3U.
+     */
+    fun importText(text: String): Int? {
+        val ch = parse(text)
+        if (ch.isEmpty()) return null
+        val f = importedFile() ?: return null
+        runCatching { f.writeText(text) }.getOrElse { return null }
+        load()
+        return ch.size
+    }
+
+    /** Borra la lista importada y vuelve a lo que hubiera. */
+    fun clearImported() {
+        runCatching { importedFile()?.delete() }
+        load()
+    }
+
+    private fun imported(): List<Channel> = runCatching {
+        importedFile()?.takeIf { it.exists() }?.readText()?.let { parse(it) }.orEmpty()
+    }.getOrDefault(emptyList())
+
     /** Carga la lista: los canales integrados más la propia del usuario si la hay. */
     fun load() {
         val url = Prefs.iptvUrl.trim()
+        val imp = imported()
         if (url.isBlank()) {
             main.post {
-                list.clear(); list.addAll(BUILT_IN)
-                status = ""; loading = false
+                val todos = merge(imp)
+                list.clear(); list.addAll(todos)
+                status = if (imp.isEmpty()) ""
+                else "${todos.size} canales (${imp.size} de tu lista importada + RTVE)"
+                loading = false
             }
             return
         }
@@ -181,19 +229,23 @@ object Iptv {
                 main.post {
                     loading = false
                     if (ch.isEmpty()) {
-                        // No se deja al usuario sin nada: se vuelve a la integrada
-                        list.clear(); list.addAll(BUILT_IN)
+                        // No se deja al usuario sin nada: quedan RTVE y lo importado
+                        val todos = merge(imp)
+                        list.clear(); list.addAll(todos)
                         status = "Esa lista no tenía canales reconocibles; se usan los de RTVE."
                     } else {
-                        val todos = merge(ch)
+                        // La importada cuenta igual que la de la URL: se pueden tener las dos
+                        val todos = merge(imp + ch)
                         list.clear(); list.addAll(todos)
-                        status = "${todos.size} canales (${ch.size} de tu lista + RTVE)"
+                        status = "${todos.size} canales (${ch.size} de la URL" +
+                            (if (imp.isNotEmpty()) " + ${imp.size} importados" else "") + " + RTVE)"
                     }
                 }
             } catch (e: Throwable) {
                 main.post {
                     loading = false
-                    list.clear(); list.addAll(BUILT_IN)
+                    val todos = merge(imp)
+                    list.clear(); list.addAll(todos)
                     status = "No se pudo cargar la lista (${e.message ?: "error de red"}); se usan los de RTVE."
                 }
             }

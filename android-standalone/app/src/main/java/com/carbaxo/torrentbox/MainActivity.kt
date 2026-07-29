@@ -75,6 +75,7 @@ class MainActivity : AppCompatActivity() {
         Tv.init(this)          // ¿estamos en una tele? cambia foco y navegación
         Prefs.init(this)
         Downloads.init(this)   // descargas propias (pausar/continuar)
+        Iptv.init(this)        // hace falta para la lista importada, que va a fichero
         Iptv.load()            // canales de TV (lista integrada o la del usuario)
         WatchStore.init(this)
         RealDebrid.init(this)
@@ -1635,7 +1636,7 @@ fun SettingsScreen() {
                     label = { Text("Tu lista M3U (opcional)") },
                     singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRowSimple {
                     Button(
                         onClick = { Prefs.saveIptvUrl(m3u) },
                         shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
@@ -1652,10 +1653,70 @@ fun SettingsScreen() {
                 if (Iptv.status.isNotBlank()) Text(
                     Iptv.status, color = Muted, style = MaterialTheme.typography.labelSmall
                 )
+
+                HorizontalDivider(color = Surface2)
+
+                // --- Importar una lista que NO está en una URL ---
+                // Una M3U no siempre se puede "suscribir": puede venir en un
+                // documento, en un mensaje o en un fichero ya descargado. Antes solo
+                // se aceptaba una URL y con el texto en la mano no había forma.
+                var pegada by remember { mutableStateOf("") }
+                var impMsg by remember { mutableStateOf("") }
+                val pickM3u = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+                    if (uri == null) return@rememberLauncherForActivityResult
+                    val txt = runCatching {
+                        ctx.contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() }
+                    }.getOrNull()
+                    impMsg = when {
+                        txt.isNullOrBlank() -> "No se pudo leer el fichero."
+                        else -> Iptv.importText(txt)
+                            ?.let { "✅ Importados $it canales." }
+                            ?: "Ese fichero no parecía una lista M3U."
+                    }
+                }
+                Text("Importar una lista (pegada o de un fichero)", fontWeight = FontWeight.Bold)
+                OutlinedTextField(
+                    value = pegada, onValueChange = { pegada = it },
+                    label = { Text("Pega aquí el contenido de la M3U") },
+                    minLines = 2, maxLines = 5, modifier = Modifier.fillMaxWidth()
+                )
+                FlowRowSimple {
+                    Button(
+                        enabled = pegada.isNotBlank(),
+                        onClick = {
+                            impMsg = Iptv.importText(pegada)
+                                ?.let { pegada = ""; "✅ Importados $it canales." }
+                                ?: "Ese texto no parecía una lista M3U (falta el #EXTINF)."
+                        },
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
+                    ) { Text("Importar lo pegado") }
+                    OutlinedButton(
+                        onClick = {
+                            // Varios tipos MIME: casi ningún gestor de archivos
+                            // reconoce el .m3u como audio/x-mpegurl
+                            pickM3u.launch(
+                                arrayOf("audio/x-mpegurl", "application/x-mpegurl", "text/plain", "*/*")
+                            )
+                        },
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
+                    ) { Text("Desde un fichero") }
+                    if (Iptv.hasImported) OutlinedButton(
+                        onClick = { Iptv.clearImported(); impMsg = "Lista importada borrada." },
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
+                    ) { Text("Borrar la importada") }
+                }
+                if (impMsg.isNotBlank()) Text(
+                    impMsg,
+                    color = if (impMsg.startsWith("✅")) OkGreen else WarnAmber,
+                    style = MaterialTheme.typography.labelSmall
+                )
                 Text(
-                    "Si pones una lista pública de Internet, ten en cuenta que esas listas " +
-                        "mezclan emisiones oficiales de televisiones públicas con retransmisiones " +
-                        "NO autorizadas de canales de pago. Por eso la integrada solo trae RTVE.",
+                    "Lo importado se guarda en el móvil y se SUMA a lo demás. Aviso sobre las " +
+                        "listas que circulan por ahí: muchas apuntan a servidores IPTV privados " +
+                        "(una IP con usuario y clave dentro de la URL) que emiten canales de pago " +
+                        "SIN autorización, se caen cada pocas semanas y suelen estar en otro " +
+                        "idioma — una lista «FR-KIDS» te dará los dibujos en francés, no en " +
+                        "castellano. Por eso la integrada solo trae RTVE.",
                     color = WarnAmber, style = MaterialTheme.typography.labelSmall
                 )
             }

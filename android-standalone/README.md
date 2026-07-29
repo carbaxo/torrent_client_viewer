@@ -179,6 +179,13 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
   - Una lista propia **se suma** a los canales de RTVE, no los sustituye (sin
     repetidos, por nombre). Si los sustituyera, elegir una plataforma FAST dejaría
     al perfil infantil sin Clan, que es el canal que más se usa.
+  - **Importar una lista que no está en una URL**: se puede **pegar el texto** de la
+    M3U o traerla **de un fichero**. Hacía falta porque una lista no siempre se
+    puede «suscribir»: puede venir en un documento, en un mensaje o en un fichero
+    ya descargado, y con el texto en la mano antes no había forma de usarlo. Se
+    guarda en un fichero de la app y no en las preferencias, porque una M3U puede
+    pesar megas y SharedPreferences se carga entera en memoria. Se **suma** a las
+    otras dos fuentes: se pueden tener RTVE, una URL y una importada a la vez.
   - Se puede poner **cualquier lista M3U propia** en Ajustes → Canales. Ahí se
     avisa de que las listas públicas de Internet mezclan emisiones oficiales de
     televisiones públicas con **retransmisiones no autorizadas de canales de
