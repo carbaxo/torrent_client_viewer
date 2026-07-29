@@ -2944,8 +2944,34 @@ fun DetailScreen(
          * veinte segundos aunque los otros hubieran contestado al instante. Ahora
          * la rueda solo indica que aun queda alguno por llegar.
          */
+        /**
+         * Deja fuera lo que NO es del episodio que se esta mirando.
+         *
+         * Los enlaces llegaban mezclados -capitulos de otras temporadas y otros
+         * capitulos- por dos caminos: el motor de tu cuenta de RD emparejaba solo
+         * por el titulo de la serie, asi que devolvia todo lo que tuvieras de ella;
+         * y la busqueda de packs pregunta al addon por la serie ENTERA, que
+         * responde tambien con capitulos sueltos de cualquier temporada.
+         *
+         * Se filtra aqui, en la entrada comun, y no en cada motor: asi vale para
+         * los cuatro y para cualquiera que se anada despues. Lo que el nombre no
+         * permita juzgar se deja pasar; y lo que resulta ser un pack se marca como
+         * tal, para que al pulsarlo salga el selector de capitulos en vez de
+         * reproducir el primero.
+         */
+        fun relevantes(l: List<Search.Result>): List<Search.Result> {
+            if (season == null || episode == null) return l
+            return l.mapNotNull { r ->
+                when (Search.episodeFit("${'$'}{r.name} ${'$'}{r.info}", season, episode)) {
+                    Search.Fit.NO -> null
+                    Search.Fit.PACK -> if (r.pack) r else r.copy(pack = true)
+                    Search.Fit.OK -> r
+                }
+            }
+        }
+
         fun part(list: List<Search.Result>?, err: String?) = onMain {
-            if (list != null) acc.addAll(list) else lastErr = err
+            if (list != null) acc.addAll(relevantes(list)) else lastErr = err
             remaining--
             // Un mismo torrent puede venir de varios motores: se queda el que trae
             // mas seeders, pero recordando que lo dieron todos (asi sigue

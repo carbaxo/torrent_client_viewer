@@ -187,6 +187,22 @@ casi rectas y la sección activa marcada en **blanco**, no en color. El logotipo
   Los enlaces se **pintan conforme llega cada motor** en vez de esperar a todos: con
   seis peticiones se esperaba a la más lenta, así que un addon atascado dejaba la
   ficha en blanco veinte segundos aunque los demás hubieran contestado ya.
+  **Los enlaces de una serie se filtran por episodio** (`Search.episodeFit`). Salían
+  MEZCLADOS —capítulos de otras temporadas y otros capítulos— por dos caminos: el
+  motor de tu Real-Debrid emparejaba solo por el título de la serie, así que
+  devolvía todo lo que tuvieras de ella; y la búsqueda de packs pregunta al addon
+  por la serie ENTERA, que responde también con capítulos sueltos de cualquier
+  temporada. Se filtra en la entrada común y no en cada motor, así vale para los
+  cuatro y para el siguiente que se añada.
+  - Reconoce `S05E31`, `1x07`, la forma española `Cap.1101` (= 11x01) y `Cap.901`
+    (= 9x01), rangos `1x01 al 1x13`, rangos implícitos `Cap.104_106`, «serie
+    completa» y la temporada escrita de las dos formas: `Temporada 3` **y**
+    `3 Temporada`, que en español aparecen ambas.
+  - Lo que resulta ser un pack **se marca como tal**, para que al pulsarlo salga el
+    selector de capítulos en vez de reproducir el primero.
+  - **Lo que no se puede juzgar, pasa**: si del nombre no se saca temporada ni
+    episodio, se muestra. Esconder lo dudoso es el error que ya se cometió con el
+    filtro de calidad.
   Los chips de motor se muestran **siempre, incluso con (0)**. Antes se escondía
   el motor sin resultados, y eso hacía imposible saber si un addon no había
   traído nada o si el motor no existía en la app.

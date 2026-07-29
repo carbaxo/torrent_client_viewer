@@ -206,6 +206,125 @@ object Search {
     val QUALITIES = listOf("4K", "1080p", "720p", "480p", "SD")
     const val QUALITY_OTHER = "Unknown"
 
+    /**
+     * ¿Qué relación tiene el nombre de un torrent con el episodio que se está
+     * mirando?
+     *
+     * Hace falta porque los enlaces llegaban MEZCLADOS: episodios de otras
+     * temporadas y otros capítulos, de tres sitios a la vez. El motor de tu cuenta
+     * de Real-Debrid emparejaba solo por el título de la serie, así que devolvía
+     * todo lo que tuvieras de ella; y la búsqueda de packs pregunta al addon por la
+     * serie entera, que también responde con capítulos sueltos de cualquier
+     * temporada.
+     */
+    enum class Fit {
+        /** Es ESE episodio, o un pack que lo contiene. */
+        OK,
+        /** Es un pack (temporada o serie): hay que elegir capítulo dentro. */
+        PACK,
+        /** Dice claramente que es OTRO episodio u otra temporada. */
+        NO
+    }
+
+    /** Puntos, guiones y corchetes a espacios: así basta una forma de cada palabra. */
+    private fun flat(s: String): String =
+        " " + s.lowercase()
+            .replace(Regex("[._\\-\\[\\]()/+,;:|]"), " ")
+            .replace(Regex("\\s+"), " ").trim() + " "
+
+    private val EP_SxE = Regex("""\bs(\d{1,2})\s*e(\d{1,3})\b""")
+    private val EP_NxN = Regex("""\b(\d{1,2})x(\d{1,3})\b""")
+    /**
+     * Forma española: Cap.1101 = temporada 11 episodio 01; Cap.901 = 9x01.
+     * El segundo número es opcional porque los packs se escriben "Cap.104_106" y
+     * ahí solo el primero lleva "Cap" delante: capturando uno solo, un pack de los
+     * capítulos 4 al 6 se leía como "solo el 4" y se descartaba para el 5.
+     */
+    private val EP_CAP = Regex("""\bcap\s*(\d{3,4})(?:\s+(\d{3,4}))?\b""")
+    /** Rango dentro de una temporada: "1x01 al 1x13". */
+    private val EP_RANGO = Regex("""\b(\d{1,2})x(\d{1,3})\s*(?:al|a|-|to)\s*(\d{1,2})x(\d{1,3})\b""")
+    /**
+     * Las dos formas, porque en español se escriben las dos: "Temporada 3" y
+     * "3 Temporada". Con solo la primera, "Oliver y Benji Campeones 3 Temporada"
+     * no se reconocía como pack de una temporada concreta y colaba en todas.
+     */
+    private val TEMPORADA = Regex(
+        """\b(?:temporada|temp|season)\s*(\d{1,2})\b|\b(\d{1,2})\s*(?:temporada|temp)\b"""
+    )
+    private val SOLO_S = Regex("""\bs(\d{1,2})\b""")
+    private val SERIE_COMPLETA = Regex(
+        """serie completa|complete series|todas las temporadas|coleccion completa|complete collection|seasons?\s*\d+\s*(?:to|a|-)\s*\d+"""
+    )
+
+    /**
+     * Decide si un enlace vale para (temporada, episodio).
+     *
+     * Regla de oro: **solo se descarta lo que dice claramente que es otra cosa**. Si
+     * del nombre no se puede sacar temporada ni episodio, pasa. Esconder lo que no
+     * se entiende es el error que ya se cometió con el filtro de calidad: se
+     * perdían enlaces buenos por no llevar la etiqueta esperada.
+     *
+     * Casos reales con los que se comprobó (los dos últimos son los que hicieron
+     * falta arreglar, y salieron de nombres de verdad, no inventados):
+     *
+     * ```
+     * Padre De Familia Temp.11 [Cap.1101]      11x01 OK    9x01 NO
+     * Peppa.Pig.S05E31                          5x31 OK    5x30 NO
+     * Peppa.Pig.1.Temporada.1x01.al.1x13        1x07 PACK  2x07 NO
+     * Family Guy Seasons 1 to 17 Complete       5x03 PACK
+     * Family Guy - 101 - Death Has A Shadow     1x01 OK    (sin forma reconocible: pasa)
+     * Bluey Temporada 1 [Cap.104_106]           1x05 PACK  1x01 NO
+     * Oliver y Benji Campeones 3 Temporada      3x04 PACK  1x04 NO
+     * ```
+     */
+    fun episodeFit(name: String, season: Int, episode: Int): Fit {
+        val n = flat(name)
+
+        // 1) Rango de capítulos: "1x01 al 1x13"
+        EP_RANGO.find(n)?.let { m ->
+            val (s1, e1, s2, e2) = m.destructured.toList().map { it.toInt() }
+            val dentro = (season == s1 && episode >= e1 && (season < s2 || episode <= e2)) ||
+                (season > s1 && season < s2) ||
+                (season == s2 && season != s1 && episode <= e2)
+            return if (dentro) Fit.PACK else Fit.NO
+        }
+
+        // 2) Episodios concretos. Puede haber varios (packs que los listan).
+        val vistos = ArrayList<Pair<Int, Int>>()
+        EP_SxE.findAll(n).forEach { vistos.add(it.groupValues[1].toInt() to it.groupValues[2].toInt()) }
+        EP_NxN.findAll(n).forEach { vistos.add(it.groupValues[1].toInt() to it.groupValues[2].toInt()) }
+        EP_CAP.findAll(n).forEach { m ->
+            for (d in listOf(m.groupValues[1], m.groupValues[2])) {
+                if (d.isBlank()) continue
+                // 4 cifras = SSEE, 3 cifras = SEE
+                val s = if (d.length == 4) d.take(2).toInt() else d.take(1).toInt()
+                vistos.add(s to d.takeLast(2).toInt())
+            }
+        }
+        if (vistos.isNotEmpty()) {
+            if (vistos.any { it.first == season && it.second == episode }) return Fit.OK
+            // Dos o más referencias de la MISMA temporada son un rango implícito
+            // ("Cap.104_106", listas de capítulos): si el pedido cae dentro, vale.
+            val mismos = vistos.filter { it.first == season }.map { it.second }.sorted()
+            if (mismos.size >= 2 && episode >= mismos.first() && episode <= mismos.last()) return Fit.PACK
+            return Fit.NO
+        }
+
+        // 3) Serie completa: sirve para cualquier episodio
+        if (SERIE_COMPLETA.containsMatchIn(n)) return Fit.PACK
+
+        // 4) Solo temporada declarada, sin episodio: es un pack de esa temporada
+        val temps = (
+            TEMPORADA.findAll(n).flatMap { m ->
+                m.groupValues.drop(1).filter { it.isNotBlank() }.map { it.toInt() }
+            } + SOLO_S.findAll(n).map { it.groupValues[1].toInt() }
+            ).distinct().toList()
+        if (temps.isNotEmpty()) return if (temps.contains(season)) Fit.PACK else Fit.NO
+
+        // 5) Del nombre no se saca nada: no se esconde
+        return Fit.OK
+    }
+
     /** Construye la query para un episodio concreto: "Título S01E02". */
     fun episodeQuery(title: String, season: Int, episode: Int): String =
         "$title S%02dE%02d".format(season, episode)
