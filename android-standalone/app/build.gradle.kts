@@ -51,6 +51,17 @@ android {
                 storePassword = keystorePass
                 keyAlias = aliasName
                 keyPassword = aliasPass
+                // Con minSdk 24 el AGP firma SOLO con v2 (el esquema del bloque de
+                // firma), porque v2 existe justo desde Android 7.0. Se fuerza v1
+                // (la firma JAR de META-INF) además de v2 por dos motivos:
+                // instaladores de algunos Android TV baratos verifican v2 mal y
+                // rechazan el APK con "App no instalada", y sin v1 ni keytool ni
+                // jarsigner pueden leer quién firmó el APK, que es justo lo que
+                // hace falta para diagnosticar un fallo de instalación.
+                // El certificado es el mismo, así que la identidad de firma NO
+                // cambia: sigue actualizando las instalaciones existentes.
+                enableV1Signing = true
+                enableV2Signing = true
             }
         }
     }

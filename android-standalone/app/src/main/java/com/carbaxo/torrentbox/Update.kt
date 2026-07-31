@@ -110,20 +110,37 @@ object Update {
         Request.Builder().url(info.url).header("User-Agent", "VizPlay").build()
     ).execute()
 
-    /** Descarga el APK de la Release y abre el instalador del sistema. */
+    /**
+     * Descarga el APK de la Release y abre el instalador del sistema.
+     *
+     * Se baja a un `.part` y solo se renombra al nombre final si el tamaño coincide
+     * con el `Content-Length`. Antes se escribía directamente sobre el fichero final
+     * sin comprobar nada, y una descarga cortada por la mitad producía el fallo más
+     * confuso posible: el APK truncado conserva cabeceras suficientes para que el
+     * instalador ABRA y pregunte, y luego revienta al verificar la firma sobre el
+     * fichero completo. En pantalla: «se va a instalar…» y después «App no
+     * instalada», sin decir nunca que el problema fue la descarga.
+     *
+     * El directorio se vacía antes y el `.part` se borra si algo falla, para no
+     * dejar 28 MB aparcados en la memoria interna: en un Android TV con poco
+     * espacio libre, eso solo es gasolina para el mismo error.
+     */
     fun downloadAndInstall(ctx: Context) {
         val info = available ?: return
         val app = ctx.applicationContext
         status = "Descargando actualización…"
         io.submit {
+            val dir = File(app.filesDir, "apk").apply { mkdirs() }
+            val f = File(dir, "VizPlay.apk")
+            val part = File(dir, "VizPlay.apk.part")
             try {
-                val dir = File(app.filesDir, "apk").apply { mkdirs() }
-                val f = File(dir, "VizPlay.apk")
+                dir.listFiles()?.forEach { it.delete() }
                 openAsset(info).use { resp ->
                     if (!resp.isSuccessful) throw RuntimeException("HTTP ${resp.code}")
                     val body = resp.body ?: throw RuntimeException("Respuesta vacía")
+                    val expected = body.contentLength()
                     body.byteStream().use { input ->
-                        f.outputStream().use { out ->
+                        part.outputStream().use { out ->
                             val buf = ByteArray(256 * 1024)
                             var total = 0L
                             var lastShown = 0L
@@ -139,8 +156,15 @@ object Update {
                                 }
                             }
                         }
+                        // -1 = el servidor no dijo el tamaño (respuesta troceada);
+                        // entonces no hay nada con lo que comparar.
+                        if (expected > 0 && part.length() != expected) throw RuntimeException(
+                            "descarga incompleta (${Search.humanSize(part.length())} de " +
+                                "${Search.humanSize(expected)}). Vuelve a intentarlo."
+                        )
                     }
                 }
+                if (!part.renameTo(f)) throw RuntimeException("no se pudo guardar el APK")
                 onMain { status = "Abriendo instalador…" }
                 val uri = FileProvider.getUriForFile(app, app.packageName + ".fileprovider", f)
                 val i = Intent(Intent.ACTION_VIEW)
@@ -149,6 +173,7 @@ object Update {
                 app.startActivity(i)
                 onMain { status = "" }
             } catch (e: Throwable) {
+                part.delete()
                 onMain { status = "Error al actualizar: ${e.message}" }
             }
         }
