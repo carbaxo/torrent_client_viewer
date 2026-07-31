@@ -19,7 +19,8 @@ import java.util.concurrent.TimeUnit
  * que el propio (BuildConfig.CI_BUILD) descarga el APK y lanza el instalador.
  */
 object Update {
-    data class Info(val build: Int, val url: String)
+    /** @param size tamaño del APK según la Release, para comprobar el espacio antes de bajarlo. */
+    data class Info(val build: Int, val url: String, val size: Long)
 
     private const val RELEASE_API =
         "https://api.github.com/repos/carbaxo/torrent_client_viewer/releases/tags/android-latest"
@@ -49,6 +50,26 @@ object Update {
      * El número de build no tiene ese problema: es exacto, crece en cada
      * publicación y no depende de relojes ni de márgenes.
      */
+    /**
+     * Borra APKs descargados que ya no sirven para nada.
+     *
+     * Sin esto, una instalación que sale bien deja 29 MB aparcados en la memoria
+     * interna para siempre: el proceso muere reemplazado justo después y no llega a
+     * limpiar. En un aparato con poco espacio eso no es una molestia, es la causa de
+     * que la siguiente actualización no entre.
+     *
+     * Por antigüedad y no a lo bruto porque puede haber una instalación abierta
+     * ahora mismo leyendo el fichero (el camino de respaldo con `content://`).
+     */
+    fun cleanup(ctx: Context) {
+        val dir = File(ctx.applicationContext.filesDir, "apk")
+        if (!dir.isDirectory) return
+        io.submit {
+            val cutoff = System.currentTimeMillis() - 30 * 60_000L
+            dir.listFiles()?.forEach { if (it.lastModified() < cutoff) it.delete() }
+        }
+    }
+
     fun check() {
         io.submit {
             try {
@@ -69,6 +90,7 @@ object Update {
                     val d = JSONObject(resp.body?.string() ?: "{}")
                     val remoteBuild = Regex("Build (\\d+)").find(d.optString("body"))?.groupValues?.get(1)?.toIntOrNull() ?: 0
                     var url: String? = null
+                    var size = 0L
                     d.optJSONArray("assets")?.let { arr ->
                         for (i in 0 until arr.length()) {
                             val a = arr.getJSONObject(i)
@@ -77,13 +99,14 @@ object Update {
                             // sin actualizar a las versiones ya instaladas.
                             if (a.optString("name").endsWith(".apk", ignoreCase = true)) {
                                 url = a.optString("browser_download_url")
+                                size = a.optLong("size")
                             }
                         }
                     }
                     val newer = remoteBuild > BuildConfig.CI_BUILD
                     onMain {
                         checked = true
-                        available = if (newer && url != null) Info(remoteBuild, url!!) else null
+                        available = if (newer && url != null) Info(remoteBuild, url!!, size) else null
                         status = when {
                             available != null -> ""
                             // Sin número de build en el cuerpo no se puede comparar, y
@@ -121,9 +144,12 @@ object Update {
      * fichero completo. En pantalla: «se va a instalar…» y después «App no
      * instalada», sin decir nunca que el problema fue la descarga.
      *
-     * El directorio se vacía antes y el `.part` se borra si algo falla, para no
-     * dejar 28 MB aparcados en la memoria interna: en un Android TV con poco
-     * espacio libre, eso solo es gasolina para el mismo error.
+     * Y se mira el espacio libre antes de empezar, porque **eso era el fallo real**
+     * de la Android TV: no había sitio, y Android lo enseñaba como un genérico
+     * «Aplicación no instalada». El directorio se vacía al empezar, el `.part` se
+     * borra si algo falla y la copia final se borra en cuanto la sesión de
+     * instalación tiene los bytes, para no aparcar 29 MB en la memoria interna de un
+     * aparato que ya iba justo.
      */
     fun downloadAndInstall(ctx: Context) {
         val info = available ?: return
@@ -135,6 +161,18 @@ object Update {
             val part = File(dir, "VizPlay.apk.part")
             try {
                 dir.listFiles()?.forEach { it.delete() }
+                // Comprobar el espacio ANTES de bajar 29 MB para nada. Hacen falta dos
+                // copias a la vez —la nuestra y la que el sistema deja en su zona de
+                // preparación mientras instala— más un margen, porque un aparato al
+                // límite falla igual por otro lado. Este era el fallo real en la
+                // Android TV, y salía como un simple "Aplicación no instalada".
+                val needed = info.size * 2 + 30_000_000L
+                val free = dir.usableSpace
+                if (info.size > 0 && free < needed) throw RuntimeException(
+                    "no cabe: quedan ${Search.humanSize(free)} libres y hacen falta unos " +
+                        "${Search.humanSize(needed)}. Libera espacio en el aparato " +
+                        "(Ajustes → Almacenamiento) y vuelve a intentarlo."
+                )
                 openAsset(info).use { resp ->
                     if (!resp.isSuccessful) throw RuntimeException("HTTP ${resp.code}")
                     val body = resp.body ?: throw RuntimeException("Respuesta vacía")
@@ -170,7 +208,12 @@ object Update {
                 // fallo. Si ni se puede abrir la sesión, se cae al ACTION_VIEW de
                 // siempre, que al menos instala aunque no explique nada.
                 val err = Installer.install(app, f)
-                if (err != null) {
+                if (err == null) {
+                    // La sesión ya tiene los bytes copiados, así que nuestra copia solo
+                    // ocupa. Borrarla aquí baja el pico de 2 copias a 1 justo cuando el
+                    // sistema está instalando, que es el momento más apretado.
+                    f.delete()
+                } else {
                     val uri = FileProvider.getUriForFile(app, app.packageName + ".fileprovider", f)
                     val i = Intent(Intent.ACTION_VIEW)
                         .setDataAndType(uri, "application/vnd.android.package-archive")

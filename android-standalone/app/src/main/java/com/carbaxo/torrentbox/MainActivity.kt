@@ -81,6 +81,7 @@ class MainActivity : AppCompatActivity() {
         RealDebrid.init(this)
         // Chromecast: sesión global, se elige la TV antes de abrir nada
         CastManager.init(this)
+        Update.cleanup(this)
         Update.check()
         // El token de Real-Debrid guardado en la nube (cuenta) se adopta aquí
         Sync.onRdToken = { t -> RealDebrid.adoptToken(t) }
