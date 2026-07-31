@@ -99,6 +99,13 @@
             android:foregroundServiceType="dataSync"
             tools:node="merge" />
 
+        <!-- Resultado de la sesión de instalación (auto-actualización). Va aquí y no
+             registrado a mano porque una instalación que sale bien reemplaza el
+             proceso, y un receptor dinámico moriría con él sin informar. -->
+        <receiver
+            android:name=".Installer$Receiver"
+            android:exported="false" />
+
         <!-- Servir el APK descargado al instalador del sistema (auto-actualización) -->
         <provider
             android:name="androidx.core.content.FileProvider"

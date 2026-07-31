@@ -166,12 +166,20 @@ object Update {
                 }
                 if (!part.renameTo(f)) throw RuntimeException("no se pudo guardar el APK")
                 onMain { status = "Abriendo instalador…" }
-                val uri = FileProvider.getUriForFile(app, app.packageName + ".fileprovider", f)
-                val i = Intent(Intent.ACTION_VIEW)
-                    .setDataAndType(uri, "application/vnd.android.package-archive")
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-                app.startActivity(i)
-                onMain { status = "" }
+                // Primero por sesión: es el único camino que devuelve el motivo del
+                // fallo. Si ni se puede abrir la sesión, se cae al ACTION_VIEW de
+                // siempre, que al menos instala aunque no explique nada.
+                val err = Installer.install(app, f)
+                if (err != null) {
+                    val uri = FileProvider.getUriForFile(app, app.packageName + ".fileprovider", f)
+                    val i = Intent(Intent.ACTION_VIEW)
+                        .setDataAndType(uri, "application/vnd.android.package-archive")
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                    app.startActivity(i)
+                }
+                // No se pone "" : si la instalación falla, el resultado llega al
+                // receptor unos segundos después y sobreescribe esto con el motivo.
+                onMain { status = "Esperando al instalador…" }
             } catch (e: Throwable) {
                 part.delete()
                 onMain { status = "Error al actualizar: ${e.message}" }
