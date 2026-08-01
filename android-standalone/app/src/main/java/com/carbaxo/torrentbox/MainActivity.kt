@@ -37,6 +37,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.input.ImeAction
@@ -913,6 +914,11 @@ fun DiscoverScreen(type: String, onType: (String) -> Unit, kids: Boolean = false
             if (Sync.enabled && Sync.email != null) {
                 Text("Sincronizado: ${Sync.email}", style = MaterialTheme.typography.labelSmall, color = Muted)
             }
+            // El motivo del fallo también aquí: es donde más se pulsa el botón, y
+            // antes no salía nada en ninguno de los dos sitios.
+            if (Sync.googleMsg.isNotBlank()) Text(
+                Sync.googleMsg, color = WarnAmber, style = MaterialTheme.typography.labelSmall
+            )
             Spacer(Modifier.height(12.dp))
             SingleChoiceSegmentedButtonRow {
                 SegmentedButton(
@@ -1223,6 +1229,10 @@ fun SettingsScreen() {
                             "Las dos formas valen; si ya entrabas con Google, sigue usando ese botón " +
                                 "para encontrar tus datos de siempre.",
                             color = Muted, style = MaterialTheme.typography.labelSmall
+                        )
+                        if (Sync.googleMsg.isNotBlank()) Text(
+                            Sync.googleMsg, color = WarnAmber,
+                            style = MaterialTheme.typography.labelSmall
                         )
                     }
                 } else {
@@ -1821,6 +1831,32 @@ fun SettingsScreen() {
                         "Las descargas las gestiona el sistema, así que siguen aunque cierres la app.",
                     color = Muted, style = MaterialTheme.typography.bodySmall
                 )
+
+                // Huella de la firma. Está aquí y no escondida en un error porque es
+                // lo que hay que pegar en Firebase para que funcione el botón de
+                // Google, y cambia cada vez que se cambia la clave de firma. Tenerla
+                // a mano ahorra sacar el keystore y el keytool para consultarla.
+                Sync.signingSha1()?.let { sha ->
+                    HorizontalDivider(color = Surface2)
+                    Text("Huella de la firma (SHA-1)", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        sha, color = Muted, style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Text(
+                        "Va en Firebase Console → Configuración del proyecto → Tus apps → " +
+                            "Android → «Añadir huella digital». Sin ella, el botón de " +
+                            "«Entrar con Google» falla con el código 10.",
+                        color = Muted, style = MaterialTheme.typography.labelSmall
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            val cb = ctx.getSystemService(android.content.ClipboardManager::class.java)
+                            cb?.setPrimaryClip(android.content.ClipData.newPlainText("SHA-1", sha))
+                        },
+                        shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
+                    ) { Text("Copiar huella") }
+                }
             }
         }
         Spacer(Modifier.height(24.dp))

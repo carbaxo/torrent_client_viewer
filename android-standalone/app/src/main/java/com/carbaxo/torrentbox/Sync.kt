@@ -186,7 +186,19 @@ object Sync {
 
     fun signInIntent(): Intent? = gsc?.signInIntent
 
+    /**
+     * Último fallo del botón de Google, para pintarlo.
+     *
+     * Está aquí y no en cada pantalla porque el botón sale en dos sitios
+     * (Descubrir y Ajustes) y los dos tiraban el resultado a la basura con un
+     * `{ _, _ -> }`: el usuario pulsaba, no pasaba nada, y ni el motivo ni el
+     * código llegaban nunca a la pantalla. Ese silencio es lo que hacía imposible
+     * saber que faltaba la huella SHA-1.
+     */
+    var googleMsg by mutableStateOf("")
+
     fun onSignInResult(data: Intent?, onDone: (Boolean, String?) -> Unit) {
+        fun fail(msg: String) { googleMsg = msg; onDone(false, msg) }
         try {
             val account = GoogleSignIn.getSignedInAccountFromIntent(data).getResult(ApiException::class.java)
             val cred = GoogleAuthProvider.getCredential(account.idToken, null)
@@ -194,14 +206,71 @@ object Sync {
                 if (t.isSuccessful) {
                     email = FirebaseAuth.getInstance().currentUser?.email
                     loadDoc()
+                    googleMsg = ""
                     onDone(true, null)
-                } else onDone(false, t.exception?.message ?: "Error de Firebase")
+                } else fail(authError(t.exception))
             }
         } catch (e: ApiException) {
-            onDone(false, "Google (código ${e.statusCode})") // 10 = falta SHA-1 en Firebase
+            fail(googleError(e.statusCode))
         } catch (e: Throwable) {
-            onDone(false, e.message ?: "Error")
+            fail(e.message ?: "No se pudo entrar con Google.")
         }
+    }
+
+    /**
+     * Traduce los fallos del botón de Google.
+     *
+     * El que importa es el **10**, y antes solo se veía como «Google (código 10)»,
+     * que no dice nada y no se puede ni buscar bien. Google valida el paquete y la
+     * **huella SHA-1 de la firma** contra los clientes OAuth del proyecto; si esa
+     * huella no está registrada, devuelve 10 y no hay nada que la app pueda hacer.
+     *
+     * Pasa siempre que se cambia la clave de firma, así que el mensaje lleva la
+     * huella de ESTA instalación ya calculada y en el formato que pide la consola:
+     * es justo lo que hay que pegar allí, y así no hace falta ni keytool ni el
+     * fichero .keystore para arreglarlo.
+     */
+    private fun googleError(code: Int): String = when (code) {
+        10 -> "Google no reconoce esta versión de la app.\n\n" +
+            "Añade esta huella SHA-1 en Firebase Console → Configuración del " +
+            "proyecto → Tus apps → Android → «Añadir huella digital»:\n\n" +
+            (signingSha1() ?: "(no se pudo leer la huella)") +
+            "\n\nEs lo que hay que hacer cada vez que cambia la clave de firma."
+        12501 -> "Has cancelado el inicio de sesión."
+        12502 -> "Ya hay un inicio de sesión en marcha."
+        7 -> "Sin conexión: Google no ha podido comprobar la cuenta."
+        12500 -> "Google Play Services no ha podido completarlo. Comprueba que está " +
+            "actualizado en este aparato."
+        else -> "No se pudo entrar con Google (código $code)."
+    }
+
+    /**
+     * SHA-1 de la firma de la app **tal como está instalada**, con los dos puntos
+     * que espera la consola de Firebase.
+     *
+     * Se lee del propio paquete y no se guarda en ningún sitio a propósito: así
+     * siempre es la de verdad, incluso en una compilación local firmada con la
+     * clave de depuración, que es donde más confunde el error.
+     */
+    @Suppress("DEPRECATION", "PackageManagerGetSignatures")
+    fun signingSha1(): String? {
+        val ctx = appCtx ?: return null
+        return runCatching {
+            val pm = ctx.packageManager
+            val der: ByteArray = if (android.os.Build.VERSION.SDK_INT >= 28) {
+                val info = pm.getPackageInfo(
+                    ctx.packageName, android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
+                )
+                info.signingInfo!!.apkContentsSigners[0].toByteArray()
+            } else {
+                val info = pm.getPackageInfo(
+                    ctx.packageName, android.content.pm.PackageManager.GET_SIGNATURES
+                )
+                info.signatures!![0]!!.toByteArray()
+            }
+            java.security.MessageDigest.getInstance("SHA-1").digest(der)
+                .joinToString(":") { "%02X".format(it) }
+        }.getOrNull()
     }
 
     fun signOut() {
