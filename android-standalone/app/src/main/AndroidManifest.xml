@@ -79,6 +79,15 @@
             </intent-filter>
         </activity>
 
+        <!-- Reproductor incrustado de YouTube. Va aparte del PlayerActivity porque
+             no es ExoPlayer: es un WebView, y así Atrás lo cierra entero sin dejar
+             audio sonando por detrás. -->
+        <activity
+            android:name=".YtPlayerActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize"
+            android:theme="@style/Theme.TorrentBox.Player" />
+
         <activity
             android:name=".PlayerActivity"
             android:exported="false"

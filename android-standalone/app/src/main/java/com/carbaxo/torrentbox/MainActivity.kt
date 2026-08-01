@@ -81,6 +81,7 @@ class MainActivity : AppCompatActivity() {
         RealDebrid.init(this)
         // Chromecast: sesión global, se elige la TV antes de abrir nada
         CastManager.init(this)
+        YouTube.init(this)
         Update.cleanup(this)
         Update.check()
         // El token de Real-Debrid guardado en la nube (cuenta) se adopta aquí
@@ -125,10 +126,23 @@ class MainActivity : AppCompatActivity() {
      * app no tiene que interpretar el HTML de ninguna web.
      */
     private fun handleIncoming(i: Intent?) {
-        when (i?.action) {
-            Intent.ACTION_VIEW -> MagnetInbox.offer(i.dataString)
-            Intent.ACTION_SEND -> MagnetInbox.offer(i.getStringExtra(Intent.EXTRA_TEXT))
+        val text = when (i?.action) {
+            Intent.ACTION_VIEW -> i.dataString
+            Intent.ACTION_SEND -> i.getStringExtra(Intent.EXTRA_TEXT)
+            else -> null
+        } ?: return
+        // Un enlace de YouTube NO va al buzón de magnets: se añade a «En directo».
+        // Compartir desde la app de YouTube es la forma cómoda de añadir un canal
+        // —en la tele, teclear una URL con el mando es inviable— y de paso el
+        // enlace llega bien copiado, que es justo lo que no se puede verificar
+        // pegándolo a mano.
+        if (YouTube.looksLikeYouTube(text)) {
+            val err = YouTube.add(text, name = "")
+            YouTube.status = err
+                ?: "Añadido a «En directo». Puedes ponerle nombre en Ajustes → Canales."
+            return
         }
+        MagnetInbox.offer(text)
     }
 
     private fun playerIntent(c: PlayCtx) = Intent(this, PlayerActivity::class.java).apply {
@@ -388,7 +402,15 @@ fun AppScreen(onPlayUrl: (String, PlayCtx) -> Unit, onCastMagnet: (String, PlayC
             // Buscar también con perfil infantil: antes llevaba al catálogo
             // filtrado, y así no había forma de pedir una serie por su nombre.
             Tab.SEARCH -> SearchScreen(onOpen = { detail = it })
-            Tab.LIVE -> LiveScreen(kids = kids) { ch -> play(ch.url, PlayCtx(name = ch.clean)) }
+            Tab.LIVE -> LiveScreen(kids = kids) { ch ->
+                // Los de YouTube no van por ExoPlayer: llevan su reproductor
+                // incrustado, que es lo que permite verlos sin salir de la app.
+                val yt = YouTube.fromChannelUrl(ch.url)
+                if (yt != null) ctx.startActivity(
+                    Intent(ctx, YtPlayerActivity::class.java)
+                        .putExtra(YtPlayerActivity.EXTRA_URL, YouTube.embedUrl(yt))
+                ) else play(ch.url, PlayCtx(name = ch.clean))
+            }
             Tab.DOWNLOADS -> DownloadsScreen { u -> play(u, PlayCtx()) }
             Tab.SETTINGS -> SettingsScreen()
         }
@@ -1641,6 +1663,60 @@ fun SettingsScreen() {
 
                 HorizontalDivider(color = Surface2)
 
+                // --- Canales de YouTube ---
+                // No hay ninguno de serie a propósito: un ID de YouTube mal copiado
+                // no da error, cae en OTRO vídeo, y en una sección infantil eso no
+                // se puede arriesgar. Los pone quien los está mirando.
+                Text("Canales de YouTube", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    "Se ven DENTRO de VizPlay, no abren la app de YouTube. Lo más cómodo: " +
+                        "en la app de YouTube dale a Compartir → VizPlay y se añade solo. " +
+                        "Vale un vídeo, un directo o una lista de reproducción.",
+                    color = Muted, style = MaterialTheme.typography.bodySmall
+                )
+                var ytLink by remember { mutableStateOf("") }
+                var ytName by remember { mutableStateOf("") }
+                OutlinedTextField(
+                    value = ytLink, onValueChange = { ytLink = it },
+                    label = { Text("Enlace de YouTube") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = ytName, onValueChange = { ytName = it },
+                    label = { Text("Nombre (opcional)") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                Button(
+                    onClick = {
+                        YouTube.status = YouTube.add(ytLink, ytName)
+                            ?: run { ytLink = ""; ytName = ""; "Añadido a «En directo»." }
+                    },
+                    shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
+                ) { Text("Añadir canal") }
+                if (YouTube.status.isNotBlank()) Text(
+                    YouTube.status, color = Muted, style = MaterialTheme.typography.labelSmall
+                )
+                YouTube.list.forEach { e ->
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(e.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                            Text(
+                                "${if (e.ref.kind == YouTube.Kind.PLAYLIST) "Lista" else "Vídeo"} · ${e.ref.id}",
+                                color = Muted, style = MaterialTheme.typography.labelSmall, maxLines = 1
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = { YouTube.remove(e); YouTube.status = "«${e.name}» quitado." },
+                            shape = NfShape, modifier = Modifier.tvFocusRing(NfShape)
+                        ) { Text("Quitar") }
+                    }
+                }
+
+                HorizontalDivider(color = Surface2)
+
                 // --- Importar una lista que NO está en una URL ---
                 // Una M3U no siempre se puede "suscribir": puede venir en un
                 // documento, en un mensaje o en un fichero ya descargado. Antes solo
@@ -1774,7 +1850,10 @@ fun LiveScreen(kids: Boolean, onPlay: (Iptv.Channel) -> Unit) {
     // canales porque el nombre no cuadra con un patrón es decidir por él. Y como
     // esta pestaña solo existe en el perfil infantil, esconderlos era hacerlos
     // desaparecer del todo — que es exactamente lo que pasaba.
-    val all = Iptv.list
+    // Los de YouTube se suman aquí y no dentro de Iptv.load() para que Compose los
+    // repinte al añadir uno: Iptv.list se rellena de forma asíncrona y no se
+    // recompondría al cambiar YouTube.list, que es otra lista observable.
+    val all = Iptv.list + YouTube.channels()
     val shown = if (kids) all.filter { it.kids || it.imported }.ifEmpty { all } else all
     val groups = shown.groupBy { it.group?.ifBlank { null } ?: "Canales" }
 
