@@ -35,11 +35,11 @@ android {
     // que va como secreto de CI y, en local, como fichero que no se versiona. Si no
     // hay clave, se compila igual: Android usa su clave de depuración por defecto,
     // pero el APK resultante NO servirá para actualizar los ya instalados.
-    val keystoreFile = file(System.getenv("VIZPLAY_KEYSTORE") ?: "../torrentbox.keystore")
+    val keystoreFile = file(System.getenv("VIZPLAY_KEYSTORE") ?: "../vizplay.keystore")
     val keystorePass = System.getenv("VIZPLAY_KEYSTORE_PASSWORD")
         ?: project.findProperty("KEYSTORE_PASSWORD") as String?
     val aliasName = System.getenv("VIZPLAY_KEY_ALIAS")
-        ?: project.findProperty("KEY_ALIAS") as String? ?: "torrentbox"
+        ?: project.findProperty("KEY_ALIAS") as String? ?: "vizplay"
     val aliasPass = System.getenv("VIZPLAY_KEY_PASSWORD")
         ?: project.findProperty("KEY_PASSWORD") as String? ?: keystorePass
     val canSign = keystoreFile.exists() && !keystorePass.isNullOrBlank()

@@ -57,8 +57,8 @@ jobs:
           KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
         run: |
           if [ -n "$KEYSTORE_B64" ]; then
-            printf '%s' "$KEYSTORE_B64" | base64 -d > torrentbox.keystore
-            echo "Clave de firma restaurada ($(stat -c%s torrentbox.keystore) bytes)."
+            printf '%s' "$KEYSTORE_B64" | base64 -d > vizplay.keystore
+            echo "Clave de firma restaurada ($(stat -c%s vizplay.keystore) bytes)."
           else
             echo "::warning::Sin KEYSTORE_B64: el APK se firmara con la clave de depuracion y NO actualizara las instalaciones existentes."
           fi

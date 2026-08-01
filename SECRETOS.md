@@ -10,7 +10,7 @@ repositorio en GitHub.
 |---|---|---|
 | `KEYSTORE_B64` | La clave de firma del APK, en base64 | El APK se firma con la clave de depuración de Android y **no sirve para actualizar** las instalaciones que ya existen |
 | `KEYSTORE_PASSWORD` | Contraseña del almacén | Igual que arriba: no se firma |
-| `KEY_ALIAS` | Alias de la clave (`torrentbox`) | Se usa `torrentbox` por defecto |
+| `KEY_ALIAS` | Alias de la clave (`vizplay`) | Se usa `vizplay` por defecto |
 | `KEY_PASSWORD` | Contraseña de la clave | Se usa la del almacén |
 | `TMDB_KEY` | Catálogos y carátulas (TMDB v3) | La app funciona, pero **sin catálogos** |
 
@@ -25,12 +25,28 @@ Y por eso tampoco se puede cambiar de clave a la ligera: un APK firmado con otra
 clave **no actualiza** al ya instalado, hay que desinstalar y volver a instalar en
 cada dispositivo.
 
+### La clave vieja (`torrentbox`) está quemada
+
+La primera clave, con alias `torrentbox` y contraseña `torrentbox`, estuvo subida
+al repositorio. Reescribir el historial la quitó de la rama, **pero no del
+servidor**: GitHub conserva los commits antiguos accesibles por su SHA, y los SHA
+están a la vista en el historial público de Actions. Es decir, siguió siendo
+descargable después de hacer público el repositorio.
+
+Por eso se ha generado una clave nueva (alias `vizplay`, RSA 4096, PKCS12) con una
+contraseña aleatoria que nunca ha pasado por el repositorio. Cambiar de clave
+obliga a desinstalar y reinstalar en cada aparato: se acepta a cambio de que la
+clave filtrada deje de servir para nada.
+
+Purgar los objetos viejos del servidor hay que **pedírselo a GitHub Support**; es
+lo único que corta el acceso por SHA.
+
 ### Generar `KEYSTORE_B64`
 
 ```bash
-base64 -w0 torrentbox.keystore          # Linux
-base64 -i torrentbox.keystore | tr -d '\n'   # macOS
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("torrentbox.keystore"))  # PowerShell
+base64 -w0 vizplay.keystore          # Linux
+base64 -i vizplay.keystore | tr -d '\n'   # macOS
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("vizplay.keystore"))  # PowerShell
 ```
 
 El resultado (una sola línea larga) es el valor del secreto.
@@ -51,12 +67,12 @@ o pásala al compilar:
 ```
 
 Sin clave de firma se compila igual (Android usa la de depuración). Para firmar
-como la app publicada, deja tu `torrentbox.keystore` en `android-standalone/` y
+como la app publicada, deja tu `vizplay.keystore` en `android-standalone/` y
 añade a tu `~/.gradle/gradle.properties`:
 
 ```properties
 KEYSTORE_PASSWORD=...
-KEY_ALIAS=torrentbox
+KEY_ALIAS=vizplay
 KEY_PASSWORD=...
 ```
 
