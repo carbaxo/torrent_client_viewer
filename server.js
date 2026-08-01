@@ -558,7 +558,7 @@ app.put('/api/me/settings', (req, res) => {
 })
 
 app.listen(PORT, () => {
-  console.log(`Torrent Client Viewer (modo Real-Debrid) escuchando en http://localhost:${PORT}`)
+  console.log(`VizPlay (modo Real-Debrid) escuchando en http://localhost:${PORT}`)
   console.log(`Descargas en: ${activeDownloadDir()}`)
   if (!OMDB_API_KEY) console.log('[aviso] OMDB_API_KEY sin configurar: el buscador Torrentio quedará limitado.')
   if (!TMDB_API_KEY) console.log('[aviso] TMDB_API_KEY sin configurar: los catálogos de streaming estarán desactivados.')

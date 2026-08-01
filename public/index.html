@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#0c0b11" />
-  <title>Torrent Client Viewer</title>
+  <title>VizPlay</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%237b5bf5'/><path d='M38 28v44l36-22z' fill='white'/></svg>" />
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -14,15 +14,12 @@
     <div class="login-box">
       <div class="brand brand-login">
         <svg class="brand-logo" viewBox="0 0 32 32" aria-hidden="true">
-          <defs><linearGradient id="lg-login" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stop-color="#8f6bff"/><stop offset="1" stop-color="#5b3df0"/>
-          </linearGradient></defs>
-          <rect width="32" height="32" rx="8" fill="url(#lg-login)"/>
+          <rect width="32" height="32" rx="4" fill="#c41e3a"/>
           <path d="M12 9.5v13l11-6.5z" fill="#fff"/>
         </svg>
-        <span class="brand-name">Torrent<em>Viewer</em></span>
+        <span class="brand-name">Viz<em>Play</em></span>
       </div>
-      <p class="login-sub">Busca, descarga y reproduce mientras se descarga.</p>
+      <p class="login-sub">Películas y series por streaming, con tu cuenta de Real-Debrid.</p>
       <div class="login-tabs">
         <button id="tab-login" class="login-tab active">Entrar</button>
         <button id="tab-register" class="login-tab">Crear cuenta</button>
@@ -49,13 +46,10 @@
     <aside class="sidebar">
       <div class="brand">
         <svg class="brand-logo" viewBox="0 0 32 32" aria-hidden="true">
-          <defs><linearGradient id="lg-side" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stop-color="#8f6bff"/><stop offset="1" stop-color="#5b3df0"/>
-          </linearGradient></defs>
-          <rect width="32" height="32" rx="8" fill="url(#lg-side)"/>
+          <rect width="32" height="32" rx="4" fill="#c41e3a"/>
           <path d="M12 9.5v13l11-6.5z" fill="#fff"/>
         </svg>
-        <span class="brand-name">Torrent<em>Viewer</em></span>
+        <span class="brand-name">Viz<em>Play</em></span>
       </div>
 
       <nav class="nav">
@@ -90,10 +84,7 @@
     <div class="content">
       <header class="topbar">
         <svg class="topbar-logo" viewBox="0 0 32 32" aria-hidden="true">
-          <defs><linearGradient id="lg-top" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stop-color="#8f6bff"/><stop offset="1" stop-color="#5b3df0"/>
-          </linearGradient></defs>
-          <rect width="32" height="32" rx="8" fill="url(#lg-top)"/>
+          <rect width="32" height="32" rx="4" fill="#c41e3a"/>
           <path d="M12 9.5v13l11-6.5z" fill="#fff"/>
         </svg>
         <h1 id="view-title" class="view-title">Descubrir</h1>

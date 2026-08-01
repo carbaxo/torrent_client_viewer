@@ -9,11 +9,10 @@ window.TCV_API_BASE = ''
 // APK de la app nativa de Android / Android TV. La web ofrece descargarla
 // (banner en Android + tarjeta en Ajustes). Déjalo vacío para no ofrecerla.
 //
-// ⚠️ Si el repositorio es PRIVADO, este enlace solo funciona para quien esté
-// logueado en GitHub con acceso al repo; para cualquier otro dará 404. Si
-// quieres que sea descargable por todos, publica el APK en un sitio público
-// (repo público, tu propio servidor, etc.) y pon aquí esa URL.
-window.TCV_APK_URL = 'https://github.com/carbaxo/torrent_client_viewer/releases/download/android-latest/TorrentBox.apk'
+// El repositorio es público, así que el enlace vale para cualquiera. Apunta a
+// VizPlay.apk y no al viejo TorrentBox.apk: la CI sigue publicando los dos, pero
+// el segundo solo existe para que se autoactualicen las versiones <= 74.
+window.TCV_APK_URL = 'https://github.com/carbaxo/vizplay-app/releases/download/android-latest/VizPlay.apk'
 
 // Firebase (login con Google + sincronización de favoritos/historial/ajustes).
 // Esta configuración NO es secreta: identifica el proyecto; la seguridad la
