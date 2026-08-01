@@ -129,6 +129,23 @@ object Update {
      * redirección a mano, porque el enlace firmado de destino falla si se le manda
      * la cabecera Authorization. Todo eso sobra.
      */
+    /**
+     * El camino de siempre: pasarle el APK al instalador del sistema por
+     * `content://`.
+     *
+     * No explica los fallos —Android se los traga y solo pinta «Aplicación no
+     * instalada»—, pero funciona en aparatos donde la sesión no llega a mostrar la
+     * confirmación. Por eso sigue aquí como plan B en vez de haberse borrado.
+     */
+    private fun viewFallback(app: Context, f: File) {
+        val uri = FileProvider.getUriForFile(app, app.packageName + ".fileprovider", f)
+        app.startActivity(
+            Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    }
+
     private fun openAsset(info: Info): okhttp3.Response = client.newCall(
         Request.Builder().url(info.url).header("User-Agent", "VizPlay").build()
     ).execute()
@@ -146,10 +163,10 @@ object Update {
      *
      * Y se mira el espacio libre antes de empezar, porque **eso era el fallo real**
      * de la Android TV: no había sitio, y Android lo enseñaba como un genérico
-     * «Aplicación no instalada». El directorio se vacía al empezar, el `.part` se
-     * borra si algo falla y la copia final se borra en cuanto la sesión de
-     * instalación tiene los bytes, para no aparcar 29 MB en la memoria interna de un
-     * aparato que ya iba justo.
+     * «Aplicación no instalada». El directorio se vacía al empezar y el `.part` se
+     * borra si algo falla; el APK final se conserva hasta el siguiente arranque
+     * ([cleanup]) porque el plan B lo necesita, y por eso el hueco que se exige
+     * cuenta con **dos** copias a la vez.
      */
     fun downloadAndInstall(ctx: Context) {
         val info = available ?: return
@@ -205,24 +222,28 @@ object Update {
                 if (!part.renameTo(f)) throw RuntimeException("no se pudo guardar el APK")
                 onMain { status = "Abriendo instalador…" }
                 // Primero por sesión: es el único camino que devuelve el motivo del
-                // fallo. Si ni se puede abrir la sesión, se cae al ACTION_VIEW de
-                // siempre, que al menos instala aunque no explique nada.
-                val err = Installer.install(app, f)
-                if (err == null) {
-                    // La sesión ya tiene los bytes copiados, así que nuestra copia solo
-                    // ocupa. Borrarla aquí baja el pico de 2 copias a 1 justo cuando el
-                    // sistema está instalando, que es el momento más apretado.
-                    f.delete()
-                } else {
-                    val uri = FileProvider.getUriForFile(app, app.packageName + ".fileprovider", f)
-                    val i = Intent(Intent.ACTION_VIEW)
-                        .setDataAndType(uri, "application/vnd.android.package-archive")
-                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-                    app.startActivity(i)
+                // fallo. Si no se puede ni abrir, se recurre al ACTION_VIEW directo.
+                val session = Installer.install(app, f)
+                if (session == null) viewFallback(app, f)
+                else {
+                    onMain { status = "Esperando al instalador…" }
+                    // Plan B por si el sistema no contesta NUNCA. En MIUI la sesión se
+                    // crea y se confirma sin quejarse, pero la pantalla de «¿instalar?»
+                    // no aparece, así que la app se quedaba en «Esperando al
+                    // instalador…» para siempre y no había forma de actualizar.
+                    // La confirmación normal llega en menos de un segundo; ocho es de
+                    // sobra para no pisar un aparato simplemente lento.
+                    main.postDelayed({
+                        if (!Installer.reported) {
+                            Installer.abandon(app, session)
+                            status = "El instalador del sistema no ha respondido; " +
+                                "abriéndolo por la vía clásica…"
+                            runCatching { viewFallback(app, f) }.onFailure {
+                                status = "No se pudo abrir el instalador: ${it.message}"
+                            }
+                        }
+                    }, 8_000L)
                 }
-                // No se pone "" : si la instalación falla, el resultado llega al
-                // receptor unos segundos después y sobreescribe esto con el motivo.
-                onMain { status = "Esperando al instalador…" }
             } catch (e: Throwable) {
                 part.delete()
                 onMain { status = "Error al actualizar: ${e.message}" }

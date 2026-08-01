@@ -35,13 +35,28 @@ object Installer {
     var lastError: String? = null
 
     /**
+     * ¿Ha contestado ya el sistema a la sesión en marcha?
+     *
+     * Existe por MIUI y parecidos: ahí la sesión se crea y se confirma sin quejarse,
+     * pero la pantalla de «¿instalar?» **no aparece nunca**, así que la app se queda
+     * esperando un resultado que no va a llegar y el usuario no puede actualizar.
+     * Con esto se puede detectar ese silencio y recurrir al `ACTION_VIEW` de
+     * siempre, que en esos aparatos sí funciona (ver [Update.downloadAndInstall]).
+     */
+    @Volatile
+    var reported = false
+        private set
+
+    /**
      * Copia el APK a una sesión de instalación y la lanza.
      *
-     * @return null si la sesión arrancó (el resultado llegará al [Receiver]), o el
-     *   motivo si no se pudo ni empezar.
+     * @return el id de la sesión si arrancó (el resultado llegará al [Receiver]), o
+     *   null si no se pudo ni empezar; el motivo queda en [lastError].
      */
-    fun install(ctx: Context, apk: File): String? {
+    fun install(ctx: Context, apk: File): Int? {
         val app = ctx.applicationContext
+        reported = false
+        lastError = null
         return try {
             val pi = app.packageManager.packageInstaller
             val params = PackageInstaller.SessionParams(
@@ -66,10 +81,21 @@ object Installer {
                 val pending = PendingIntent.getBroadcast(app, id, intent, flags)
                 session.commit(pending.intentSender)
             }
-            null
+            id
         } catch (e: Throwable) {
-            "No se pudo abrir el instalador: ${e.message ?: e.javaClass.simpleName}"
+            lastError = "No se pudo abrir el instalador: ${e.message ?: e.javaClass.simpleName}"
+            null
         }
+    }
+
+    /**
+     * Tira la sesión.
+     *
+     * Se llama antes de recurrir al `ACTION_VIEW`, para no dejar una sesión colgada
+     * que pueda saltar más tarde y pedir confirmación por segunda vez.
+     */
+    fun abandon(ctx: Context, sessionId: Int) {
+        runCatching { ctx.applicationContext.packageManager.packageInstaller.abandonSession(sessionId) }
     }
 
     /**
@@ -116,6 +142,10 @@ object Installer {
                 PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE
             )
             val msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
+            // Cualquier estado, incluido el de «pide confirmación», significa que el
+            // sistema HA contestado. Es justo lo que mira el plan B: en MIUI no llega
+            // nada de esto y hay que recurrir al ACTION_VIEW.
+            Installer.reported = true
             when (status) {
                 PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                     // Android pide confirmación al usuario: hay que lanzar el intent
